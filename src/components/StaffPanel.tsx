@@ -1,13 +1,13 @@
 import { useState } from 'react'
 import { Lock, MessageCircle, UserCheck, Clock } from 'lucide-react'
-import { useAppStore } from '../store/useAppStore'
+import { useAppStore, selectActiveProject } from '../store/useAppStore'
 import { hasFeature } from '../lib/subscriptions'
 import { buildStaffWhatsAppMessage, openWhatsApp } from '../lib/whatsapp'
 import { formatCurrency } from '../lib/documentIds'
 
 export function StaffPanel() {
   const subscription = useAppStore((s) => s.profile.subscription)
-  const project = useAppStore((s) => s.getActiveProject())
+  const project = useAppStore(selectActiveProject)
   const updateStaff = useAppStore((s) => s.updateStaff)
   const setView = useAppStore((s) => s.setView)
   const setToast = useAppStore((s) => s.setToast)
@@ -43,13 +43,14 @@ export function StaffPanel() {
   }
 
   const sendWhatsApp = (staffId: string) => {
-    const member = project.staff.find((s) => s.id === staffId)
+    const roster = project.staff ?? []
+    const member = roster.find((s) => s.id === staffId)
     if (!member) return
     const msg = buildStaffWhatsAppMessage({
       staffName: member.name,
       eventName: project.name,
       shiftStart: member.shiftStart,
-      tasks: member.tasks,
+      tasks: member.tasks ?? [],
       checkinUrl: `${window.location.origin}/staff-checkin?staff=${encodeURIComponent(member.id)}&event=${encodeURIComponent(project.id)}`,
     })
     openWhatsApp(member.phone, msg)
@@ -59,7 +60,7 @@ export function StaffPanel() {
   const setAttendance = (id: string, attendance: 'confirmed' | 'pending' | 'absent') => {
     updateStaff(
       project.id,
-      project.staff.map((s) => (s.id === id ? { ...s, attendance } : s))
+      (project.staff ?? []).map((s) => (s.id === id ? { ...s, attendance } : s))
     )
   }
 
@@ -91,7 +92,7 @@ export function StaffPanel() {
       </div>
 
       <div style={{ display: 'grid', gap: 12 }}>
-        {project.staff.map((member) => (
+        {(project.staff ?? []).map((member) => (
           <div key={member.id} className="panel glass-glow">
             <div
               style={{
@@ -129,7 +130,7 @@ export function StaffPanel() {
                 <div style={{ marginTop: 10 }}>
                   <div className="label">Úkoly</div>
                   <ul style={{ paddingLeft: 18, color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-                    {member.tasks.map((t) => (
+                    {(member.tasks ?? []).map((t) => (
                       <li key={t}>{t}</li>
                     ))}
                   </ul>
@@ -137,11 +138,12 @@ export function StaffPanel() {
               </div>
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <button className="btn btn-wa" onClick={() => sendWhatsApp(member.id)}>
+                <button type="button" className="btn btn-wa" onClick={() => sendWhatsApp(member.id)}>
                   <MessageCircle size={15} /> WhatsApp
                 </button>
                 <div style={{ display: 'flex', gap: 4 }}>
                   <button
+                    type="button"
                     className="btn btn-ghost"
                     style={{ padding: '0.4rem 0.6rem', fontSize: '0.75rem' }}
                     onClick={() => setAttendance(member.id, 'confirmed')}
@@ -150,6 +152,7 @@ export function StaffPanel() {
                     <UserCheck size={14} />
                   </button>
                   <button
+                    type="button"
                     className="btn btn-ghost"
                     style={{ padding: '0.4rem 0.6rem', fontSize: '0.75rem' }}
                     onClick={() => setAttendance(member.id, 'pending')}
@@ -157,6 +160,7 @@ export function StaffPanel() {
                     ?
                   </button>
                   <button
+                    type="button"
                     className="btn btn-danger"
                     style={{ padding: '0.4rem 0.6rem', fontSize: '0.75rem' }}
                     onClick={() => setAttendance(member.id, 'absent')}
@@ -168,6 +172,11 @@ export function StaffPanel() {
             </div>
           </div>
         ))}
+        {(project.staff ?? []).length === 0 && (
+          <div className="panel" style={{ textAlign: 'center', color: 'var(--text-muted)' }}>
+            Žádný personál — vygenerujte akci v AI Planneru.
+          </div>
+        )}
       </div>
     </div>
   )

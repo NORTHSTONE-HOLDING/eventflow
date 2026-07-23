@@ -7,6 +7,7 @@ import type {
   ChecklistItem,
   EventProject,
   LegalRisk,
+  MetricSnapshot,
   StaffMember,
   SubscriptionTier,
   TimelineItem,
@@ -34,9 +35,56 @@ const defaultProfile: AgencyProfile = {
   registeredAt: null,
 }
 
+const APP_VIEWS: AppView[] = [
+  'dashboard',
+  'planner',
+  'scanner',
+  'staff',
+  'portal',
+  'legal',
+  'profile',
+  'print',
+]
+
+/** Normalize any persisted / invalid view into a real app screen (never 'hero' inside shell). */
+export function normalizeAppView(view: unknown): AppView {
+  if (typeof view === 'string' && APP_VIEWS.includes(view as AppView)) {
+    return view as AppView
+  }
+  return 'dashboard'
+}
+
+export function computeMetrics(projects: EventProject[]): MetricSnapshot {
+  const list = Array.isArray(projects) ? projects : []
+  const active = list.filter((p) => p && p.status !== 'cancelled')
+  const eventCount = active.length
+  const revenue = active.reduce((sum, p) => sum + (Number(p.totalRevenue) || 0), 0)
+  const avgMargin =
+    eventCount > 0
+      ? active.reduce((sum, p) => sum + (Number(p.margin) || 0), 0) / eventCount
+      : 0
+
+  const current = active[0] ?? null
+  const aiRecommendations = current
+    ? getAIRecommendations(current)
+    : [
+        'Vytvořte první akci přes AI Planner pro personalizovaná doporučení.',
+        'Nastavte firemní profil (IČO, DIČ, banka) pro autofill dokumentů.',
+        'Upgrade na TEAM odemkne WhatsApp koordinaci personálu.',
+      ]
+
+  return {
+    eventCount,
+    revenue,
+    avgMargin,
+    aiRecommendations: aiRecommendations ?? [],
+  }
+}
+
 interface AppState {
   view: AppView
   showHero: boolean
+  hydrated: boolean
   profile: AgencyProfile
   projects: EventProject[]
   activeProjectId: string | null
@@ -46,6 +94,7 @@ interface AppState {
   toast: string | null
 
   setView: (view: AppView) => void
+  enterApp: (targetView?: AppView) => void
   dismissHero: () => void
   setToast: (msg: string | null) => void
   updateProfile: (patch: Partial<AgencyProfile>) => void
@@ -65,19 +114,15 @@ interface AppState {
 
   runLegalAudit: (text: string) => Promise<void>
   getActiveProject: () => EventProject | null
-  getMetrics: () => {
-    eventCount: number
-    revenue: number
-    avgMargin: number
-    aiRecommendations: string[]
-  }
+  getMetrics: () => MetricSnapshot
 }
 
 export const useAppStore = create<AppState>()(
   persist(
     (set, get) => ({
-      view: 'hero',
+      view: 'dashboard',
       showHero: true,
+      hydrated: false,
       profile: defaultProfile,
       projects: [],
       activeProjectId: null,
@@ -86,11 +131,31 @@ export const useAppStore = create<AppState>()(
       legalLoading: false,
       toast: null,
 
-      setView: (view) => set({ view, showHero: view === 'hero' ? true : false }),
-      dismissHero: () => set({ showHero: false, view: 'dashboard' }),
+      setView: (view) => {
+        const next = normalizeAppView(view)
+        set({ view: next, showHero: false })
+      },
+
+      /** Single entry point from Hero → AppShell with a guaranteed active view. */
+      enterApp: (targetView = 'dashboard') => {
+        const next = normalizeAppView(targetView)
+        set({
+          showHero: false,
+          view: next,
+        })
+      },
+
+      dismissHero: () => {
+        get().enterApp('dashboard')
+      },
+
       setToast: (msg) => {
         set({ toast: msg })
-        if (msg) setTimeout(() => set({ toast: null }), 3500)
+        if (msg) {
+          window.setTimeout(() => {
+            if (get().toast === msg) set({ toast: null })
+          }, 3500)
+        }
       },
 
       updateProfile: (patch) =>
@@ -99,6 +164,7 @@ export const useAppStore = create<AppState>()(
       registerAgency: (profile) =>
         set({
           profile: {
+            ...defaultProfile,
             ...profile,
             registeredAt: new Date().toISOString(),
           },
@@ -110,17 +176,18 @@ export const useAppStore = create<AppState>()(
         set((s) => ({ profile: { ...s.profile, subscription: tier } })),
 
       createFromPrompt: async (prompt) => {
-        set({ aiLoading: true })
+        set({ aiLoading: true, showHero: false })
         try {
           const project = await generateEventFromPrompt(prompt)
           set((s) => {
-            const maxSeq = s.projects.reduce(
-              (m, p) => Math.max(m, p.documents.sequence),
+            const safeProjects = Array.isArray(s.projects) ? s.projects : []
+            const maxSeq = safeProjects.reduce(
+              (m, p) => Math.max(m, p?.documents?.sequence ?? 0),
               0
             )
             setDocumentSequence(maxSeq + 1)
             return {
-              projects: [project, ...s.projects],
+              projects: [project, ...safeProjects],
               activeProjectId: project.id,
               aiLoading: false,
               view: 'planner',
@@ -131,6 +198,7 @@ export const useAppStore = create<AppState>()(
           return project
         } catch (e) {
           set({ aiLoading: false })
+          get().setToast('AI Planner selhal — zkuste to znovu')
           throw e
         }
       },
@@ -139,29 +207,31 @@ export const useAppStore = create<AppState>()(
 
       updateProject: (id, patch) =>
         set((s) => ({
-          projects: s.projects.map((p) => (p.id === id ? { ...p, ...patch } : p)),
+          projects: (s.projects ?? []).map((p) =>
+            p.id === id ? { ...p, ...patch } : p
+          ),
         })),
 
       updateTimeline: (projectId, timeline) =>
-        get().updateProject(projectId, { timeline }),
+        get().updateProject(projectId, { timeline: timeline ?? [] }),
 
       updateChecklist: (projectId, checklist) =>
-        get().updateProject(projectId, { checklist }),
+        get().updateProject(projectId, { checklist: checklist ?? [] }),
 
       updateCatering: (projectId, catering) =>
-        get().updateProject(projectId, { catering }),
+        get().updateProject(projectId, { catering: catering ?? [] }),
 
       addCateringItems: (projectId, items) =>
         set((s) => ({
-          projects: s.projects.map((p) =>
+          projects: (s.projects ?? []).map((p) =>
             p.id === projectId
-              ? { ...p, catering: [...items, ...p.catering] }
+              ? { ...p, catering: [...(items ?? []), ...(p.catering ?? [])] }
               : p
           ),
         })),
 
       updateStaff: (projectId, staff) =>
-        get().updateProject(projectId, { staff }),
+        get().updateProject(projectId, { staff: staff ?? [] }),
 
       setClientSignature: (projectId, signature) =>
         get().updateProject(projectId, {
@@ -174,34 +244,25 @@ export const useAppStore = create<AppState>()(
 
       runLegalAudit: async (text) => {
         set({ legalLoading: true })
-        const risks = await auditContractText(text)
-        set({ legalRisks: risks, legalLoading: false })
+        try {
+          const risks = await auditContractText(text || '')
+          set({ legalRisks: risks ?? [], legalLoading: false })
+        } catch {
+          set({ legalRisks: [], legalLoading: false })
+          get().setToast('Právní audit se nezdařil')
+        }
       },
 
       getActiveProject: () => {
         const s = get()
-        return s.projects.find((p) => p.id === s.activeProjectId) ?? s.projects[0] ?? null
+        const projects = Array.isArray(s.projects) ? s.projects : []
+        if (!projects.length) return null
+        return (
+          projects.find((p) => p?.id === s.activeProjectId) ?? projects[0] ?? null
+        )
       },
 
-      getMetrics: () => {
-        const { projects } = get()
-        const active = projects.filter((p) => p.status !== 'cancelled')
-        const eventCount = active.length
-        const revenue = active.reduce((s, p) => s + p.totalRevenue, 0)
-        const avgMargin =
-          eventCount > 0
-            ? active.reduce((s, p) => s + p.margin, 0) / eventCount
-            : 0
-        const current = get().getActiveProject()
-        const aiRecommendations = current
-          ? getAIRecommendations(current)
-          : [
-              'Vytvořte první akci přes AI Planner pro personalizovaná doporučení.',
-              'Nastavte firemní profil (IČO, DIČ, banka) pro autofill dokumentů.',
-              'Upgrade na TEAM odemkne WhatsApp koordinaci personálu.',
-            ]
-        return { eventCount, revenue, avgMargin, aiRecommendations }
-      },
+      getMetrics: () => computeMetrics(get().projects ?? []),
     }),
     {
       name: 'eventflow-storage',
@@ -210,8 +271,27 @@ export const useAppStore = create<AppState>()(
         projects: s.projects,
         activeProjectId: s.activeProjectId,
         showHero: s.showHero,
-        view: s.view === 'hero' ? 'dashboard' : s.view,
+        view: normalizeAppView(s.view),
       }),
+      onRehydrateStorage: () => (state) => {
+        // Normalize after persist rehydration so AppShell never boots on an invalid view
+        queueMicrotask(() => {
+          useAppStore.setState({
+            hydrated: true,
+            view: normalizeAppView(state?.view),
+            projects: Array.isArray(state?.projects) ? state!.projects : [],
+            profile: { ...defaultProfile, ...(state?.profile ?? {}) },
+            showHero: state?.showHero ?? true,
+          })
+        })
+      },
     }
   )
 )
+
+/** Stable selector: active project by id (no new object allocation in selector). */
+export function selectActiveProject(s: AppState): EventProject | null {
+  const projects = Array.isArray(s.projects) ? s.projects : []
+  if (!projects.length) return null
+  return projects.find((p) => p?.id === s.activeProjectId) ?? projects[0] ?? null
+}

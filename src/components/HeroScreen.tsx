@@ -2,17 +2,31 @@ import { motion } from 'framer-motion'
 import { Logo } from './Logo'
 import { useAppStore } from '../store/useAppStore'
 import { Utensils, Wallet, Calendar, Sparkles } from 'lucide-react'
+import type { AppView } from '../types'
 
-const CARDS = [
-  { title: 'Catering', desc: 'Receptury, alergeny, inventář', icon: Utensils, delay: 0 },
-  { title: 'Budget', desc: 'DPH, marže, food cost', icon: Wallet, delay: 0.15 },
-  { title: 'Schedule', desc: 'Drag & drop harmonogram', icon: Calendar, delay: 0.3 },
-  { title: 'AI Planner', desc: 'Český prompt → celá akce', icon: Sparkles, delay: 0.45 },
+const CARDS: Array<{
+  title: string
+  desc: string
+  icon: typeof Utensils
+  delay: number
+  target: AppView
+}> = [
+  { title: 'Catering', desc: 'Receptury, alergeny, inventář', icon: Utensils, delay: 0, target: 'dashboard' },
+  { title: 'Budget', desc: 'DPH, marže, food cost', icon: Wallet, delay: 0.15, target: 'dashboard' },
+  { title: 'Schedule', desc: 'Drag & drop harmonogram', icon: Calendar, delay: 0.3, target: 'dashboard' },
+  { title: 'AI Planner', desc: 'Český prompt → celá akce', icon: Sparkles, delay: 0.45, target: 'planner' },
 ]
 
 export function HeroScreen() {
-  const dismissHero = useAppStore((s) => s.dismissHero)
-  const setView = useAppStore((s) => s.setView)
+  const enterApp = useAppStore((s) => s.enterApp)
+
+  const handleEnter = () => {
+    enterApp('dashboard')
+  }
+
+  const handleRegister = () => {
+    enterApp('profile')
+  }
 
   return (
     <div
@@ -96,18 +110,23 @@ export function HeroScreen() {
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.7 }}
-          style={{ display: 'flex', gap: '1rem', justifyContent: 'center', flexWrap: 'wrap', marginBottom: '3.5rem' }}
+          style={{
+            display: 'flex',
+            gap: '1rem',
+            justifyContent: 'center',
+            flexWrap: 'wrap',
+            marginBottom: '3.5rem',
+          }}
         >
-          <button className="btn btn-gold" onClick={dismissHero} style={{ padding: '0.9rem 2rem', fontSize: '1rem' }}>
+          <button
+            type="button"
+            className="btn btn-gold"
+            onClick={handleEnter}
+            style={{ padding: '0.9rem 2rem', fontSize: '1rem' }}
+          >
             Vstoupit do EventFlow
           </button>
-          <button
-            className="btn btn-ghost"
-            onClick={() => {
-              dismissHero()
-              setView('profile')
-            }}
-          >
+          <button type="button" className="btn btn-ghost" onClick={handleRegister}>
             Registrace agentury
           </button>
         </motion.div>
@@ -121,17 +140,14 @@ export function HeroScreen() {
             margin: '0 auto',
           }}
         >
-          {CARDS.map((card, i) => {
+          {CARDS.map((card) => {
             const Icon = card.icon
             return (
               <motion.button
                 key={card.title}
                 type="button"
                 className="glass glass-glow"
-                onClick={() => {
-                  dismissHero()
-                  setView(i === 3 ? 'planner' : 'dashboard')
-                }}
+                onClick={() => enterApp(card.target)}
                 initial={{ opacity: 0, y: 30 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.8 + card.delay, duration: 0.5 }}
@@ -139,16 +155,24 @@ export function HeroScreen() {
                   padding: '1.25rem',
                   cursor: 'pointer',
                   textAlign: 'left',
-                  animation: `floatCard ${4 + i * 0.6}s ease-in-out infinite`,
-                  animationDelay: `${i * 0.4}s`,
+                  animation: `floatCard ${4 + card.delay * 4}s ease-in-out infinite`,
+                  animationDelay: `${card.delay}s`,
                   color: 'inherit',
                 }}
               >
                 <Icon size={22} color="var(--gold)" style={{ marginBottom: 10 }} />
-                <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.25rem', marginBottom: 4 }}>
+                <div
+                  style={{
+                    fontFamily: 'var(--font-display)',
+                    fontSize: '1.25rem',
+                    marginBottom: 4,
+                  }}
+                >
                   {card.title}
                 </div>
-                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{card.desc}</div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                  {card.desc}
+                </div>
               </motion.button>
             )
           })}

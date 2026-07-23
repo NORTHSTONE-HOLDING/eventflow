@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState } from 'react'
 import { motion, Reorder } from 'framer-motion'
 import {
   Sparkles,
@@ -9,7 +9,7 @@ import {
   ListChecks,
   Loader2,
 } from 'lucide-react'
-import { useAppStore } from '../store/useAppStore'
+import { useAppStore, selectActiveProject } from '../store/useAppStore'
 import { formatCurrency } from '../lib/documentIds'
 import type { AgencyProfile, CateringItem, ChecklistItem, EventProject, TimelineItem } from '../types'
 
@@ -19,7 +19,7 @@ export function AIPlanner() {
   )
   const createFromPrompt = useAppStore((s) => s.createFromPrompt)
   const aiLoading = useAppStore((s) => s.aiLoading)
-  const project = useAppStore((s) => s.getActiveProject())
+  const project = useAppStore(selectActiveProject)
   const updateTimeline = useAppStore((s) => s.updateTimeline)
   const updateChecklist = useAppStore((s) => s.updateChecklist)
   const profile = useAppStore((s) => s.profile)
@@ -106,19 +106,19 @@ export function AIPlanner() {
 
           {tab === 'timeline' && (
             <TimelineBoard
-              items={project.timeline}
+              items={project.timeline ?? []}
               onChange={(timeline) => updateTimeline(project.id, timeline)}
             />
           )}
           {tab === 'budget' && <BudgetView project={project} />}
-          {tab === 'catering' && <CateringView items={project.catering} />}
+          {tab === 'catering' && <CateringView items={project.catering ?? []} />}
           {tab === 'checklist' && (
             <ChecklistView
-              items={project.checklist}
+              items={project.checklist ?? []}
               onToggle={(id) => {
                 updateChecklist(
                   project.id,
-                  project.checklist.map((c) =>
+                  (project.checklist ?? []).map((c) =>
                     c.id === id ? { ...c, done: !c.done } : c
                   )
                 )
@@ -126,7 +126,7 @@ export function AIPlanner() {
               onQuickAll={() => {
                 updateChecklist(
                   project.id,
-                  project.checklist.map((c) => ({ ...c, done: true }))
+                  (project.checklist ?? []).map((c) => ({ ...c, done: true }))
                 )
               }}
             />
@@ -194,6 +194,16 @@ function TimelineBoard({
   items: TimelineItem[]
   onChange: (items: TimelineItem[]) => void
 }) {
+  const safeItems = Array.isArray(items) ? items : []
+
+  if (!safeItems.length) {
+    return (
+      <div className="panel" style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '2rem' }}>
+        Harmonogram je prázdný — spusťte AI Engine pro výchozí milníky.
+      </div>
+    )
+  }
+
   return (
     <div className="panel">
       <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: 14 }}>
@@ -201,13 +211,13 @@ function TimelineBoard({
       </p>
       <Reorder.Group
         axis="y"
-        values={items}
+        values={safeItems}
         onReorder={(next) =>
           onChange(next.map((item, order) => ({ ...item, order })))
         }
         style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 8 }}
       >
-        {items.map((item) => (
+        {safeItems.map((item) => (
           <Reorder.Item
             key={item.id}
             value={item}
@@ -230,7 +240,7 @@ function TimelineBoard({
               value={item.time}
               onChange={(e) =>
                 onChange(
-                  items.map((t) =>
+                  safeItems.map((t) =>
                     t.id === item.id ? { ...t, time: e.target.value } : t
                   )
                 )
@@ -243,7 +253,7 @@ function TimelineBoard({
                 value={item.title}
                 onChange={(e) =>
                   onChange(
-                    items.map((t) =>
+                    safeItems.map((t) =>
                       t.id === item.id ? { ...t, title: e.target.value } : t
                     )
                   )
@@ -255,7 +265,7 @@ function TimelineBoard({
                 value={item.description}
                 onChange={(e) =>
                   onChange(
-                    items.map((t) =>
+                    safeItems.map((t) =>
                       t.id === item.id ? { ...t, description: e.target.value } : t
                     )
                   )
@@ -304,7 +314,7 @@ function BudgetView({ project }: { project: EventProject }) {
           </tr>
         </thead>
         <tbody>
-          {project.budgetLines.map((line) => (
+          {(project.budgetLines ?? []).map((line) => (
             <tr key={line.id}>
               <td style={{ padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
                 <span className="badge badge-gold">{line.category}</span>
@@ -333,9 +343,17 @@ function BudgetView({ project }: { project: EventProject }) {
 }
 
 function CateringView({ items }: { items: CateringItem[] }) {
+  const list = Array.isArray(items) ? items : []
+  if (!list.length) {
+    return (
+      <div className="panel" style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '2rem' }}>
+        Catering je prázdný — přidejte položky přes AI Vision Scan nebo AI Planner.
+      </div>
+    )
+  }
   return (
     <div style={{ display: 'grid', gap: 12 }}>
-      {items.map((item) => (
+      {list.map((item) => (
         <motion.div
           key={item.id}
           className="panel glass-glow"
@@ -355,13 +373,13 @@ function CateringView({ items }: { items: CateringItem[] }) {
             </div>
           </div>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 12 }}>
-            {item.allergens.map((a) => (
+            {(item.allergens ?? []).map((a) => (
               <span key={a} className="badge badge-warning">{a}</span>
             ))}
-            {item.allergens.length === 0 && <span className="badge badge-success">bez alergenů</span>}
+            {(item.allergens ?? []).length === 0 && <span className="badge badge-success">bez alergenů</span>}
           </div>
           <div style={{ marginTop: 10, fontSize: '0.85rem', color: 'var(--text-dim)' }}>
-            Inventář: {item.inventory.join(' · ')}
+            Inventář: {(item.inventory ?? []).join(' · ') || '—'}
           </div>
         </motion.div>
       ))}
@@ -378,17 +396,22 @@ function ChecklistView({
   onToggle: (id: string) => void
   onQuickAll: () => void
 }) {
-  const ref = useRef<HTMLDivElement>(null)
+  const list = Array.isArray(items) ? items : []
   return (
-    <div className="panel" ref={ref}>
+    <div className="panel">
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
         <h3 style={{ fontSize: '1.15rem' }}>Automatický task board</h3>
-        <button className="btn btn-ghost" onClick={onQuickAll}>
+        <button type="button" className="btn btn-ghost" onClick={onQuickAll} disabled={!list.length}>
           ✔ Označit vše
         </button>
       </div>
+      {!list.length ? (
+        <div style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '1.5rem' }}>
+          Checklist je prázdný.
+        </div>
+      ) : (
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
-        {items.map((item) => (
+        {list.map((item) => (
           <button
             key={item.id}
             type="button"
@@ -426,6 +449,7 @@ function ChecklistView({
           </button>
         ))}
       </div>
+      )}
     </div>
   )
 }

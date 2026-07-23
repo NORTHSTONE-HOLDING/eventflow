@@ -2,7 +2,7 @@ import { useRef, useState, useEffect, useCallback } from 'react'
 import { Lock, MessageCircle, PenLine, CreditCard } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { useAppStore } from '../store/useAppStore'
+import { useAppStore, selectActiveProject } from '../store/useAppStore'
 import { hasFeature } from '../lib/subscriptions'
 import { buildClientWhatsAppMessage, openWhatsApp } from '../lib/whatsapp'
 import { formatCurrency } from '../lib/documentIds'
@@ -10,7 +10,7 @@ import { formatCurrency } from '../lib/documentIds'
 export function ClientPortal() {
   const subscription = useAppStore((s) => s.profile.subscription)
   const profile = useAppStore((s) => s.profile)
-  const project = useAppStore((s) => s.getActiveProject())
+  const project = useAppStore(selectActiveProject)
   const updateProject = useAppStore((s) => s.updateProject)
   const setClientSignature = useAppStore((s) => s.setClientSignature)
   const markDepositPaid = useAppStore((s) => s.markDepositPaid)
@@ -159,9 +159,9 @@ export function ClientPortal() {
             </p>
             <table style={{ width: '100%', fontSize: '0.9rem', borderCollapse: 'collapse' }}>
               <tbody>
-                {project.budgetLines
+                {(project.budgetLines ?? [])
                   .filter((l) => !l.isCost)
-                  .concat(project.budgetLines.filter((l) => l.isCost).slice(0, 3))
+                  .concat((project.budgetLines ?? []).filter((l) => l.isCost).slice(0, 3))
                   .map((l) => (
                     <tr key={l.id}>
                       <td style={{ padding: '8px 0', borderBottom: '1px solid var(--border)' }}>

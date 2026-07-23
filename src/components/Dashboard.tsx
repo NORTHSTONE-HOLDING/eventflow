@@ -18,66 +18,123 @@ import {
   isSameDay,
   addMonths,
   subMonths,
+  isValid,
+  parseISO,
 } from 'date-fns'
 import { cs } from 'date-fns/locale'
 import { ChevronLeft, ChevronRight, Sparkles, TrendingUp } from 'lucide-react'
-import { useAppStore } from '../store/useAppStore'
+import { useAppStore, computeMetrics } from '../store/useAppStore'
 import { formatCurrency, formatPercent } from '../lib/documentIds'
+import type { EventProject } from '../types'
+
+const FALLBACK_CHART = [
+  { name: 'Led', revenue: 120000, cost: 85000 },
+  { name: 'Úno', revenue: 180000, cost: 120000 },
+  { name: 'Bře', revenue: 210000, cost: 145000 },
+  { name: 'Dub', revenue: 160000, cost: 110000 },
+  { name: 'Kvě', revenue: 290000, cost: 190000 },
+  { name: 'Čer', revenue: 340000, cost: 220000 },
+  { name: 'Čvc', revenue: 450000, cost: 310000 },
+]
+
+const FALLBACK_MARGIN = [
+  { name: 'CN001', margin: 24 },
+  { name: 'CN002', margin: 18 },
+  { name: 'CN003', margin: 31 },
+  { name: 'CN004', margin: 22 },
+]
+
+function safeParseDate(value: string | undefined | null): Date | null {
+  if (!value) return null
+  try {
+    const d = value.includes('T') ? parseISO(value) : new Date(value)
+    return isValid(d) ? d : null
+  } catch {
+    return null
+  }
+}
 
 export function Dashboard() {
-  const metrics = useAppStore((s) => s.getMetrics())
+  // Select stable primitives / arrays — never call getMetrics() inside a Zustand selector
+  // (it allocates a new object every time → infinite re-render crash).
   const projects = useAppStore((s) => s.projects)
   const setView = useAppStore((s) => s.setView)
   const setActiveProject = useAppStore((s) => s.setActiveProject)
-  const [month, setMonth] = useState(new Date(2026, 6, 1))
+  const [month, setMonth] = useState(() => new Date(2026, 6, 1))
 
-  const chartData = useMemo(() => {
-    if (projects.length === 0) {
-      return [
-        { name: 'Led', revenue: 120000, cost: 85000 },
-        { name: 'Úno', revenue: 180000, cost: 120000 },
-        { name: 'Bře', revenue: 210000, cost: 145000 },
-        { name: 'Dub', revenue: 160000, cost: 110000 },
-        { name: 'Kvě', revenue: 290000, cost: 190000 },
-        { name: 'Čer', revenue: 340000, cost: 220000 },
-        { name: 'Čvc', revenue: metrics.revenue || 450000, cost: metrics.revenue ? metrics.revenue * 0.72 : 310000 },
-      ]
-    }
-    return projects.slice(0, 6).reverse().map((p) => ({
-      name: p.name.slice(0, 12),
-      revenue: p.totalRevenue,
-      cost: p.totalCost,
-    }))
-  }, [projects, metrics.revenue])
-
-  const marginData = useMemo(
-    () =>
-      projects.length
-        ? projects.slice(0, 5).map((p) => ({ name: p.documents.nabidka, margin: Number(p.margin.toFixed(1)) }))
-        : [
-            { name: 'CN001', margin: 24 },
-            { name: 'CN002', margin: 18 },
-            { name: 'CN003', margin: 31 },
-            { name: 'CN004', margin: 22 },
-          ],
+  const safeProjects: EventProject[] = useMemo(
+    () => (Array.isArray(projects) ? projects.filter(Boolean) : []),
     [projects]
   )
 
-  const days = eachDayOfInterval({
-    start: startOfMonth(month),
-    end: endOfMonth(month),
-  })
+  const metrics = useMemo(() => computeMetrics(safeProjects), [safeProjects])
 
-  const eventDates = projects.map((p) => p.date)
+  const recommendations = metrics.aiRecommendations?.length
+    ? metrics.aiRecommendations
+    : ['Zatím žádná doporučení — vytvořte první akci v AI Planneru.']
+
+  const chartData = useMemo(() => {
+    if (!safeProjects.length) return FALLBACK_CHART
+    return safeProjects
+      .slice(0, 6)
+      .reverse()
+      .map((p) => ({
+        name: (p.name || 'Projekt').slice(0, 12),
+        revenue: Number(p.totalRevenue) || 0,
+        cost: Number(p.totalCost) || 0,
+      }))
+  }, [safeProjects])
+
+  const marginData = useMemo(() => {
+    if (!safeProjects.length) return FALLBACK_MARGIN
+    return safeProjects.slice(0, 5).map((p) => ({
+      name: p.documents?.nabidka || '—',
+      margin: Number((Number(p.margin) || 0).toFixed(1)),
+    }))
+  }, [safeProjects])
+
+  const days = useMemo(() => {
+    try {
+      const start = startOfMonth(month)
+      const end = endOfMonth(month)
+      if (!isValid(start) || !isValid(end)) return []
+      return eachDayOfInterval({ start, end })
+    } catch {
+      return []
+    }
+  }, [month])
+
+  const eventDates = useMemo(
+    () =>
+      safeProjects
+        .map((p) => safeParseDate(p.date))
+        .filter((d): d is Date => d !== null),
+    [safeProjects]
+  )
+
+  const leadingBlanks = days.length ? (days[0].getDay() + 6) % 7 : 0
 
   return (
     <div style={{ animation: 'fadeUp 0.4s ease' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: 16, marginBottom: 28 }}>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'flex-start',
+          flexWrap: 'wrap',
+          gap: 16,
+          marginBottom: 28,
+        }}
+      >
         <div>
           <h1 className="section-title gold-text">Dashboard</h1>
           <p className="section-sub">Přehled agentury · reálný čas</p>
         </div>
-        <button className="btn btn-gold" onClick={() => setView('planner')}>
+        <button
+          type="button"
+          className="btn btn-gold"
+          onClick={() => setView('planner')}
+        >
           <Sparkles size={16} /> Nová akce přes AI
         </button>
       </div>
@@ -91,10 +148,26 @@ export function Dashboard() {
         }}
       >
         {[
-          { label: 'Počet akcí', value: String(metrics.eventCount), sub: 'aktivní projekty' },
-          { label: 'Obrat v Kč', value: formatCurrency(metrics.revenue), sub: 'celkové výnosy' },
-          { label: 'Průměrná marže v %', value: formatPercent(metrics.avgMargin || 24.5), sub: 'netto po nákladech' },
-          { label: 'AI Doporučení', value: String(metrics.aiRecommendations.length), sub: 'pro optimalizaci nákladů' },
+          {
+            label: 'Počet akcí',
+            value: String(metrics.eventCount ?? 0),
+            sub: 'aktivní projekty',
+          },
+          {
+            label: 'Obrat v Kč',
+            value: formatCurrency(metrics.revenue ?? 0),
+            sub: 'celkové výnosy',
+          },
+          {
+            label: 'Průměrná marže v %',
+            value: formatPercent(metrics.avgMargin || 0),
+            sub: 'netto po nákladech',
+          },
+          {
+            label: 'AI Doporučení',
+            value: String(recommendations.length),
+            sub: 'pro optimalizaci nákladů',
+          },
         ].map((m, i) => (
           <motion.div
             key={m.label}
@@ -119,75 +192,164 @@ export function Dashboard() {
         ))}
       </div>
 
-      <div className="responsive-2col" style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 16, marginBottom: 24 }}>
+      <div
+        className="responsive-2col"
+        style={{
+          display: 'grid',
+          gridTemplateColumns: '1.4fr 1fr',
+          gap: 16,
+          marginBottom: 24,
+        }}
+      >
         <div className="panel" style={{ minHeight: 300 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              marginBottom: 16,
+            }}
+          >
             <TrendingUp size={18} color="var(--gold)" />
             <h3 style={{ fontSize: '1.2rem' }}>Obrat vs. náklady</h3>
           </div>
-          <ResponsiveContainer width="100%" height={240}>
-            <AreaChart data={chartData}>
-              <defs>
-                <linearGradient id="goldGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#D4AF37" stopOpacity={0.4} />
-                  <stop offset="100%" stopColor="#D4AF37" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <XAxis dataKey="name" stroke="#5c6675" fontSize={11} />
-              <YAxis stroke="#5c6675" fontSize={11} tickFormatter={(v) => `${Math.round(v / 1000)}k`} />
-              <Tooltip
-                contentStyle={{ background: '#161d26', border: '1px solid rgba(212,175,55,0.3)', borderRadius: 8 }}
-                formatter={(v) => formatCurrency(Number(v ?? 0))}
-              />
-              <Area type="monotone" dataKey="revenue" stroke="#D4AF37" fill="url(#goldGrad)" strokeWidth={2} />
-              <Area type="monotone" dataKey="cost" stroke="#5c6675" fill="transparent" strokeWidth={1.5} strokeDasharray="4 4" />
-            </AreaChart>
-          </ResponsiveContainer>
+          <div style={{ width: '100%', height: 240 }}>
+            <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+              <AreaChart data={chartData}>
+                <defs>
+                  <linearGradient id="goldGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#D4AF37" stopOpacity={0.4} />
+                    <stop offset="100%" stopColor="#D4AF37" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <XAxis dataKey="name" stroke="#5c6675" fontSize={11} />
+                <YAxis
+                  stroke="#5c6675"
+                  fontSize={11}
+                  tickFormatter={(v) => `${Math.round(Number(v) / 1000)}k`}
+                />
+                <Tooltip
+                  contentStyle={{
+                    background: '#161d26',
+                    border: '1px solid rgba(212,175,55,0.3)',
+                    borderRadius: 8,
+                  }}
+                  formatter={(v) => formatCurrency(Number(v ?? 0))}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="revenue"
+                  stroke="#D4AF37"
+                  fill="url(#goldGrad)"
+                  strokeWidth={2}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="cost"
+                  stroke="#5c6675"
+                  fill="transparent"
+                  strokeWidth={1.5}
+                  strokeDasharray="4 4"
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
         </div>
 
         <div className="panel">
           <h3 style={{ fontSize: '1.2rem', marginBottom: 16 }}>Marže projektů</h3>
-          <ResponsiveContainer width="100%" height={240}>
-            <BarChart data={marginData}>
-              <XAxis dataKey="name" stroke="#5c6675" fontSize={11} />
-              <YAxis stroke="#5c6675" fontSize={11} />
-              <Tooltip
-                contentStyle={{ background: '#161d26', border: '1px solid rgba(212,175,55,0.3)', borderRadius: 8 }}
-                formatter={(v) => `${v} %`}
-              />
-              <Bar dataKey="margin" fill="#D4AF37" radius={[4, 4, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
+          <div style={{ width: '100%', height: 240 }}>
+            <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+              <BarChart data={marginData}>
+                <XAxis dataKey="name" stroke="#5c6675" fontSize={11} />
+                <YAxis stroke="#5c6675" fontSize={11} />
+                <Tooltip
+                  contentStyle={{
+                    background: '#161d26',
+                    border: '1px solid rgba(212,175,55,0.3)',
+                    borderRadius: 8,
+                  }}
+                  formatter={(v) => `${v ?? 0} %`}
+                />
+                <Bar dataKey="margin" fill="#D4AF37" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
         </div>
       </div>
 
-      <div className="responsive-2col" style={{ display: 'grid', gridTemplateColumns: '1fr 1.2fr', gap: 16 }}>
+      <div
+        className="responsive-2col"
+        style={{ display: 'grid', gridTemplateColumns: '1fr 1.2fr', gap: 16 }}
+      >
         <div className="panel">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: 16,
+            }}
+          >
             <h3 style={{ fontSize: '1.2rem' }}>Kalendář</h3>
             <div style={{ display: 'flex', gap: 4 }}>
-              <button className="btn btn-ghost" style={{ padding: 6 }} onClick={() => setMonth(subMonths(month, 1))}>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                style={{ padding: 6 }}
+                onClick={() => setMonth((m) => subMonths(m, 1))}
+              >
                 <ChevronLeft size={16} />
               </button>
-              <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', padding: '6px 8px' }}>
-                {format(month, 'LLLL yyyy', { locale: cs })}
+              <span
+                style={{
+                  fontSize: '0.85rem',
+                  color: 'var(--text-muted)',
+                  padding: '6px 8px',
+                }}
+              >
+                {isValid(month)
+                  ? format(month, 'LLLL yyyy', { locale: cs })
+                  : '—'}
               </span>
-              <button className="btn btn-ghost" style={{ padding: 6 }} onClick={() => setMonth(addMonths(month, 1))}>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                style={{ padding: 6 }}
+                onClick={() => setMonth((m) => addMonths(m, 1))}
+              >
                 <ChevronRight size={16} />
               </button>
             </div>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4, fontSize: '0.75rem', color: 'var(--text-dim)', marginBottom: 8 }}>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(7, 1fr)',
+              gap: 4,
+              fontSize: '0.75rem',
+              color: 'var(--text-dim)',
+              marginBottom: 8,
+            }}
+          >
             {['Po', 'Út', 'St', 'Čt', 'Pá', 'So', 'Ne'].map((d) => (
-              <div key={d} style={{ textAlign: 'center' }}>{d}</div>
+              <div key={d} style={{ textAlign: 'center' }}>
+                {d}
+              </div>
             ))}
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 4 }}>
-            {Array.from({ length: (days[0].getDay() + 6) % 7 }).map((_, i) => (
-              <div key={`e${i}`} />
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(7, 1fr)',
+              gap: 4,
+            }}
+          >
+            {Array.from({ length: leadingBlanks }).map((_, i) => (
+              <div key={`blank-${i}`} />
             ))}
             {days.map((day) => {
-              const hasEvent = eventDates.some((d) => isSameDay(new Date(d), day))
+              const hasEvent = eventDates.some((d) => isSameDay(d, day))
               return (
                 <div
                   key={day.toISOString()}
@@ -200,7 +362,9 @@ export function Dashboard() {
                     fontSize: '0.8rem',
                     background: hasEvent ? 'var(--gold-subtle)' : 'transparent',
                     color: hasEvent ? 'var(--gold)' : 'var(--text-muted)',
-                    border: hasEvent ? '1px solid var(--border-strong)' : '1px solid transparent',
+                    border: hasEvent
+                      ? '1px solid var(--border-strong)'
+                      : '1px solid transparent',
                     fontWeight: hasEvent ? 600 : 400,
                   }}
                 >
@@ -208,15 +372,36 @@ export function Dashboard() {
                 </div>
               )
             })}
+            {!days.length && (
+              <div
+                style={{
+                  gridColumn: '1 / -1',
+                  textAlign: 'center',
+                  color: 'var(--text-dim)',
+                  padding: 16,
+                }}
+              >
+                Kalendář není k dispozici
+              </div>
+            )}
           </div>
         </div>
 
         <div className="panel">
-          <h3 style={{ fontSize: '1.2rem', marginBottom: 12 }}>AI Doporučení pro optimalizaci nákladů</h3>
-          <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {metrics.aiRecommendations.map((rec, i) => (
+          <h3 style={{ fontSize: '1.2rem', marginBottom: 12 }}>
+            AI Doporučení pro optimalizaci nákladů
+          </h3>
+          <ul
+            style={{
+              listStyle: 'none',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 10,
+            }}
+          >
+            {recommendations.map((rec, i) => (
               <li
-                key={i}
+                key={`rec-${i}`}
                 style={{
                   padding: '0.85rem 1rem',
                   background: 'var(--bg-elevated)',
@@ -231,10 +416,18 @@ export function Dashboard() {
             ))}
           </ul>
 
-          {projects.length > 0 && (
+          {safeProjects.length > 0 ? (
             <div style={{ marginTop: 20 }}>
-              <h4 style={{ fontSize: '1rem', marginBottom: 10, color: 'var(--text-muted)' }}>Nedávné projekty</h4>
-              {projects.slice(0, 4).map((p) => (
+              <h4
+                style={{
+                  fontSize: '1rem',
+                  marginBottom: 10,
+                  color: 'var(--text-muted)',
+                }}
+              >
+                Nedávné projekty
+              </h4>
+              {safeProjects.slice(0, 4).map((p) => (
                 <button
                   key={p.id}
                   type="button"
@@ -253,22 +446,40 @@ export function Dashboard() {
                     color: 'var(--text)',
                     cursor: 'pointer',
                     fontSize: '0.9rem',
+                    gap: 8,
                   }}
                 >
-                  <span>{p.name}</span>
-                  <span className="badge badge-gold">{p.documents.nabidka}</span>
+                  <span
+                    style={{
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {p.name || 'Bez názvu'}
+                  </span>
+                  <span className="badge badge-gold">
+                    {p.documents?.nabidka || '—'}
+                  </span>
                 </button>
               ))}
+            </div>
+          ) : (
+            <div
+              style={{
+                marginTop: 20,
+                padding: '1rem',
+                background: 'var(--bg-elevated)',
+                borderRadius: 8,
+                color: 'var(--text-dim)',
+                fontSize: '0.9rem',
+              }}
+            >
+              Zatím žádné projekty. Klikněte na „Nová akce přes AI".
             </div>
           )}
         </div>
       </div>
-
-      <style>{`
-        @media (max-width: 960px) {
-          .dash-grid-2 { grid-template-columns: 1fr !important; }
-        }
-      `}</style>
     </div>
   )
 }

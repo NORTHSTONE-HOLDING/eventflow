@@ -13,7 +13,7 @@ import {
   X,
 } from 'lucide-react'
 import { Logo } from './Logo'
-import { useAppStore } from '../store/useAppStore'
+import { useAppStore, normalizeAppView } from '../store/useAppStore'
 import { hasFeature } from '../lib/subscriptions'
 import type { AppView } from '../types'
 
@@ -34,7 +34,8 @@ const NAV: Array<{
 ]
 
 export function Sidebar() {
-  const view = useAppStore((s) => s.view)
+  const rawView = useAppStore((s) => s.view)
+  const view = normalizeAppView(rawView)
   const setView = useAppStore((s) => s.setView)
   const subscription = useAppStore((s) => s.profile.subscription)
   const companyName = useAppStore((s) => s.profile.companyName)

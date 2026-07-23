@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from 'react'
 import { Camera, Upload, Loader2, Lock, FileDown } from 'lucide-react'
-import { useAppStore } from '../store/useAppStore'
+import { useAppStore, selectActiveProject } from '../store/useAppStore'
 import { hasFeature } from '../lib/subscriptions'
 import { scanMenuFromImage, readImageAsDataUrl } from '../lib/visionScan'
 import { formatCurrency } from '../lib/documentIds'
@@ -9,7 +9,7 @@ import { exportMenuPdf } from '../lib/printExport'
 
 export function AIVisionScanner() {
   const subscription = useAppStore((s) => s.profile.subscription)
-  const project = useAppStore((s) => s.getActiveProject())
+  const project = useAppStore(selectActiveProject)
   const addCateringItems = useAppStore((s) => s.addCateringItems)
   const setView = useAppStore((s) => s.setView)
   const setToast = useAppStore((s) => s.setToast)
@@ -182,7 +182,7 @@ export function AIVisionScanner() {
 export function PrintLayoutEngine() {
   const subscription = useAppStore((s) => s.profile.subscription)
   const profile = useAppStore((s) => s.profile)
-  const project = useAppStore((s) => s.getActiveProject())
+  const project = useAppStore(selectActiveProject)
   const setView = useAppStore((s) => s.setView)
   const setToast = useAppStore((s) => s.setToast)
   const [design, setDesign] = useState<PrintDesign>('elegant')

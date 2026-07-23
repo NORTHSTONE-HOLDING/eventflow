@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Lock, Scale, Loader2, MessageCircle, FileWarning } from 'lucide-react'
 import { motion } from 'framer-motion'
-import { useAppStore } from '../store/useAppStore'
+import { useAppStore, selectActiveProject } from '../store/useAppStore'
 import { hasFeature } from '../lib/subscriptions'
 import {
   COLLECTION_TEMPLATES,
@@ -12,7 +12,7 @@ import { formatCurrency } from '../lib/documentIds'
 
 export function LegalAudit() {
   const subscription = useAppStore((s) => s.profile.subscription)
-  const project = useAppStore((s) => s.getActiveProject())
+  const project = useAppStore(selectActiveProject)
   const legalRisks = useAppStore((s) => s.legalRisks)
   const legalLoading = useAppStore((s) => s.legalLoading)
   const runLegalAudit = useAppStore((s) => s.runLegalAudit)

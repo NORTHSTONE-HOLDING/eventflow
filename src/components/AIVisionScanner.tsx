@@ -324,7 +324,7 @@ export function PrintLayoutEngine() {
           Menu & Nápoje
         </h3>
 
-        {project.catering.map((item) => (
+        {(project.catering ?? []).map((item) => (
           <div
             key={item.id}
             style={{
@@ -337,9 +337,9 @@ export function PrintLayoutEngine() {
             <div>
               <div style={{ fontWeight: 600 }}>{item.name}</div>
               <div style={{ fontSize: '0.8rem', opacity: 0.65 }}>{item.recipe}</div>
-              {item.allergens.length > 0 && (
+              {(item.allergens ?? []).length > 0 && (
                 <div style={{ fontSize: '0.7rem', opacity: 0.5, marginTop: 2 }}>
-                  Alergeny: {item.allergens.join(', ')}
+                  Alergeny: {(item.allergens ?? []).join(', ')}
                 </div>
               )}
             </div>
@@ -348,6 +348,9 @@ export function PrintLayoutEngine() {
             </div>
           </div>
         ))}
+        {(project.catering ?? []).length === 0 && (
+          <div style={{ opacity: 0.6, padding: '1rem 0' }}>Žádné položky menu</div>
+        )}
       </div>
     </div>
   )

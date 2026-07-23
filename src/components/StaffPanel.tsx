@@ -197,13 +197,13 @@ export function StaffCheckinPage() {
   const updateStaff = useAppStore((s) => s.updateStaff)
 
   const project = projects.find((p) => p.id === eventId) ?? projects[0]
-  const member = project?.staff.find((s) => s.id === staffId) ?? project?.staff[0]
+  const member = project?.staff?.find((s) => s.id === staffId) ?? project?.staff?.[0]
 
   const confirm = () => {
     if (project && member) {
       updateStaff(
         project.id,
-        project.staff.map((s) =>
+        (project.staff ?? []).map((s) =>
           s.id === member.id ? { ...s, attendance: 'confirmed' } : s
         )
       )

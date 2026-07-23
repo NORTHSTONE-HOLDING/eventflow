@@ -207,8 +207,8 @@ export function ProfileSettings() {
       <div className="panel" style={{ marginTop: 24, display: 'flex', gap: 12, alignItems: 'center' }}>
         <Lock size={18} color="var(--gold)" />
         <div style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>
-          Feature gating: WhatsApp Staff = TEAM+, AI Vision Photo Scan & Print PDF = ENTERPRISE,
-          AI Scanner / Legal / Portal = BUSINESS+.
+          Feature gating: WhatsApp Staff = TEAM+, Event POS / Kasa = BUSINESS+,
+          AI Vision Photo Scan & Print PDF = ENTERPRISE, AI Scanner / Legal / Portal = BUSINESS+.
         </div>
       </div>
 

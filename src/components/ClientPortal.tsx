@@ -305,8 +305,35 @@ export function ClientPortal() {
                   </button>
                 </div>
                 {project.depositPaid && (
-                  <div className="badge badge-success" style={{ marginTop: 14 }}>
-                    Záloha uhrazena
+                  <div style={{ marginTop: 14 }}>
+                    <div className="badge badge-success">Záloha uhrazena</div>
+                    {project.clientSigned && (
+                      <div
+                        style={{
+                          marginTop: 12,
+                          padding: '0.85rem 1rem',
+                          background: 'var(--gold-subtle)',
+                          border: '1px solid var(--border-strong)',
+                          borderRadius: 8,
+                          fontSize: '0.9rem',
+                        }}
+                      >
+                        <strong style={{ color: 'var(--gold)' }}>
+                          Lifecycle krok 5 — Event POS / Kasa odemčena
+                        </strong>
+                        <div style={{ color: 'var(--text-muted)', marginTop: 4 }}>
+                          Prodej na akci je připraven. Extra bar sales se propíší do doplatkové faktury.
+                        </div>
+                        <button
+                          type="button"
+                          className="btn btn-gold"
+                          style={{ marginTop: 10 }}
+                          onClick={() => setView('pos')}
+                        >
+                          Otevřít Event POS / Kasu
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

@@ -22,7 +22,7 @@ import {
   parseISO,
 } from 'date-fns'
 import { cs } from 'date-fns/locale'
-import { ChevronLeft, ChevronRight, Sparkles, TrendingUp } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Sparkles, TrendingUp, AlertTriangle, MonitorSmartphone } from 'lucide-react'
 import { useAppStore, computeMetrics } from '../store/useAppStore'
 import { formatCurrency, formatPercent } from '../lib/documentIds'
 import type { EventProject } from '../types'
@@ -60,6 +60,8 @@ export function Dashboard() {
   const projects = useAppStore((s) => s.projects)
   const setView = useAppStore((s) => s.setView)
   const setActiveProject = useAppStore((s) => s.setActiveProject)
+  const warehouseAlerts = useAppStore((s) => s.warehouseAlerts)
+  const acknowledgeAlert = useAppStore((s) => s.acknowledgeAlert)
   const [month, setMonth] = useState(() => new Date(2026, 6, 1))
 
   const safeProjects: EventProject[] = useMemo(
@@ -68,6 +70,11 @@ export function Dashboard() {
   )
 
   const metrics = useMemo(() => computeMetrics(safeProjects), [safeProjects])
+
+  const activeAlerts = useMemo(
+    () => (warehouseAlerts ?? []).filter((a) => !a.acknowledged).slice(0, 8),
+    [warehouseAlerts]
+  )
 
   const recommendations = metrics.aiRecommendations?.length
     ? metrics.aiRecommendations
@@ -130,14 +137,72 @@ export function Dashboard() {
           <h1 className="section-title gold-text">Dashboard</h1>
           <p className="section-sub">Přehled agentury · reálný čas</p>
         </div>
-        <button
-          type="button"
-          className="btn btn-gold"
-          onClick={() => setView('planner')}
-        >
-          <Sparkles size={16} /> Nová akce přes AI
-        </button>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className="btn btn-gold"
+            onClick={() => setView('planner')}
+          >
+            <Sparkles size={16} /> Nová akce přes AI
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={() => setView('pos')}
+          >
+            <MonitorSmartphone size={16} /> Event POS / Kasa
+          </button>
+        </div>
       </div>
+
+      {activeAlerts.length > 0 && (
+        <div
+          className="panel"
+          style={{
+            marginBottom: 20,
+            borderColor: 'rgba(239,68,68,0.45)',
+            background: 'rgba(239,68,68,0.08)',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+            <AlertTriangle size={18} color="#fca5a5" />
+            <h3 style={{ fontSize: '1.1rem' }}>Skladové alerty z Event POS</h3>
+          </div>
+          <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {activeAlerts.map((a) => (
+              <li
+                key={a.id}
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  gap: 12,
+                  alignItems: 'center',
+                  padding: '0.65rem 0.85rem',
+                  background: 'var(--bg-elevated)',
+                  borderRadius: 8,
+                  fontSize: '0.9rem',
+                }}
+              >
+                <span>
+                  <strong style={{ color: '#fca5a5' }}>{a.itemName}</strong>
+                  {' · '}
+                  {a.projectName}
+                  {' · zbývá '}
+                  {a.percentLeft.toFixed(1)} %
+                </span>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  style={{ padding: '0.35rem 0.7rem', fontSize: '0.75rem' }}
+                  onClick={() => acknowledgeAlert(a.id)}
+                >
+                  OK
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div
         style={{

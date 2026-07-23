@@ -368,7 +368,10 @@ function CateringView({ items }: { items: CateringItem[] }) {
               </div>
             </div>
             <div style={{ textAlign: 'right' }}>
-              <div style={{ color: 'var(--gold)', fontWeight: 600 }}>{formatCurrency(item.foodCost)}</div>
+              <div style={{ color: 'var(--gold)', fontWeight: 600 }}>{formatCurrency(item.sellPrice || 0)}</div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-dim)' }}>
+                food cost {formatCurrency(item.foodCost)}
+              </div>
               <div className="badge badge-gold" style={{ marginTop: 4 }}>{item.category}</div>
             </div>
           </div>

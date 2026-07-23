@@ -46,6 +46,12 @@ export interface BudgetLine {
   isCost: boolean
 }
 
+export interface RecipeIngredient {
+  name: string
+  qtyPerPortion: number
+  unit: string
+}
+
 export interface CateringItem {
   id: string
   name: string
@@ -55,6 +61,33 @@ export interface CateringItem {
   allergens: string[]
   inventory: string[]
   category: 'food' | 'beverage' | 'other'
+  /** POS sell price per portion (Kč, vč. DPH) */
+  sellPrice: number
+  vatRate: number
+  plannedPortions: number
+  soldPortions: number
+  ingredients: RecipeIngredient[]
+}
+
+export interface WarehouseItem {
+  id: string
+  name: string
+  unit: string
+  initialQty: number
+  currentQty: number
+  category: 'raw' | 'package' | 'beverage'
+  linkedCateringIds: string[]
+}
+
+export interface WarehouseAlert {
+  id: string
+  projectId: string
+  projectName: string
+  warehouseItemId: string
+  itemName: string
+  percentLeft: number
+  createdAt: string
+  acknowledged: boolean
 }
 
 export interface ChecklistItem {
@@ -84,6 +117,33 @@ export interface DocumentIds {
   sequence: number
 }
 
+export type POSPaymentMethod = 'card' | 'invoice' | 'all_inclusive'
+
+export interface POSCartLine {
+  cateringId: string
+  name: string
+  category: 'food' | 'beverage' | 'other'
+  unitPrice: number
+  qty: number
+  vatRate: number
+  foodCostPerUnit: number
+}
+
+export interface POSTransaction {
+  id: string
+  receiptNumber: string
+  timestamp: string
+  lines: POSCartLine[]
+  paymentMethod: POSPaymentMethod
+  totalGross: number
+  totalNet: number
+  totalVat: number
+  totalFoodCost: number
+  portionsIssued: number
+  appendedToInvoice: boolean
+  charged: boolean
+}
+
 export interface EventProject {
   id: string
   name: string
@@ -109,6 +169,14 @@ export interface EventProject {
   netProfit: number
   totalCost: number
   totalRevenue: number
+  /** Live warehouse for POS odepisování */
+  warehouse: WarehouseItem[]
+  posTransactions: POSTransaction[]
+  /** Extra bar / POS sales appended to doplatková faktura */
+  posExtrasTotal: number
+  doplatkovaId: string | null
+  doplatkovaText: string | null
+  posClosed: boolean
 }
 
 export interface LegalRisk {
@@ -125,6 +193,18 @@ export interface MetricSnapshot {
   aiRecommendations: string[]
 }
 
+export interface POSLiveMetrics {
+  currentTurnover: number
+  realMarginPercent: number
+  portionsIssued: number
+  portionsPlanned: number
+  portionsRatioPercent: number
+  cardSales: number
+  invoiceSales: number
+  allInclusivePortions: number
+  lowStockCount: number
+}
+
 export type PrintDesign = 'modern' | 'elegant' | 'corporate'
 export type PrintFormat = 'A4' | 'A5'
 
@@ -138,3 +218,4 @@ export type AppView =
   | 'legal'
   | 'profile'
   | 'print'
+  | 'pos'

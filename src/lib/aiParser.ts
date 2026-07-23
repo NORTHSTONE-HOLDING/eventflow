@@ -7,6 +7,7 @@ import type {
 } from '../types'
 import { calculateBudget, optimizeBudgetRecommendations } from './budgetEngine'
 import { generateDocumentIds, uid } from './documentIds'
+import { buildWarehouseFromCatering } from './inventoryEngine'
 
 export interface ParsedPrompt {
   guests: number
@@ -123,12 +124,27 @@ function defaultCatering(guests: number): CateringItem[] {
     {
       id: uid('cat'),
       name: 'Welcome drink — Prosecco & mocktail',
-      recipe: 'Prosecco DOC, limetka, máta, bezový sirup',
+      recipe: 'Prosecco DOC, limetka, máta, bezový sirup, led',
       foodCost: 85 * guests,
       portion: guests,
       allergens: ['sulfit'],
-      inventory: [`Prosecco ${Math.ceil(guests / 6)} lahví`, 'Limetky 3 kg', 'Máta 2 svazky'],
+      inventory: [
+        `Prosecco ${Math.ceil(guests / 6)} lahví`,
+        'Limetky 3 kg',
+        'Máta 2 svazky',
+        `Led ${Math.ceil(guests * 0.15)} kg`,
+      ],
       category: 'beverage',
+      sellPrice: 95,
+      vatRate: 21,
+      plannedPortions: guests,
+      soldPortions: 0,
+      ingredients: [
+        { name: 'Prosecco', qtyPerPortion: 1 / 6, unit: 'ks' },
+        { name: 'Limetky', qtyPerPortion: 3 / guests, unit: 'kg' },
+        { name: 'Máta', qtyPerPortion: 2 / guests, unit: 'ks' },
+        { name: 'Led', qtyPerPortion: 0.15, unit: 'kg' },
+      ],
     },
     {
       id: uid('cat'),
@@ -139,6 +155,15 @@ function defaultCatering(guests: number): CateringItem[] {
       allergens: ['ryby', 'lepek', 'mléko'],
       inventory: [`Chléb ${scale * 4} kg`, 'Losos 2.5 kg', 'Roastbeef 3 kg'],
       category: 'food',
+      sellPrice: 65,
+      vatRate: 12,
+      plannedPortions: guests * 3,
+      soldPortions: 0,
+      ingredients: [
+        { name: 'Chléb', qtyPerPortion: (scale * 4) / (guests * 3), unit: 'kg' },
+        { name: 'Losos', qtyPerPortion: 2.5 / (guests * 3), unit: 'kg' },
+        { name: 'Roastbeef', qtyPerPortion: 3 / (guests * 3), unit: 'kg' },
+      ],
     },
     {
       id: uid('cat'),
@@ -147,8 +172,21 @@ function defaultCatering(guests: number): CateringItem[] {
       foodCost: 280 * guests,
       portion: guests,
       allergens: ['mléko', 'lepek', 'celer'],
-      inventory: [`Kuře ${Math.ceil(guests * 0.6)} ks`, `Hovězí ${Math.ceil(guests * 0.3)} kg`, 'Rýže 8 kg'],
+      inventory: [
+        `Kuře ${Math.ceil(guests * 0.6)} ks`,
+        `Hovězí ${Math.ceil(guests * 0.3)} kg`,
+        'Rýže 8 kg',
+      ],
       category: 'food',
+      sellPrice: 320,
+      vatRate: 12,
+      plannedPortions: guests,
+      soldPortions: 0,
+      ingredients: [
+        { name: 'Kuře', qtyPerPortion: 0.6, unit: 'ks' },
+        { name: 'Hovězí', qtyPerPortion: 0.3, unit: 'kg' },
+        { name: 'Rýže', qtyPerPortion: 8 / guests, unit: 'kg' },
+      ],
     },
     {
       id: uid('cat'),
@@ -159,16 +197,65 @@ function defaultCatering(guests: number): CateringItem[] {
       allergens: ['mléko', 'vejce', 'ořechy', 'lepek'],
       inventory: ['Macarons 200 ks', 'Tartaletky 150 ks', 'Káva 3 kg'],
       category: 'food',
+      sellPrice: 55,
+      vatRate: 12,
+      plannedPortions: guests * 2,
+      soldPortions: 0,
+      ingredients: [
+        { name: 'Macarons', qtyPerPortion: 200 / (guests * 2), unit: 'ks' },
+        { name: 'Tartaletky', qtyPerPortion: 150 / (guests * 2), unit: 'ks' },
+        { name: 'Káva', qtyPerPortion: 3 / (guests * 2), unit: 'kg' },
+      ],
     },
     {
       id: uid('cat'),
       name: 'Open bar — soft & pivo',
-      recipe: 'Nealko, pivo 12°, voda',
+      recipe: 'Nealko, pivo 12°, voda, led',
       foodCost: 95 * guests,
       portion: guests,
       allergens: [],
-      inventory: [`Pivo ${Math.ceil(guests / 2)} l`, 'Cola 40 l', 'Voda 60 l'],
+      inventory: [
+        `Pivo ${Math.ceil(guests / 2)} l`,
+        'Cola 40 l',
+        'Voda 60 l',
+        `Led ${Math.ceil(guests * 0.2)} kg`,
+      ],
       category: 'beverage',
+      sellPrice: 75,
+      vatRate: 21,
+      plannedPortions: guests,
+      soldPortions: 0,
+      ingredients: [
+        { name: 'Pivo', qtyPerPortion: 0.5, unit: 'l' },
+        { name: 'Cola', qtyPerPortion: 40 / guests, unit: 'l' },
+        { name: 'Voda', qtyPerPortion: 60 / guests, unit: 'l' },
+        { name: 'Led', qtyPerPortion: 0.2, unit: 'kg' },
+      ],
+    },
+    {
+      id: uid('cat'),
+      name: 'Rum & cola',
+      recipe: 'Cuban rum 4cl, cola, led, limeta',
+      foodCost: 45 * Math.ceil(guests * 0.4),
+      portion: Math.ceil(guests * 0.4),
+      allergens: [],
+      inventory: [
+        `Rum ${Math.ceil(guests * 0.4 * 0.04)} l`,
+        'Cola 20 l',
+        `Led ${Math.ceil(guests * 0.1)} kg`,
+        'Limetky 1.5 kg',
+      ],
+      category: 'beverage',
+      sellPrice: 120,
+      vatRate: 21,
+      plannedPortions: Math.ceil(guests * 0.4),
+      soldPortions: 0,
+      ingredients: [
+        { name: 'Rum', qtyPerPortion: 0.04, unit: 'l' },
+        { name: 'Cola', qtyPerPortion: 0.2, unit: 'l' },
+        { name: 'Led', qtyPerPortion: 0.12, unit: 'kg' },
+        { name: 'Limetky', qtyPerPortion: 0.02, unit: 'kg' },
+      ],
     },
   ]
 }
@@ -254,11 +341,12 @@ export async function generateEventFromPrompt(
     }
   }
 
-  // Simulate AI processing delay for premium UX
   await new Promise((r) => setTimeout(r, 1200))
 
   const budget = calculateBudget(parsed.guests, parsed.budget, parsed.location)
   const docs = generateDocumentIds()
+  const catering = defaultCatering(parsed.guests)
+  const warehouse = buildWarehouseFromCatering(catering)
 
   return {
     id: uid('evt'),
@@ -271,7 +359,7 @@ export async function generateEventFromPrompt(
     status: 'active',
     timeline: defaultTimeline(),
     budgetLines: budget.lines,
-    catering: defaultCatering(parsed.guests),
+    catering,
     checklist: defaultChecklist(),
     staff: defaultStaff(parsed.guests),
     documents: docs,
@@ -285,9 +373,30 @@ export async function generateEventFromPrompt(
     netProfit: budget.netProfit,
     totalCost: budget.totalCost,
     totalRevenue: budget.revenue,
+    warehouse,
+    posTransactions: [],
+    posExtrasTotal: 0,
+    doplatkovaId: null,
+    doplatkovaText: null,
+    posClosed: false,
   }
 }
 
 export function getAIRecommendations(project: EventProject): string[] {
-  return optimizeBudgetRecommendations(project.guests, project.budget, project.margin)
+  const tips = optimizeBudgetRecommendations(
+    project.guests,
+    project.budget,
+    project.margin
+  )
+  if (project.clientSigned && project.depositPaid && !project.posClosed) {
+    tips.unshift('POS Kasa je odemčená — spusťte prodej na akci v Event POS.')
+  } else if (!project.clientSigned) {
+    tips.push('Po podpisu smlouvy a úhradě zálohy se odemkne Event POS / Kasa.')
+  }
+  if ((project.posExtrasTotal || 0) > 0 && !project.doplatkovaId) {
+    tips.push(
+      `POS extras ${project.posExtrasTotal.toLocaleString('cs-CZ')} Kč čekají na doplatkovou fakturu — uzavřete kasu.`
+    )
+  }
+  return tips
 }

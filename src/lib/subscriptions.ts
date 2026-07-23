@@ -42,6 +42,7 @@ export const SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
       'Plný tracking & analytika',
       'Klientský portál + podpis',
       'AI Právní audit',
+      'Event POS / Mobilní Kasa',
     ],
   },
   {
@@ -54,6 +55,8 @@ export const SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
       'Vše odemčeno',
       'AI Vision Photo Menu Scan',
       'Print layout engine (PDF)',
+      'Event POS + skladové alerty',
+      'Doplatková faktura z kasy',
       'Full Supabase backup',
       'Neomezené projekty',
       'Priority support & SLA',

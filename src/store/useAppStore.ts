@@ -8,13 +8,26 @@ import type {
   EventProject,
   LegalRisk,
   MetricSnapshot,
+  POSCartLine,
+  POSPaymentMethod,
   StaffMember,
   SubscriptionTier,
   TimelineItem,
+  WarehouseAlert,
 } from '../types'
 import { generateEventFromPrompt, getAIRecommendations } from '../lib/aiParser'
 import { setDocumentSequence } from '../lib/documentIds'
 import { auditContractText } from '../lib/legalAudit'
+import {
+  buildWarehouseFromCatering,
+  decrementWarehouseForSale,
+  normalizeCateringForPos,
+} from '../lib/inventoryEngine'
+import {
+  buildDoplatkovaFaktura,
+  buildTransaction,
+  isPosUnlocked,
+} from '../lib/posEngine'
 
 const defaultProfile: AgencyProfile = {
   companyName: '',
@@ -44,9 +57,9 @@ const APP_VIEWS: AppView[] = [
   'legal',
   'profile',
   'print',
+  'pos',
 ]
 
-/** Normalize any persisted / invalid view into a real app screen (never 'hero' inside shell). */
 export function normalizeAppView(view: unknown): AppView {
   if (typeof view === 'string' && APP_VIEWS.includes(view as AppView)) {
     return view as AppView
@@ -54,11 +67,38 @@ export function normalizeAppView(view: unknown): AppView {
   return 'dashboard'
 }
 
+/** Migrate pre-POS projects so POS never crashes on missing fields. */
+export function migrateProject(p: EventProject): EventProject {
+  const catering = normalizeCateringForPos(p.catering ?? [])
+  const warehouse =
+    Array.isArray(p.warehouse) && p.warehouse.length > 0
+      ? p.warehouse
+      : buildWarehouseFromCatering(catering)
+
+  return {
+    ...p,
+    catering,
+    warehouse,
+    posTransactions: Array.isArray(p.posTransactions) ? p.posTransactions : [],
+    posExtrasTotal: Number(p.posExtrasTotal) || 0,
+    doplatkovaId: p.doplatkovaId ?? null,
+    doplatkovaText: p.doplatkovaText ?? null,
+    posClosed: Boolean(p.posClosed),
+    timeline: p.timeline ?? [],
+    budgetLines: p.budgetLines ?? [],
+    checklist: p.checklist ?? [],
+    staff: p.staff ?? [],
+  }
+}
+
 export function computeMetrics(projects: EventProject[]): MetricSnapshot {
   const list = Array.isArray(projects) ? projects : []
   const active = list.filter((p) => p && p.status !== 'cancelled')
   const eventCount = active.length
-  const revenue = active.reduce((sum, p) => sum + (Number(p.totalRevenue) || 0), 0)
+  const revenue = active.reduce(
+    (sum, p) => sum + (Number(p.totalRevenue) || 0) + (Number(p.posExtrasTotal) || 0),
+    0
+  )
   const avgMargin =
     eventCount > 0
       ? active.reduce((sum, p) => sum + (Number(p.margin) || 0), 0) / eventCount
@@ -92,6 +132,7 @@ interface AppState {
   legalRisks: LegalRisk[]
   legalLoading: boolean
   toast: string | null
+  warehouseAlerts: WarehouseAlert[]
 
   setView: (view: AppView) => void
   enterApp: (targetView?: AppView) => void
@@ -112,6 +153,17 @@ interface AppState {
   setClientSignature: (projectId: string, signature: string) => void
   markDepositPaid: (projectId: string) => void
 
+  /** Complete a POS checkout: inventory odepis, metrics, optional invoice append */
+  completePosSale: (
+    projectId: string,
+    lines: POSCartLine[],
+    paymentMethod: POSPaymentMethod
+  ) => { ok: boolean; receiptNumber?: string; error?: string }
+  closePosAndGenerateDoplatkova: (projectId: string) => string | null
+  acknowledgeAlert: (alertId: string) => void
+  clearAcknowledgedAlerts: () => void
+  ensureProjectPosReady: (projectId: string) => void
+
   runLegalAudit: (text: string) => Promise<void>
   getActiveProject: () => EventProject | null
   getMetrics: () => MetricSnapshot
@@ -130,19 +182,16 @@ export const useAppStore = create<AppState>()(
       legalRisks: [],
       legalLoading: false,
       toast: null,
+      warehouseAlerts: [],
 
       setView: (view) => {
         const next = normalizeAppView(view)
         set({ view: next, showHero: false })
       },
 
-      /** Single entry point from Hero → AppShell with a guaranteed active view. */
       enterApp: (targetView = 'dashboard') => {
         const next = normalizeAppView(targetView)
-        set({
-          showHero: false,
-          view: next,
-        })
+        set({ showHero: false, view: next })
       },
 
       dismissHero: () => {
@@ -187,7 +236,7 @@ export const useAppStore = create<AppState>()(
             )
             setDocumentSequence(maxSeq + 1)
             return {
-              projects: [project, ...safeProjects],
+              projects: [migrateProject(project), ...safeProjects],
               activeProjectId: project.id,
               aiLoading: false,
               view: 'planner',
@@ -208,7 +257,7 @@ export const useAppStore = create<AppState>()(
       updateProject: (id, patch) =>
         set((s) => ({
           projects: (s.projects ?? []).map((p) =>
-            p.id === id ? { ...p, ...patch } : p
+            p.id === id ? migrateProject({ ...p, ...patch }) : p
           ),
         })),
 
@@ -218,29 +267,190 @@ export const useAppStore = create<AppState>()(
       updateChecklist: (projectId, checklist) =>
         get().updateProject(projectId, { checklist: checklist ?? [] }),
 
-      updateCatering: (projectId, catering) =>
-        get().updateProject(projectId, { catering: catering ?? [] }),
+      updateCatering: (projectId, catering) => {
+        const normalized = normalizeCateringForPos(catering ?? [])
+        get().updateProject(projectId, {
+          catering: normalized,
+          warehouse: buildWarehouseFromCatering(normalized),
+        })
+      },
 
       addCateringItems: (projectId, items) =>
         set((s) => ({
-          projects: (s.projects ?? []).map((p) =>
-            p.id === projectId
-              ? { ...p, catering: [...(items ?? []), ...(p.catering ?? [])] }
-              : p
-          ),
+          projects: (s.projects ?? []).map((p) => {
+            if (p.id !== projectId) return p
+            const merged = normalizeCateringForPos([
+              ...(items ?? []),
+              ...(p.catering ?? []),
+            ])
+            return migrateProject({
+              ...p,
+              catering: merged,
+              warehouse: buildWarehouseFromCatering(merged),
+            })
+          }),
         })),
 
       updateStaff: (projectId, staff) =>
         get().updateProject(projectId, { staff: staff ?? [] }),
 
-      setClientSignature: (projectId, signature) =>
+      setClientSignature: (projectId, signature) => {
         get().updateProject(projectId, {
           clientSigned: true,
           clientSignature: signature,
-        }),
+        })
+        const p = get().projects.find((x) => x.id === projectId)
+        if (p?.depositPaid) {
+          get().setToast('POS Kasa odemčena — podpis + záloha hotovo')
+        }
+      },
 
-      markDepositPaid: (projectId) =>
-        get().updateProject(projectId, { depositPaid: true }),
+      markDepositPaid: (projectId) => {
+        get().updateProject(projectId, { depositPaid: true })
+        const p = get().projects.find((x) => x.id === projectId)
+        if (p?.clientSigned) {
+          get().setToast('Záloha uhrazena · Event POS / Kasa je odemčená')
+        } else {
+          get().setToast('Záloha uhrazena — po podpisu se odemkne POS Kasa')
+        }
+      },
+
+      ensureProjectPosReady: (projectId) => {
+        const p = get().projects.find((x) => x.id === projectId)
+        if (!p) return
+        get().updateProject(projectId, migrateProject(p))
+      },
+
+      completePosSale: (projectId, lines, paymentMethod) => {
+        const state = get()
+        const project = state.projects.find((p) => p.id === projectId)
+        if (!project) return { ok: false, error: 'Projekt nenalezen' }
+        if (!isPosUnlocked(project)) {
+          return {
+            ok: false,
+            error: 'POS je zamčená — vyžaduje podpis klienta a uhrazenou zálohu',
+          }
+        }
+        if (!lines.length) return { ok: false, error: 'Košík je prázdný' }
+
+        const migrated = migrateProject(project)
+        let warehouse = [...(migrated.warehouse ?? [])]
+        let catering = [...(migrated.catering ?? [])]
+        const newAlerts: WarehouseAlert[] = []
+
+        for (const line of lines) {
+          const item = catering.find((c) => c.id === line.cateringId)
+          if (!item) continue
+          const result = decrementWarehouseForSale(
+            warehouse,
+            item,
+            line.qty,
+            project.id,
+            project.name
+          )
+          warehouse = result.warehouse
+          newAlerts.push(...result.alerts)
+          catering = catering.map((c) =>
+            c.id === line.cateringId
+              ? { ...c, soldPortions: (c.soldPortions || 0) + line.qty }
+              : c
+          )
+        }
+
+        const tx = buildTransaction(
+          lines,
+          paymentMethod,
+          migrated.documents?.sequence || 1
+        )
+
+        const extrasAdd =
+          paymentMethod === 'invoice' || paymentMethod === 'card'
+            ? tx.totalGross
+            : 0
+
+        // Deduplicate alerts for same warehouse item (keep lowest %)
+        const existingAlerts = state.warehouseAlerts ?? []
+        const mergedAlerts = [...existingAlerts]
+        for (const alert of newAlerts) {
+          const idx = mergedAlerts.findIndex(
+            (a) =>
+              a.warehouseItemId === alert.warehouseItemId &&
+              a.projectId === alert.projectId &&
+              !a.acknowledged
+          )
+          if (idx >= 0) {
+            if (alert.percentLeft < mergedAlerts[idx].percentLeft) {
+              mergedAlerts[idx] = alert
+            }
+          } else {
+            mergedAlerts.unshift(alert)
+          }
+        }
+
+        set({
+          warehouseAlerts: mergedAlerts.slice(0, 50),
+          projects: state.projects.map((p) =>
+            p.id === projectId
+              ? {
+                  ...migrated,
+                  warehouse,
+                  catering,
+                  posTransactions: [tx, ...(migrated.posTransactions ?? [])],
+                  posExtrasTotal: (migrated.posExtrasTotal || 0) + extrasAdd,
+                }
+              : p
+          ),
+        })
+
+        if (newAlerts.length) {
+          get().setToast(
+            `⚠️ Sklad pod 15 %: ${newAlerts.map((a) => a.itemName).join(', ')}`
+          )
+        } else if (paymentMethod === 'all_inclusive') {
+          get().setToast(`Porce odkliknuta · ${tx.receiptNumber}`)
+        } else if (paymentMethod === 'invoice') {
+          get().setToast(`Připsáno na doplatkovou fakturu · ${tx.receiptNumber}`)
+        } else {
+          get().setToast(`Platba kartou OK · ${tx.receiptNumber}`)
+        }
+
+        return { ok: true, receiptNumber: tx.receiptNumber }
+      },
+
+      closePosAndGenerateDoplatkova: (projectId) => {
+        const state = get()
+        const project = state.projects.find((p) => p.id === projectId)
+        if (!project) return null
+        const migrated = migrateProject(project)
+        const doc = buildDoplatkovaFaktura(migrated, state.profile)
+        set({
+          projects: state.projects.map((p) =>
+            p.id === projectId
+              ? {
+                  ...migrated,
+                  doplatkovaId: doc.id,
+                  doplatkovaText: doc.text,
+                  posClosed: true,
+                  status: 'completed',
+                }
+              : p
+          ),
+        })
+        get().setToast(`Doplatková faktura ${doc.id} vygenerována`)
+        return doc.text
+      },
+
+      acknowledgeAlert: (alertId) =>
+        set((s) => ({
+          warehouseAlerts: (s.warehouseAlerts ?? []).map((a) =>
+            a.id === alertId ? { ...a, acknowledged: true } : a
+          ),
+        })),
+
+      clearAcknowledgedAlerts: () =>
+        set((s) => ({
+          warehouseAlerts: (s.warehouseAlerts ?? []).filter((a) => !a.acknowledged),
+        })),
 
       runLegalAudit: async (text) => {
         set({ legalLoading: true })
@@ -257,9 +467,9 @@ export const useAppStore = create<AppState>()(
         const s = get()
         const projects = Array.isArray(s.projects) ? s.projects : []
         if (!projects.length) return null
-        return (
+        const found =
           projects.find((p) => p?.id === s.activeProjectId) ?? projects[0] ?? null
-        )
+        return found ? migrateProject(found) : null
       },
 
       getMetrics: () => computeMetrics(get().projects ?? []),
@@ -272,16 +482,22 @@ export const useAppStore = create<AppState>()(
         activeProjectId: s.activeProjectId,
         showHero: s.showHero,
         view: normalizeAppView(s.view),
+        warehouseAlerts: s.warehouseAlerts,
       }),
       onRehydrateStorage: () => (state) => {
-        // Normalize after persist rehydration so AppShell never boots on an invalid view
         queueMicrotask(() => {
+          const projects = Array.isArray(state?.projects)
+            ? state!.projects.map(migrateProject)
+            : []
           useAppStore.setState({
             hydrated: true,
             view: normalizeAppView(state?.view),
-            projects: Array.isArray(state?.projects) ? state!.projects : [],
+            projects,
             profile: { ...defaultProfile, ...(state?.profile ?? {}) },
             showHero: state?.showHero ?? true,
+            warehouseAlerts: Array.isArray(state?.warehouseAlerts)
+              ? state!.warehouseAlerts
+              : [],
           })
         })
       },
@@ -289,9 +505,12 @@ export const useAppStore = create<AppState>()(
   )
 )
 
-/** Stable selector: active project by id (no new object allocation in selector). */
 export function selectActiveProject(s: AppState): EventProject | null {
   const projects = Array.isArray(s.projects) ? s.projects : []
   if (!projects.length) return null
-  return projects.find((p) => p?.id === s.activeProjectId) ?? projects[0] ?? null
+  const found =
+    projects.find((p) => p?.id === s.activeProjectId) ?? projects[0] ?? null
+  return found ? migrateProject(found) : null
 }
+
+export { isPosUnlocked }

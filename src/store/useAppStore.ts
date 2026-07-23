@@ -38,6 +38,7 @@ import {
   publishKdsTicket,
 } from '../lib/kdsSync'
 import { ensurePosTables, mergeCartLine, subtractPaidLines } from '../lib/tableTabs'
+import { useInventoryStore } from './useInventoryStore'
 
 const defaultProfile: AgencyProfile = {
   companyName: '',
@@ -68,6 +69,7 @@ const APP_VIEWS: AppView[] = [
   'profile',
   'print',
   'pos',
+  'inventory',
 ]
 
 export function normalizeAppView(view: unknown): AppView {
@@ -407,6 +409,8 @@ export const useAppStore = create<AppState>()(
         let catering = [...(migrated.catering ?? [])]
         const newAlerts: WarehouseAlert[] = []
 
+        const inventoryApi = useInventoryStore.getState()
+
         for (const line of lines) {
           // Volná položka — bez skladového odepisu
           if (line.isCustom || String(line.cateringId).startsWith('custom_')) continue
@@ -425,6 +429,12 @@ export const useAppStore = create<AppState>()(
             c.id === line.cateringId
               ? { ...c, soldPortions: (c.soldPortions || 0) + line.qty }
               : c
+          )
+          // Supabase / offline inventory transaction by recipe composition
+          void inventoryApi.applyPosSaleDeduction(
+            item,
+            line.qty,
+            `POS ${opts?.tableLabel || 'Kasa'} · ${line.name}`
           )
         }
 

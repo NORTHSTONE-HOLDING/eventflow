@@ -12,6 +12,7 @@ import {
   Menu,
   X,
   MonitorSmartphone,
+  Warehouse,
 } from 'lucide-react'
 import { Logo } from './Logo'
 import { useAppStore, normalizeAppView } from '../store/useAppStore'
@@ -27,6 +28,7 @@ const NAV: Array<{
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'planner', label: 'AI Planner', icon: Sparkles },
   { id: 'pos', label: 'Event POS / Kasa', icon: MonitorSmartphone, minTier: 'BUSINESS' },
+  { id: 'inventory', label: 'Sklad & Inventura', icon: Warehouse, minTier: 'BUSINESS' },
   { id: 'scanner', label: 'AI Vision Scan', icon: Camera, minTier: 'BUSINESS' },
   { id: 'print', label: 'Tisk menu', icon: Printer, minTier: 'ENTERPRISE' },
   { id: 'staff', label: 'Personál', icon: Users, minTier: 'TEAM' },

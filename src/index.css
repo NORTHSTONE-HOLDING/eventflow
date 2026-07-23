@@ -19,6 +19,11 @@
   --danger: #ef4444;
   --info: #5b9fd4;
   --wa: #25d366;
+  --emerald: #10b981;
+  --emerald-light: #34d399;
+  --emerald-subtle: rgba(16, 185, 129, 0.12);
+  --emerald-border: rgba(16, 185, 129, 0.35);
+  --emerald-glow: rgba(16, 185, 129, 0.25);
   --radius: 12px;
   --radius-sm: 8px;
   --radius-lg: 20px;
@@ -202,6 +207,23 @@ a:hover {
   box-shadow: none;
 }
 
+.btn-emerald {
+  background: linear-gradient(135deg, var(--emerald), #059669);
+  color: #04150f;
+  border: none;
+  font-weight: 600;
+}
+.btn-emerald:hover {
+  box-shadow: 0 0 28px var(--emerald-glow);
+  transform: translateY(-1px);
+}
+.btn-emerald:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
 .btn-ghost {
   background: transparent;
   color: var(--text);
@@ -358,13 +380,205 @@ a:hover {
   padding: 2rem;
 }
 
+.inv-mobile-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--emerald-border);
+  border-radius: var(--radius-lg);
+  padding: 1.15rem;
+  box-shadow: 0 0 32px rgba(16, 185, 129, 0.08);
+}
+
+.inv-alert {
+  padding: 0.75rem 0.9rem;
+  border-radius: 8px;
+  font-size: 0.88rem;
+}
+.inv-alert.danger {
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  color: #fca5a5;
+}
+.inv-alert.warning {
+  background: rgba(240, 180, 41, 0.12);
+  border: 1px solid rgba(240, 180, 41, 0.35);
+  color: var(--warning);
+}
+.inv-alert.emerald {
+  background: var(--emerald-subtle);
+  border: 1px solid var(--emerald-border);
+  color: var(--emerald-light);
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+
 @media print {
-  .no-print { display: none !important; }
-  body { background: white; color: black; }
+  .no-print,
+  .desktop-sidebar,
+  .mobile-menu-btn,
+  .toast,
+  .inventura-print-overlay > .inventura-print-sheet .no-print {
+    display: none !important;
+  }
+
+  body {
+    background: white !important;
+    color: black !important;
+  }
+
+  .inventura-print-overlay {
+    position: static !important;
+    background: transparent !important;
+    padding: 0 !important;
+    display: block !important;
+  }
+
+  body * {
+    visibility: hidden !important;
+  }
+
+  .inventura-print-sheet,
+  .inventura-print-sheet * {
+    visibility: visible !important;
+  }
+
+  .inventura-print-sheet {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 210mm !important;
+    max-width: 210mm !important;
+    margin: 0 !important;
+    padding: 12mm !important;
+    background: #fff !important;
+    color: #111 !important;
+    box-shadow: none !important;
+    border: none !important;
+  }
+}
+
+.inventura-print-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  background: rgba(7, 10, 14, 0.82);
+  overflow: auto;
+  padding: 1.5rem;
+}
+
+.inventura-print-sheet {
+  max-width: 900px;
+  margin: 0 auto;
+  background: #fff;
+  color: #111;
+  padding: 1.5rem;
+  border-radius: 8px;
+}
+
+.inv-print-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 2px solid #111;
+  padding-bottom: 12px;
+  margin-bottom: 14px;
+}
+
+.inv-print-brand {
+  font-family: Georgia, serif;
+  font-size: 1.4rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.inv-print-header h1 {
+  font-size: 1.35rem;
+  margin: 4px 0;
+  color: #111;
+}
+
+.inv-print-meta {
+  font-size: 0.85rem;
+  text-align: right;
+  line-height: 1.55;
+}
+
+.inv-print-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.inv-print-table th,
+.inv-print-table td {
+  border: 1px solid #333;
+  padding: 0.35rem 0.4rem;
+  text-align: left;
+}
+
+.inv-print-table th {
+  background: #f2f2f2;
+  font-weight: 700;
+}
+
+.inv-print-totals {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-top: 14px;
+  border: 1px solid #333;
+  padding: 0.75rem;
+}
+
+.inv-print-totals span {
+  display: block;
+  font-size: 0.75rem;
+  color: #444;
+}
+
+.inv-print-totals strong {
+  font-size: 1.05rem;
+}
+
+.inv-print-sign {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-top: 28px;
+}
+
+.inv-print-sign p {
+  font-size: 0.8rem;
+  margin-bottom: 28px;
+}
+
+.inv-print-sign .sign-line {
+  border-bottom: 1px solid #111;
+  height: 28px;
+  margin-bottom: 6px;
+}
+
+.inv-print-sign span {
+  font-size: 0.7rem;
+  color: #555;
+}
+
+.inv-print-footer {
+  margin-top: 22px;
+  font-size: 0.7rem;
+  color: #666;
+  border-top: 1px solid #ccc;
+  padding-top: 8px;
 }
 
 @media (max-width: 900px) {
   .section-title { font-size: 1.4rem; }
   .responsive-2col { grid-template-columns: 1fr !important; }
   .app-main-pad { padding: 4rem 1rem 1.5rem !important; }
+  .inv-print-sign { grid-template-columns: 1fr; }
+  .inv-print-totals { grid-template-columns: 1fr; }
 }

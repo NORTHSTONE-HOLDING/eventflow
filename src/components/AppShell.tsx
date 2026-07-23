@@ -9,6 +9,7 @@ import { ClientPortal } from './ClientPortal'
 import { LegalAudit } from './LegalAudit'
 import { ProfileSettings } from './ProfileSettings'
 import { EventPOS } from './EventPOS'
+import { InventoryHub } from './inventory/InventoryHub'
 import { ErrorBoundary } from './ErrorBoundary'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useEffect } from 'react'
@@ -22,6 +23,8 @@ function renderView(view: AppView) {
       return <AIPlanner />
     case 'pos':
       return <EventPOS />
+    case 'inventory':
+      return <InventoryHub />
     case 'scanner':
       return <AIVisionScanner />
     case 'print':

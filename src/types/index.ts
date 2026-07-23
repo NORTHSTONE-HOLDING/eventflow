@@ -293,6 +293,73 @@ export interface POSLiveMetrics {
 export type PrintDesign = 'modern' | 'elegant' | 'corporate'
 export type PrintFormat = 'A4' | 'A5'
 
+export type InventoryUnit = 'kg' | 'l' | 'ks' | 'ml' | 'g' | 'porce'
+
+export type InventoryLogType = 'naskladneni' | 'odpis_pos' | 'inventura_rozdil'
+
+export interface InventoryItem {
+  id: string
+  user_id: string
+  name: string
+  barcode: string | null
+  category: string
+  subcategory: string
+  supplier: string
+  purchase_price: number
+  average_price: number
+  vat_rate: number
+  unit: InventoryUnit | string
+  current_quantity: number
+  minimum_quantity: number
+  shelf_life: string | null
+  warehouse_section: string
+  updated_at: string
+  created_at: string
+}
+
+export interface InventoryLog {
+  id: string
+  item_id: string
+  type: InventoryLogType
+  quantity_changed: number
+  user_id: string
+  timestamp: string
+  note?: string
+  unit_price?: number
+}
+
+export interface InvoiceVisionLine {
+  name: string
+  quantity: number
+  unit: string
+  purchase_price_ex_vat: number
+  vat_rate: number
+  barcode?: string | null
+}
+
+export interface InvoiceVisionResult {
+  supplier_name: string
+  date: string
+  ico: string
+  items: InvoiceVisionLine[]
+}
+
+export interface InventuraCountRow {
+  item_id: string
+  expected_quantity: number
+  actual_quantity: number | null
+  unit_price: number
+}
+
+export interface InventuraSession {
+  id: string
+  warehouse_name: string
+  started_at: string
+  closed_at: string | null
+  counts: InventuraCountRow[]
+  status: 'open' | 'closed'
+}
+
 export type AppView =
   | 'hero'
   | 'dashboard'
@@ -304,3 +371,4 @@ export type AppView =
   | 'profile'
   | 'print'
   | 'pos'
+  | 'inventory'

@@ -7,34 +7,61 @@ import {
   Loader2,
   Lock,
   RefreshCw,
+  ShoppingCart,
   Warehouse,
 } from 'lucide-react'
 import { useInventoryStore } from '../../store/useInventoryStore'
 import { useAppStore } from '../../store/useAppStore'
 import { hasFeature } from '../../lib/subscriptions'
 import { formatCurrency } from '../../lib/documentIds'
-import { MobileInvoiceRestock, SyncBadge } from './MobileInvoiceRestock'
+import { MobileInvoiceRestock } from './MobileInvoiceRestock'
 import { MobileInventura } from './MobileInventura'
+import { AIProcurementAssistant } from './AIProcurementAssistant'
+import { CloudSyncBadge } from './CloudSyncBadge'
 
-type InvTab = 'overview' | 'restock' | 'audit'
+type InvTab = 'overview' | 'restock' | 'audit' | 'procurement'
+
+const TAB_KEY = 'eventflow-inventory-tab'
+
+function readTab(): InvTab {
+  try {
+    const v = sessionStorage.getItem(TAB_KEY)
+    if (v === 'overview' || v === 'restock' || v === 'audit' || v === 'procurement') {
+      return v
+    }
+  } catch {
+    // ignore
+  }
+  return 'overview'
+}
 
 export function InventoryHub() {
   const subscription = useAppStore((s) => s.profile.subscription)
   const setView = useAppStore((s) => s.setView)
+  const projects = useAppStore((s) => s.projects)
   const items = useInventoryStore((s) => s.items)
   const logs = useInventoryStore((s) => s.logs)
   const loading = useInventoryStore((s) => s.loading)
   const error = useInventoryStore((s) => s.error)
   const bootstrap = useInventoryStore((s) => s.bootstrap)
   const refreshFromCloud = useInventoryStore((s) => s.refreshFromCloud)
+  const syncRecipesFromProjects = useInventoryStore((s) => s.syncRecipesFromProjects)
   const syncMode = useInventoryStore((s) => s.syncMode)
 
-  const [tab, setTab] = useState<InvTab>('overview')
+  const [tab, setTab] = useState<InvTab>(() => readTab())
   const unlocked = hasFeature(subscription || 'LITE', 'BUSINESS')
 
   useEffect(() => {
-    void bootstrap()
-  }, [bootstrap])
+    void bootstrap().then(() => syncRecipesFromProjects(projects ?? []))
+  }, [bootstrap, syncRecipesFromProjects, projects])
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(TAB_KEY, tab)
+    } catch {
+      // ignore
+    }
+  }, [tab])
 
   const stats = useMemo(() => {
     const list = Array.isArray(items) ? items : []
@@ -81,11 +108,11 @@ export function InventoryHub() {
         <div>
           <h1 className="section-title gold-text">Sklad & Inventura</h1>
           <p className="section-sub">
-            Supabase sync · AI naskladnění faktury · mobilní inventura · A4 protokoly
+            Receptury · POS odepis · AI nákupní seznam · offline ochrana dat
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-          <SyncBadge />
+          <CloudSyncBadge />
           <button
             type="button"
             className="btn btn-ghost"
@@ -98,12 +125,16 @@ export function InventoryHub() {
         </div>
       </div>
 
-      {error && <div className="inv-alert danger" style={{ marginBottom: 12 }}>{error}</div>}
+      {error && (
+        <div className="inv-alert danger" style={{ marginBottom: 12 }}>
+          {error}
+        </div>
+      )}
 
       {syncMode === 'offline' && (
         <div className="inv-alert warning" style={{ marginBottom: 12 }}>
-          Chybí <code>VITE_SUPABASE_URL</code> / <code>VITE_SUPABASE_ANON_KEY</code> — běží reaktivní
-          offline záloha v prohlížeči. Po doplnění klíčů se data synchronizují.
+          Offline / hybrid režim — stoly, POS prodeje i skladové pohyby se ukládají lokálně a
+          synchronizují po obnovení cloudu.
         </div>
       )}
 
@@ -116,11 +147,7 @@ export function InventoryHub() {
         }}
       >
         <StatCard icon={Boxes} label="Položky skladu" value={String(stats.count)} />
-        <StatCard
-          icon={Warehouse}
-          label="Hodnota skladu"
-          value={formatCurrency(stats.value)}
-        />
+        <StatCard icon={Warehouse} label="Hodnota skladu" value={formatCurrency(stats.value)} />
         <StatCard
           icon={ClipboardList}
           label="Pod minimem"
@@ -146,6 +173,7 @@ export function InventoryHub() {
             ['overview', 'Přehled skladu', Warehouse],
             ['restock', '📸 Naskladnění', Camera],
             ['audit', 'Mobilní inventura', ClipboardList],
+            ['procurement', 'AI Nákupní asistent', ShoppingCart],
           ] as const
         ).map(([id, label, Icon]) => (
           <button
@@ -164,6 +192,7 @@ export function InventoryHub() {
         {tab === 'overview' && <InventoryOverview />}
         {tab === 'restock' && <MobileInvoiceRestock />}
         {tab === 'audit' && <MobileInventura />}
+        {tab === 'procurement' && <AIProcurementAssistant />}
       </AnimateTab>
     </div>
   )
@@ -198,11 +227,11 @@ function StatCard({
       className="panel glass-glow"
       style={{
         padding: '0.9rem',
-        borderColor: danger ? 'rgba(239,68,68,0.45)' : 'var(--emerald-border)',
+        borderColor: danger ? 'rgba(239,68,68,0.45)' : 'var(--border)',
       }}
     >
       <div className="label" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-        <Icon size={13} color="var(--emerald)" /> {label}
+        <Icon size={13} color="var(--gold)" /> {label}
       </div>
       <div
         style={{
@@ -221,6 +250,7 @@ function StatCard({
 function InventoryOverview() {
   const items = useInventoryStore((s) => s.items)
   const logs = useInventoryStore((s) => s.logs)
+  const recipes = useInventoryStore((s) => s.recipes)
   const loading = useInventoryStore((s) => s.loading)
 
   if (loading && !items.length) {
@@ -235,7 +265,9 @@ function InventoryOverview() {
   return (
     <div style={{ display: 'grid', gap: 14 }}>
       <div className="panel" style={{ overflowX: 'auto' }}>
-        <h3 style={{ marginBottom: 10, fontSize: '1.1rem' }}>Katalog skladu</h3>
+        <h3 style={{ marginBottom: 10, fontSize: '1.1rem' }}>
+          Katalog skladu · receptury: {(recipes ?? []).length}
+        </h3>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
           <thead>
             <tr style={{ color: 'var(--text-muted)', textAlign: 'left' }}>
@@ -264,7 +296,7 @@ function InventoryOverview() {
                   <td
                     style={{
                       padding: '0.55rem',
-                      color: low ? '#fca5a5' : 'var(--emerald)',
+                      color: low ? '#fca5a5' : 'var(--success)',
                       fontWeight: 600,
                     }}
                   >
@@ -286,7 +318,15 @@ function InventoryOverview() {
 
       <div className="panel">
         <h3 style={{ marginBottom: 10, fontSize: '1.1rem' }}>Poslední pohyby (inventory_logs)</h3>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 280, overflowY: 'auto' }}>
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 8,
+            maxHeight: 280,
+            overflowY: 'auto',
+          }}
+        >
           {(logs ?? []).slice(0, 30).map((log) => {
             const item = items.find((i) => i.id === log.item_id)
             return (
@@ -313,7 +353,7 @@ function InventoryOverview() {
                 <div
                   style={{
                     fontWeight: 700,
-                    color: log.quantity_changed < 0 ? '#fca5a5' : 'var(--emerald)',
+                    color: log.quantity_changed < 0 ? '#fca5a5' : 'var(--success)',
                   }}
                 >
                   {log.quantity_changed > 0 ? '+' : ''}
@@ -323,7 +363,9 @@ function InventoryOverview() {
             )
           })}
           {!logs.length && (
-            <div style={{ color: 'var(--text-dim)' }}>Zatím bez pohybů — proveďte naskladnění nebo POS prodej.</div>
+            <div style={{ color: 'var(--text-dim)' }}>
+              Zatím bez pohybů — proveďte naskladnění nebo POS prodej (např. Mojito).
+            </div>
           )}
         </div>
       </div>

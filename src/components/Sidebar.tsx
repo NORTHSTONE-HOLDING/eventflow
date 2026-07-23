@@ -61,6 +61,11 @@ export function Sidebar() {
               key={item.id}
               type="button"
               onClick={() => {
+                if (locked) {
+                  setView('profile')
+                  setOpen(false)
+                  return
+                }
                 setView(item.id)
                 setOpen(false)
               }}

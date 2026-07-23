@@ -2,12 +2,14 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type {
   CateringItem,
+  CloudSyncStatus,
+  EventProject,
   InventuraSession,
   InventoryItem,
   InventoryLog,
   InvoiceVisionResult,
+  RecipeIngredientRecord,
 } from '../types'
-import { inferIngredientsFromCatering } from '../lib/inventoryEngine'
 import {
   createEmptyInventoryItem,
   createInventoryLog,
@@ -21,16 +23,32 @@ import {
 import {
   fetchInventoryLogsRemote,
   fetchInventoryRemote,
-  insertInventoryLogRemote,
-  upsertInventoryRemote,
+  fetchRecipesRemote,
 } from '../lib/inventoryCloud'
-import { getInventorySyncMode, type SyncMode } from '../lib/supabase'
+import {
+  getInventorySyncMode,
+  probeSupabaseConnection,
+  subscribeConnectivity,
+  type SyncMode,
+} from '../lib/supabase'
+import {
+  flushOfflineQueue,
+  getOfflineQueueSize,
+  persistOrQueue,
+} from '../lib/offlineQueue'
+import {
+  buildRecipeRecordsFromCatering,
+  resolveRecipeForCatering,
+} from '../lib/recipeEngine'
 import { uid } from '../lib/documentIds'
 
 interface InventoryState {
   items: InventoryItem[]
   logs: InventoryLog[]
+  recipes: RecipeIngredientRecord[]
   syncMode: SyncMode
+  cloudStatus: CloudSyncStatus
+  pendingQueue: number
   loading: boolean
   error: string | null
   lastSyncedAt: string | null
@@ -40,6 +58,9 @@ interface InventoryState {
   setError: (msg: string | null) => void
   bootstrap: () => Promise<void>
   refreshFromCloud: () => Promise<void>
+  refreshSyncStatus: () => Promise<void>
+  flushQueue: () => Promise<void>
+  syncRecipesFromProjects: (projects: EventProject[]) => Promise<void>
 
   applyInvoiceRestock: (
     invoice: InvoiceVisionResult
@@ -64,15 +85,15 @@ interface InventoryState {
 }
 
 async function persistItem(item: InventoryItem) {
-  if (getInventorySyncMode() === 'online') {
-    await upsertInventoryRemote(item)
-  }
+  await persistOrQueue('inventory_upsert', item)
 }
 
 async function persistLog(log: InventoryLog) {
-  if (getInventorySyncMode() === 'online') {
-    await insertInventoryLogRemote(log)
-  }
+  await persistOrQueue('inventory_log', log)
+}
+
+async function persistRecipe(row: RecipeIngredientRecord) {
+  await persistOrQueue('recipe_upsert', row)
 }
 
 export const useInventoryStore = create<InventoryState>()(
@@ -80,7 +101,10 @@ export const useInventoryStore = create<InventoryState>()(
     (set, get) => ({
       items: [],
       logs: [],
+      recipes: [],
       syncMode: getInventorySyncMode(),
+      cloudStatus: getInventorySyncMode() === 'online' ? 'synced' : 'local',
+      pendingQueue: 0,
       loading: false,
       error: null,
       lastSyncedAt: null,
@@ -89,22 +113,57 @@ export const useInventoryStore = create<InventoryState>()(
 
       setError: (msg) => set({ error: msg }),
 
+      refreshSyncStatus: async () => {
+        const mode = getInventorySyncMode()
+        const pending = getOfflineQueueSize()
+        if (mode === 'offline') {
+          set({
+            syncMode: 'offline',
+            cloudStatus: pending > 0 ? 'pending' : 'local',
+            pendingQueue: pending,
+          })
+          return
+        }
+        const ok = await probeSupabaseConnection()
+        set({
+          syncMode: ok ? 'online' : 'offline',
+          cloudStatus: !ok ? 'error' : pending > 0 ? 'pending' : 'synced',
+          pendingQueue: pending,
+        })
+      },
+
+      flushQueue: async () => {
+        const res = await flushOfflineQueue()
+        await get().refreshSyncStatus()
+        if (res.flushed > 0) {
+          set({ lastSyncedAt: new Date().toISOString() })
+        }
+      },
+
       bootstrap: async () => {
         const mode = getInventorySyncMode()
         set({ loading: true, error: null, syncMode: mode })
         try {
           if (mode === 'online') {
-            const remote = await fetchInventoryRemote()
-            if (remote.ok && remote.items.length) {
-              const logsRes = await fetchInventoryLogsRemote()
-              set({
-                items: remote.items,
-                logs: logsRes.ok ? logsRes.logs : get().logs,
-                lastSyncedAt: new Date().toISOString(),
-                loading: false,
-                hydrated: true,
-              })
-              return
+            const reachable = await probeSupabaseConnection()
+            if (reachable) {
+              await flushOfflineQueue()
+              const remote = await fetchInventoryRemote()
+              const recipesRes = await fetchRecipesRemote()
+              if (remote.ok && remote.items.length) {
+                const logsRes = await fetchInventoryLogsRemote()
+                set({
+                  items: remote.items,
+                  logs: logsRes.ok ? logsRes.logs : get().logs,
+                  recipes: recipesRes.ok ? recipesRes.recipes : get().recipes,
+                  lastSyncedAt: new Date().toISOString(),
+                  loading: false,
+                  hydrated: true,
+                  cloudStatus: 'synced',
+                  pendingQueue: getOfflineQueueSize(),
+                })
+                return
+              }
             }
           }
 
@@ -115,10 +174,18 @@ export const useInventoryStore = create<InventoryState>()(
               loading: false,
               hydrated: true,
               syncMode: mode,
+              cloudStatus: mode === 'online' ? 'pending' : 'local',
+              pendingQueue: getOfflineQueueSize(),
             })
             return
           }
-          set({ loading: false, hydrated: true, syncMode: mode })
+          set({
+            loading: false,
+            hydrated: true,
+            syncMode: mode,
+            cloudStatus: mode === 'online' ? 'synced' : 'local',
+            pendingQueue: getOfflineQueueSize(),
+          })
         } catch (e) {
           set({
             loading: false,
@@ -126,6 +193,8 @@ export const useInventoryStore = create<InventoryState>()(
             error: e instanceof Error ? e.message : 'Nepodařilo se načíst sklad',
             items: get().items.length ? get().items : seedDefaultInventory(),
             syncMode: 'offline',
+            cloudStatus: 'local',
+            pendingQueue: getOfflineQueueSize(),
           })
         }
       },
@@ -134,25 +203,67 @@ export const useInventoryStore = create<InventoryState>()(
         const mode = getInventorySyncMode()
         set({ loading: true, error: null, syncMode: mode })
         if (mode !== 'online') {
-          set({ loading: false, error: 'Supabase klíče chybí — běží offline záloha' })
-          return
-        }
-        const remote = await fetchInventoryRemote()
-        if (!remote.ok) {
           set({
             loading: false,
-            error: remote.error || 'Sync selhal',
+            error:
+              'Chybí Supabase klíče nebo jste offline — běží lokální ochrana dat',
+            cloudStatus: 'local',
+          })
+          return
+        }
+        const reachable = await probeSupabaseConnection()
+        if (!reachable) {
+          set({
+            loading: false,
+            error: 'Cloud je dočasně nedostupný — data zůstávají lokálně chráněna',
+            cloudStatus: 'error',
             syncMode: 'offline',
           })
           return
         }
+        await flushOfflineQueue()
+        const remote = await fetchInventoryRemote()
+        if (!remote.ok) {
+          set({
+            loading: false,
+            error: remote.error || 'Synchronizace selhala',
+            cloudStatus: 'error',
+          })
+          return
+        }
         const logsRes = await fetchInventoryLogsRemote()
+        const recipesRes = await fetchRecipesRemote()
         set({
           items: remote.items.length ? remote.items : get().items,
           logs: logsRes.ok ? logsRes.logs : get().logs,
+          recipes: recipesRes.ok ? recipesRes.recipes : get().recipes,
           lastSyncedAt: new Date().toISOString(),
           loading: false,
+          cloudStatus: 'synced',
+          pendingQueue: getOfflineQueueSize(),
         })
+      },
+
+      syncRecipesFromProjects: async (projects) => {
+        const inventory = get().items
+        const built: RecipeIngredientRecord[] = []
+        for (const p of projects ?? []) {
+          built.push(
+            ...buildRecipeRecordsFromCatering(p.catering ?? [], inventory)
+          )
+        }
+        if (!built.length) return
+
+        const cateringIds = new Set(built.map((r) => r.catering_id))
+        const kept = (get().recipes ?? []).filter(
+          (r) => !cateringIds.has(r.catering_id)
+        )
+        const next = [...kept, ...built]
+        set({ recipes: next })
+        for (const row of built) {
+          await persistRecipe(row)
+        }
+        await get().refreshSyncStatus()
       },
 
       applyInvoiceRestock: async (invoice) => {
@@ -241,6 +352,7 @@ export const useInventoryStore = create<InventoryState>()(
             loading: false,
             lastSyncedAt: new Date().toISOString(),
           })
+          await get().refreshSyncStatus()
           return { ok: true, created, updated }
         } catch (e) {
           const msg = e instanceof Error ? e.message : 'Naskladnění selhalo'
@@ -252,16 +364,28 @@ export const useInventoryStore = create<InventoryState>()(
       applyPosSaleDeduction: async (catering, qty, note) => {
         if (!catering || qty <= 0) return { ok: true, depleted: [] }
         let items = [...get().items]
+        const recipes = get().recipes ?? []
         const newLogs: InventoryLog[] = []
         const depleted: string[] = []
-        const ingredients = inferIngredientsFromCatering(catering)
 
-        const consume = (name: string, unit: string, amount: number) => {
-          const target = matchInventoryItem(items, { name, unit })
+        const resolved = resolveRecipeForCatering(catering, recipes, items)
+
+        const consumeById = async (
+          itemId: string | null | undefined,
+          amount: number,
+          fallbackName: string,
+          unit: string
+        ) => {
+          if (amount <= 0) return
+          const target =
+            (itemId && items.find((i) => i.id === itemId)) ||
+            matchInventoryItem(items, { name: fallbackName, unit })
           if (!target) return
+
+          const deduct = Math.round(amount * 1000) / 1000
           const nextQty = Math.max(
             0,
-            Math.round((target.current_quantity - amount) * 1000) / 1000
+            Math.round((target.current_quantity - deduct) * 1000) / 1000
           )
           if (nextQty <= target.minimum_quantity) depleted.push(target.name)
           const updatedItem: InventoryItem = {
@@ -273,22 +397,36 @@ export const useInventoryStore = create<InventoryState>()(
           const log = createInventoryLog({
             item_id: target.id,
             type: 'odpis_pos',
-            quantity_changed: -amount,
-            note: note || `POS odepis · ${catering.name}`,
+            quantity_changed: -deduct,
+            note:
+              note ||
+              `POS odepis · ${catering.name} · ${fallbackName} ${deduct} ${unit}`,
             unit_price: target.average_price,
           })
           newLogs.push(log)
-          void persistItem(updatedItem)
-          void persistLog(log)
+          await persistItem(updatedItem)
+          await persistLog(log)
         }
 
-        if (ingredients.length) {
-          for (const ing of ingredients) {
-            consume(ing.name, ing.unit, ing.qtyPerPortion * qty)
+        if (resolved.length) {
+          for (const line of resolved) {
+            await consumeById(
+              line.inventory_item_id,
+              line.qty_per_portion * qty,
+              line.ingredient_name,
+              line.unit
+            )
           }
         } else {
-          consume(catering.name, 'ks', qty)
-          consume(catering.name, 'porce', qty)
+          await consumeById(null, qty, catering.name, 'ks')
+        }
+
+        if (!(recipes ?? []).some((r) => r.catering_id === catering.id)) {
+          const neu = buildRecipeRecordsFromCatering([catering], items)
+          if (neu.length) {
+            set({ recipes: [...(get().recipes ?? []), ...neu] })
+            for (const row of neu) await persistRecipe(row)
+          }
         }
 
         if (newLogs.length) {
@@ -297,6 +435,7 @@ export const useInventoryStore = create<InventoryState>()(
             logs: [...newLogs, ...get().logs].slice(0, 300),
           })
         }
+        await get().refreshSyncStatus()
         return { ok: true, depleted }
       },
 
@@ -351,7 +490,12 @@ export const useInventoryStore = create<InventoryState>()(
       closeInventura: async () => {
         const session = get().inventura
         if (!session) {
-          return { ok: false, mankoValue: 0, prebytekValue: 0, error: 'Inventura neběží' }
+          return {
+            ok: false,
+            mankoValue: 0,
+            prebytekValue: 0,
+            error: 'Inventura neběží',
+          }
         }
         set({ loading: true, error: null })
         try {
@@ -411,10 +555,12 @@ export const useInventoryStore = create<InventoryState>()(
             loading: false,
             lastSyncedAt: new Date().toISOString(),
           })
+          await get().refreshSyncStatus()
 
           return { ok: true, mankoValue, prebytekValue }
         } catch (e) {
-          const msg = e instanceof Error ? e.message : 'Uzavření inventury selhalo'
+          const msg =
+            e instanceof Error ? e.message : 'Uzavření inventury selhalo'
           set({ loading: false, error: msg })
           return { ok: false, mankoValue: 0, prebytekValue: 0, error: msg }
         }
@@ -427,6 +573,7 @@ export const useInventoryStore = create<InventoryState>()(
       partialize: (s) => ({
         items: s.items,
         logs: s.logs,
+        recipes: s.recipes,
         inventura: s.inventura,
         lastSyncedAt: s.lastSyncedAt,
       }),
@@ -434,13 +581,32 @@ export const useInventoryStore = create<InventoryState>()(
         if (state) {
           state.syncMode = getInventorySyncMode()
           state.hydrated = true
+          state.pendingQueue = getOfflineQueueSize()
+          state.cloudStatus =
+            state.syncMode === 'online'
+              ? state.pendingQueue > 0
+                ? 'pending'
+                : 'synced'
+              : 'local'
           if (!state.items?.length) {
             state.items = seedDefaultInventory()
           }
+          if (!Array.isArray(state.recipes)) state.recipes = []
         }
       },
     }
   )
 )
+
+let connectivityWired = false
+export function wireInventoryConnectivity() {
+  if (connectivityWired || typeof window === 'undefined') return
+  connectivityWired = true
+  subscribeConnectivity(() => {
+    const api = useInventoryStore.getState()
+    void api.refreshSyncStatus()
+    if (navigator.onLine) void api.flushQueue()
+  })
+}
 
 export { DEFAULT_USER_ID }

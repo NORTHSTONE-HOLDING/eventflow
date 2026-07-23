@@ -50,7 +50,39 @@ export interface RecipeIngredient {
   name: string
   qtyPerPortion: number
   unit: string
+  /** Optional FK to inventory.id when linked */
+  inventoryItemId?: string
 }
+
+/** Relational recipe BOM row (Supabase recipe_ingredients / local cache) */
+export interface RecipeIngredientRecord {
+  id: string
+  catering_id: string
+  catering_name: string
+  inventory_item_id: string | null
+  ingredient_name: string
+  qty_per_portion: number
+  unit: string
+  user_id: string
+  updated_at: string
+}
+
+export type OfflineQueueKind =
+  | 'inventory_upsert'
+  | 'inventory_log'
+  | 'recipe_upsert'
+  | 'document_sequence'
+
+export interface OfflineQueueEntry {
+  id: string
+  kind: OfflineQueueKind
+  payload: unknown
+  createdAt: string
+  attempts: number
+  lastError?: string
+}
+
+export type CloudSyncStatus = 'synced' | 'local' | 'pending' | 'error'
 
 export type POSFoodSubcategory = 'predkrmy' | 'hlavni' | 'dezerty' | 'raut'
 export type POSDrinkSubcategory = 'pivo' | 'vino' | 'koktejly' | 'nealko' | 'destilaty'

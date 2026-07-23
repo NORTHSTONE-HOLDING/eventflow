@@ -27,6 +27,7 @@ import {
   migrateProject,
   isPosUnlocked,
 } from '../store/useAppStore'
+import { useInventoryStore } from '../store/useInventoryStore'
 import { hasFeature } from '../lib/subscriptions'
 import {
   cartTotals,
@@ -79,6 +80,8 @@ export function EventPOS() {
   const setTableLines = useAppStore((s) => s.setTableLines)
   const addLineToActiveTable = useAppStore((s) => s.addLineToActiveTable)
   const addTable = useAppStore((s) => s.addTable)
+  const syncRecipesFromProjects = useInventoryStore((s) => s.syncRecipesFromProjects)
+  const bootstrapInventory = useInventoryStore((s) => s.bootstrap)
 
   const unlockedTier = hasFeature(subscription || 'LITE', 'BUSINESS')
 
@@ -116,6 +119,12 @@ export function EventPOS() {
   useEffect(() => {
     if (project?.id) ensureProjectPosReady(project.id)
   }, [project?.id, ensureProjectPosReady])
+
+  useEffect(() => {
+    void bootstrapInventory().then(() => {
+      if (project) void syncRecipesFromProjects([project])
+    })
+  }, [bootstrapInventory, syncRecipesFromProjects, project])
 
   useEffect(() => {
     setSubCat('all')

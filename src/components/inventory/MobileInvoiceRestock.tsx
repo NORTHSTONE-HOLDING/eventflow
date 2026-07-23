@@ -216,10 +216,10 @@ export function SyncBadge() {
       title={lastSyncedAt || undefined}
     >
       {syncMode === 'online' ? (
-        'Supabase online'
+        '🟢 Synchronizováno s cloudem'
       ) : (
         <>
-          <CloudOff size={11} style={{ marginRight: 4 }} /> Offline záloha
+          <CloudOff size={11} style={{ marginRight: 4 }} /> 🟡 Pracuji v lokálním režimu
         </>
       )}
     </span>

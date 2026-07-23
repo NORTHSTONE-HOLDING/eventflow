@@ -10,10 +10,12 @@ import { LegalAudit } from './LegalAudit'
 import { ProfileSettings } from './ProfileSettings'
 import { EventPOS } from './EventPOS'
 import { InventoryHub } from './inventory/InventoryHub'
+import { CloudSyncBadge } from './inventory/CloudSyncBadge'
 import { ErrorBoundary } from './ErrorBoundary'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useEffect } from 'react'
 import type { AppView } from '../types'
+import { wireInventoryConnectivity } from '../store/useInventoryStore'
 
 function renderView(view: AppView) {
   switch (view) {
@@ -49,12 +51,15 @@ export function AppShell() {
   const toast = useAppStore((s) => s.toast)
   const view = normalizeAppView(rawView)
 
-  // Guarantee a valid active view whenever the shell mounts
   useEffect(() => {
     if (rawView !== view) {
       setView(view)
     }
   }, [rawView, view, setView])
+
+  useEffect(() => {
+    wireInventoryConnectivity()
+  }, [])
 
   return (
     <div
@@ -73,6 +78,24 @@ export function AppShell() {
           minWidth: 0,
         }}
       >
+        <header
+          className="no-print app-topbar"
+          style={{
+            display: 'flex',
+            justifyContent: 'flex-end',
+            alignItems: 'center',
+            gap: 10,
+            padding: '0.65rem 1.25rem',
+            borderBottom: '1px solid var(--border)',
+            background: 'rgba(11,15,20,0.72)',
+            backdropFilter: 'blur(10px)',
+            position: 'sticky',
+            top: 0,
+            zIndex: 40,
+          }}
+        >
+          <CloudSyncBadge />
+        </header>
         <main
           className="app-main-pad"
           style={{

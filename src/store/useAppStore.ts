@@ -20,7 +20,7 @@ import type {
   WarehouseAlert,
 } from '../types'
 import { generateEventFromPrompt, getAIRecommendations } from '../lib/aiParser'
-import { setDocumentSequence, uid } from '../lib/documentIds'
+import { setDocumentSequence, uid, allocateDocumentSequence, generateDocumentIds } from '../lib/documentIds'
 import { auditContractText } from '../lib/legalAudit'
 import {
   buildWarehouseFromCatering,
@@ -286,14 +286,12 @@ export const useAppStore = create<AppState>()(
       createFromPrompt: async (prompt) => {
         set({ aiLoading: true, showHero: false })
         try {
+          const seq = await allocateDocumentSequence(get().projects)
           const project = await generateEventFromPrompt(prompt)
+          project.documents = generateDocumentIds(seq)
+          setDocumentSequence(seq + 1)
           set((s) => {
             const safeProjects = Array.isArray(s.projects) ? s.projects : []
-            const maxSeq = safeProjects.reduce(
-              (m, p) => Math.max(m, p?.documents?.sequence ?? 0),
-              0
-            )
-            setDocumentSequence(maxSeq + 1)
             return {
               projects: [migrateProject(project)!, ...safeProjects],
               activeProjectId: project.id,
@@ -302,6 +300,8 @@ export const useAppStore = create<AppState>()(
               showHero: false,
             }
           })
+          // Link catering recipes → inventory for POS odepis
+          void useInventoryStore.getState().syncRecipesFromProjects([project])
           get().setToast(`Projekt vytvořen — ${project.documents.nabidka}`)
           return project
         } catch (e) {
@@ -410,6 +410,7 @@ export const useAppStore = create<AppState>()(
         const newAlerts: WarehouseAlert[] = []
 
         const inventoryApi = useInventoryStore.getState()
+        const posDeductionJobs: Promise<{ ok: boolean; depleted: string[] }>[] = []
 
         for (const line of lines) {
           // Volná položka — bez skladového odepisu
@@ -430,13 +431,26 @@ export const useAppStore = create<AppState>()(
               ? { ...c, soldPortions: (c.soldPortions || 0) + line.qty }
               : c
           )
-          // Supabase / offline inventory transaction by recipe composition
-          void inventoryApi.applyPosSaleDeduction(
-            item,
-            line.qty,
-            `POS ${opts?.tableLabel || 'Kasa'} · ${line.name}`
+          // Recipe-based inventory transaction → inventory + inventory_logs (odpis_pos)
+          posDeductionJobs.push(
+            inventoryApi.applyPosSaleDeduction(
+              item,
+              line.qty,
+              `POS ${opts?.tableLabel || 'Kasa'} · ${line.name}`
+            )
           )
         }
+
+        // Fire async but do not block checkout UI longer than necessary;
+        // errors stay in offline queue / local cache.
+        void Promise.all(posDeductionJobs).then((results) => {
+          const depleted = results.flatMap((r) => r.depleted)
+          if (depleted.length) {
+            get().setToast(
+              `Sklad pod minimem po odpisu: ${Array.from(new Set(depleted)).join(', ')}`
+            )
+          }
+        })
 
         const charged =
           paymentMethod === 'card' ||

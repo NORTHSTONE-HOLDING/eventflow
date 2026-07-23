@@ -263,6 +263,36 @@ function defaultCatering(guests: number): CateringItem[] {
         { name: 'Limetky', qtyPerPortion: 0.02, unit: 'kg' },
       ],
     },
+    {
+      id: uid('cat'),
+      name: 'Mojito',
+      recipe: 'Rum 5cl, limetka 30g, sodovka 15cl, máta, cukr, led',
+      foodCost: 55 * Math.ceil(guests * 0.35),
+      portion: Math.ceil(guests * 0.35),
+      allergens: [],
+      inventory: [
+        `Rum ${Math.ceil(guests * 0.35 * 0.05)} l`,
+        `Limetky ${Math.ceil(guests * 0.35 * 0.03)} kg`,
+        `Sodovka ${Math.ceil(guests * 0.35 * 0.15)} l`,
+        'Máta 4 svazky',
+        `Led ${Math.ceil(guests * 0.12)} kg`,
+        `Cukr ${Math.ceil(guests * 0.35 * 0.01)} kg`,
+      ],
+      category: 'beverage',
+      subcategory: 'koktejly',
+      sellPrice: 135,
+      vatRate: 21,
+      plannedPortions: Math.ceil(guests * 0.35),
+      soldPortions: 0,
+      ingredients: [
+        { name: 'Rum', qtyPerPortion: 0.05, unit: 'l' },
+        { name: 'Limetky', qtyPerPortion: 0.03, unit: 'kg' },
+        { name: 'Sodovka', qtyPerPortion: 0.15, unit: 'l' },
+        { name: 'Máta', qtyPerPortion: 0.15, unit: 'ks' },
+        { name: 'Led', qtyPerPortion: 0.12, unit: 'kg' },
+        { name: 'Cukr', qtyPerPortion: 0.01, unit: 'kg' },
+      ],
+    },
   ]
 }
 

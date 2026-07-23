@@ -39,13 +39,33 @@ export function matchInventoryItem(
   const nameKey = normalizeName(opts.name || '')
   if (!nameKey) return undefined
   const unit = opts.unit ? normalizeUnit(opts.unit) : null
-  return (
-    list.find(
-      (i) =>
-        normalizeName(i.name) === nameKey &&
-        (!unit || normalizeUnit(i.unit) === unit)
-    ) || list.find((i) => normalizeName(i.name) === nameKey)
-  )
+
+  const unitOk = (i: InventoryItem) =>
+    !unit || normalizeUnit(i.unit) === unit || normalizeUnit(i.unit) === 'porce'
+
+  const exact = list.find((i) => normalizeName(i.name) === nameKey && unitOk(i))
+  if (exact) return exact
+
+  const exactAnyUnit = list.find((i) => normalizeName(i.name) === nameKey)
+  if (exactAnyUnit) return exactAnyUnit
+
+  // Fuzzy: "Prosecco" ↔ "Prosecco Extra Dry", "Pivo" ↔ "Pivo ležák 12°"
+  const fuzzy = list.find((i) => {
+    const n = normalizeName(i.name)
+    if (!unitOk(i) && unit) return false
+    return (
+      n.startsWith(nameKey) ||
+      nameKey.startsWith(n) ||
+      n.includes(` ${nameKey}`) ||
+      nameKey.includes(n)
+    )
+  })
+  if (fuzzy) return fuzzy
+
+  return list.find((i) => {
+    const n = normalizeName(i.name)
+    return n.includes(nameKey) || nameKey.includes(n.split(' ')[0] || '')
+  })
 }
 
 export function createEmptyInventoryItem(
@@ -118,10 +138,76 @@ export function seedDefaultInventory(userId = DEFAULT_USER_ID): InventoryItem[] 
       supplier: 'Pivovar Region',
       purchase_price: 22,
       vat_rate: 21,
-      unit: 'ks',
-      current_quantity: 120,
-      minimum_quantity: 24,
+      unit: 'l',
+      current_quantity: 80,
+      minimum_quantity: 20,
       warehouse_section: 'Bar B',
+    },
+    {
+      name: 'Rum Cubano',
+      barcode: '8594001100097',
+      category: 'beverage',
+      subcategory: 'destilaty',
+      supplier: 'Destiláty Import',
+      purchase_price: 520,
+      vat_rate: 21,
+      unit: 'l',
+      current_quantity: 4.5,
+      minimum_quantity: 1,
+      warehouse_section: 'Bar VIP',
+    },
+    {
+      name: 'Limetky',
+      barcode: '8594001100103',
+      category: 'raw',
+      subcategory: 'ostatni',
+      supplier: 'Ovoce Fresh',
+      purchase_price: 85,
+      vat_rate: 12,
+      unit: 'kg',
+      current_quantity: 6,
+      minimum_quantity: 2,
+      warehouse_section: 'Chladírna 2',
+      shelf_life: '2026-07-28',
+    },
+    {
+      name: 'Sodovka',
+      barcode: '8594001100110',
+      category: 'beverage',
+      subcategory: 'nealko',
+      supplier: 'Nápoje Velkoobchod',
+      purchase_price: 8,
+      vat_rate: 21,
+      unit: 'l',
+      current_quantity: 60,
+      minimum_quantity: 15,
+      warehouse_section: 'Bar B',
+    },
+    {
+      name: 'Cola sirup / Cola',
+      barcode: '8594001100127',
+      category: 'beverage',
+      subcategory: 'nealko',
+      supplier: 'Nápoje Velkoobchod',
+      purchase_price: 45,
+      vat_rate: 21,
+      unit: 'l',
+      current_quantity: 25,
+      minimum_quantity: 8,
+      warehouse_section: 'Bar B',
+    },
+    {
+      name: 'Máta čerstvá',
+      barcode: '8594001100134',
+      category: 'raw',
+      subcategory: 'ostatni',
+      supplier: 'Ovoce Fresh',
+      purchase_price: 40,
+      vat_rate: 12,
+      unit: 'ks',
+      current_quantity: 18,
+      minimum_quantity: 4,
+      warehouse_section: 'Chladírna 2',
     },
     {
       name: 'Losos filet',
@@ -200,6 +286,19 @@ export function seedDefaultInventory(userId = DEFAULT_USER_ID): InventoryItem[] 
       unit: 'l',
       current_quantity: 6,
       minimum_quantity: 1.5,
+      warehouse_section: 'Suchý sklad',
+    },
+    {
+      name: 'Cukr třtinový',
+      barcode: '8594001100141',
+      category: 'raw',
+      subcategory: 'ostatni',
+      supplier: 'Mlýny Jih',
+      purchase_price: 32,
+      vat_rate: 12,
+      unit: 'kg',
+      current_quantity: 8,
+      minimum_quantity: 2,
       warehouse_section: 'Suchý sklad',
     },
   ]

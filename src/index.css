@@ -581,4 +581,6 @@ a:hover {
   .app-main-pad { padding: 4rem 1rem 1.5rem !important; }
   .inv-print-sign { grid-template-columns: 1fr; }
   .inv-print-totals { grid-template-columns: 1fr; }
+  .app-topbar { padding-left: 3.5rem !important; }
+  .cloud-sync-badge span { max-width: 180px; }
 }

@@ -1,4 +1,4 @@
-import type { InventoryItem, InventoryLog } from '../types'
+import type { InventoryItem, InventoryLog, RecipeIngredientRecord } from '../types'
 import { getSupabase, isSupabaseConfigured } from './supabase'
 import {
   createEmptyInventoryItem,
@@ -187,4 +187,69 @@ export function createLocalLog(
     unit_price: extras?.unit_price,
     user_id: extras?.user_id,
   })
+}
+
+function mapRowToRecipe(row: Record<string, unknown>): RecipeIngredientRecord {
+  return {
+    id: String(row.id),
+    catering_id: String(row.catering_id),
+    catering_name: String(row.catering_name || ''),
+    inventory_item_id: row.inventory_item_id ? String(row.inventory_item_id) : null,
+    ingredient_name: String(row.ingredient_name || ''),
+    qty_per_portion: Number(row.qty_per_portion) || 0,
+    unit: String(row.unit || 'ks'),
+    user_id: String(row.user_id || DEFAULT_USER_ID),
+    updated_at: String(row.updated_at || new Date().toISOString()),
+  }
+}
+
+export async function fetchRecipesRemote(
+  userId = DEFAULT_USER_ID
+): Promise<{ ok: boolean; recipes: RecipeIngredientRecord[]; error?: string }> {
+  const sb = getSupabase()
+  if (!sb) return { ok: false, recipes: [], error: 'Supabase není nakonfigurován' }
+  try {
+    const { data, error } = await sb
+      .from('recipe_ingredients')
+      .select('*')
+      .eq('user_id', userId)
+    if (error) return { ok: false, recipes: [], error: error.message }
+    return {
+      ok: true,
+      recipes: (data ?? []).map((r) => mapRowToRecipe(r as Record<string, unknown>)),
+    }
+  } catch (e) {
+    return {
+      ok: false,
+      recipes: [],
+      error: e instanceof Error ? e.message : 'Chyba načtení receptur',
+    }
+  }
+}
+
+export async function upsertRecipeRemote(
+  row: RecipeIngredientRecord
+): Promise<{ ok: boolean; error?: string }> {
+  const sb = getSupabase()
+  if (!sb) return { ok: false, error: 'offline' }
+  try {
+    const { error } = await sb.from('recipe_ingredients').upsert({
+      id: row.id,
+      catering_id: row.catering_id,
+      catering_name: row.catering_name,
+      inventory_item_id: row.inventory_item_id,
+      ingredient_name: row.ingredient_name,
+      qty_per_portion: row.qty_per_portion,
+      unit: row.unit,
+      user_id: row.user_id,
+      updated_at: row.updated_at,
+    })
+    if (error) return { ok: false, error: error.message }
+    return { ok: true }
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : 'Chyba zápisu receptury',
+    }
+  }
 }

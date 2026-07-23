@@ -76,6 +76,11 @@ export function EventPOS() {
 
   const unlockedTier = hasFeature(subscription || 'LITE', 'BUSINESS')
 
+  const safePrinters = useMemo(
+    () => (Array.isArray(printers) ? printers : []),
+    [printers]
+  )
+
   const [mainCat, setMainCat] = useState<'food' | 'beverage'>('food')
   const [subCat, setSubCat] = useState<POSSubcategory | 'all'>('all')
   const [cart, setCart] = useState<POSCartLine[]>([])
@@ -151,7 +156,6 @@ export function EventPOS() {
     (a) => a.projectId === project?.id && !a.acknowledged
   )
 
-  const safePrinters = Array.isArray(printers) ? printers : []
   const totals = cartTotals(cart ?? [])
   const currentSubs =
     POS_CATEGORIES.find((c) => c.id === mainCat)?.subs ?? []

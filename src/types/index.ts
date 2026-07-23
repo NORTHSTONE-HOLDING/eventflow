@@ -173,6 +173,9 @@ export interface POSCartLine {
   /** Volná položka mimo katalog — bez skladového odepisu */
   isCustom?: boolean
   lineId?: string
+  waiterId?: string
+  waiterName?: string
+  sentToKds?: boolean
 }
 
 export interface PosTableTab {
@@ -182,6 +185,9 @@ export interface PosTableTab {
   status: 'open' | 'paid'
   updatedAt: string
   note?: string
+  /** Waiter who last touched this table */
+  assignedWaiterId?: string | null
+  assignedWaiterName?: string | null
 }
 
 export type PrinterRole = 'bar' | 'kitchen' | 'receipt'
@@ -216,6 +222,39 @@ export interface KdsTicket {
   createdAt: string
   status: KdsTicketStatus
   lines: KdsTicketLine[]
+  waiterId?: string
+  waiterName?: string
+  orderId?: string
+  tableId?: string
+}
+
+/** Independent POS order payload (multi-waiter / KDS) */
+export interface PosOrder {
+  id: string
+  projectId: string
+  tableId: string
+  tableLabel: string
+  waiterId: string
+  waiterName: string
+  lines: POSCartLine[]
+  createdAt: string
+  status: 'sent' | 'preparing' | 'ready' | 'served' | 'paid'
+  kdsTicketIds: string[]
+  receiptNumber: string
+}
+
+export interface PosWaiterProfile {
+  id: string
+  name: string
+  role: string
+  color: string
+}
+
+export interface PosWaiterWorkspace {
+  waiterId: string
+  activeTableId: string | null
+  orderLogIds: string[]
+  updatedAt: string
 }
 
 export interface TerminalSession {

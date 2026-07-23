@@ -9,18 +9,38 @@ import { splitCartByStation } from './printerHardware'
 
 export const POS_CHANNEL = 'eventflow-pos-sync'
 
+export type WaiterReadyPayload = {
+  ticketId: string
+  orderNumber: string
+  tableLabel: string
+  station: 'kitchen' | 'bar'
+  waiterId: string
+  waiterName: string
+  message: string
+}
+
 export type PosBroadcastMessage =
   | { type: 'customer_display'; payload: CustomerDisplayState }
   | { type: 'kds_upsert'; payload: KdsTicket }
   | { type: 'kds_status'; payload: { id: string; status: KdsTicketStatus } }
   | { type: 'kds_snapshot'; payload: KdsTicket[] }
+  | { type: 'waiter_ready'; payload: WaiterReadyPayload }
   | { type: 'ping' }
 
+let sharedChannel: BroadcastChannel | null | undefined
+
+/** Singleton BroadcastChannel — safe across POS / KDS windows. */
 export function getPosChannel(): BroadcastChannel | null {
+  if (sharedChannel !== undefined) return sharedChannel
   try {
-    if (typeof BroadcastChannel === 'undefined') return null
-    return new BroadcastChannel(POS_CHANNEL)
+    if (typeof BroadcastChannel === 'undefined') {
+      sharedChannel = null
+      return null
+    }
+    sharedChannel = new BroadcastChannel(POS_CHANNEL)
+    return sharedChannel
   } catch {
+    sharedChannel = null
     return null
   }
 }
@@ -38,11 +58,43 @@ export function publishCustomerDisplay(state: CustomerDisplayState) {
 export function publishKdsTicket(ticket: KdsTicket) {
   const ch = getPosChannel()
   ch?.postMessage({ type: 'kds_upsert', payload: ticket } satisfies PosBroadcastMessage)
+  try {
+    const raw = localStorage.getItem('eventflow-kds-tickets')
+    const list = raw ? (JSON.parse(raw) as KdsTicket[]) : []
+    const next = [ticket, ...(Array.isArray(list) ? list.filter((t) => t.id !== ticket.id) : [])].slice(
+      0,
+      80
+    )
+    localStorage.setItem('eventflow-kds-tickets', JSON.stringify(next))
+  } catch {
+    // ignore
+  }
 }
 
 export function publishKdsStatus(id: string, status: KdsTicketStatus) {
   const ch = getPosChannel()
   ch?.postMessage({ type: 'kds_status', payload: { id, status } } satisfies PosBroadcastMessage)
+}
+
+export function publishWaiterReady(payload: WaiterReadyPayload) {
+  const ch = getPosChannel()
+  ch?.postMessage({ type: 'waiter_ready', payload } satisfies PosBroadcastMessage)
+  try {
+    localStorage.setItem(
+      'eventflow-waiter-ready',
+      JSON.stringify({ ...payload, ts: Date.now() })
+    )
+  } catch {
+    // ignore
+  }
+}
+
+export function publishKdsSnapshot(tickets: KdsTicket[]) {
+  const ch = getPosChannel()
+  ch?.postMessage({
+    type: 'kds_snapshot',
+    payload: tickets,
+  } satisfies PosBroadcastMessage)
 }
 
 export function buildKdsTicketsFromCart(opts: {
@@ -51,6 +103,10 @@ export function buildKdsTicketsFromCart(opts: {
   receiptNumber: string
   tableLabel: string
   lines: POSCartLine[]
+  waiterId?: string
+  waiterName?: string
+  orderId?: string
+  tableId?: string
 }): KdsTicket[] {
   const { kitchen, bar } = splitCartByStation(opts.lines ?? [])
   const tickets: KdsTicket[] = []
@@ -67,6 +123,10 @@ export function buildKdsTicketsFromCart(opts: {
       createdAt: stamp,
       status: 'new',
       lines: kitchen.map((l) => ({ name: l.name, qty: l.qty })),
+      waiterId: opts.waiterId,
+      waiterName: opts.waiterName,
+      orderId: opts.orderId,
+      tableId: opts.tableId,
     })
   }
   if (bar.length) {
@@ -80,6 +140,10 @@ export function buildKdsTicketsFromCart(opts: {
       createdAt: stamp,
       status: 'new',
       lines: bar.map((l) => ({ name: l.name, qty: l.qty })),
+      waiterId: opts.waiterId,
+      waiterName: opts.waiterName,
+      orderId: opts.orderId,
+      tableId: opts.tableId,
     })
   }
   return tickets
@@ -87,7 +151,7 @@ export function buildKdsTicketsFromCart(opts: {
 
 /** Open / focus a secondary display window (Window Management API when available). */
 export async function openPosDisplayWindow(
-  path: '/pos/customer' | '/pos/kds',
+  path: '/pos/customer' | '/pos/kds' | '/pos/kds/kitchen' | '/pos/kds/bar',
   preferredScreenIndex = 1
 ): Promise<Window | null> {
   const url = `${window.location.origin}${path}`
@@ -96,7 +160,12 @@ export async function openPosDisplayWindow(
   try {
     const nav = navigator as Navigator & {
       getScreenDetails?: () => Promise<{
-        screens: Array<{ availLeft: number; availTop: number; availWidth: number; availHeight: number }>
+        screens: Array<{
+          availLeft: number
+          availTop: number
+          availWidth: number
+          availHeight: number
+        }>
       }>
     }
     if (typeof nav.getScreenDetails === 'function') {
@@ -113,7 +182,7 @@ export async function openPosDisplayWindow(
     // Permission denied or unsupported — fall back to standard window.open
   }
 
-  return window.open(url, path.replace('/', '_'), features)
+  return window.open(url, path.replace(/\//g, '_'), features)
 }
 
 export function emptyCustomerDisplay(projectName = ''): CustomerDisplayState {

@@ -20,6 +20,9 @@ import {
   ChefHat,
   Map,
   Sparkles,
+  Bell,
+  Send,
+  UserRound,
 } from 'lucide-react'
 import {
   useAppStore,
@@ -28,6 +31,7 @@ import {
   isPosUnlocked,
 } from '../store/useAppStore'
 import { useInventoryStore } from '../store/useInventoryStore'
+import { usePosSessionStore } from '../store/usePosSessionStore'
 import { hasFeature } from '../lib/subscriptions'
 import {
   cartTotals,
@@ -42,11 +46,13 @@ import {
   pairBluetoothPrinter,
   roleLabel,
 } from '../lib/printerHardware'
-import { ensurePosTables } from '../lib/tableTabs'
+import { ensurePosTables, resolveActiveTableId } from '../lib/tableTabs'
 import {
   emptyCustomerDisplay,
+  getPosChannel,
   openPosDisplayWindow,
   publishCustomerDisplay,
+  type PosBroadcastMessage,
 } from '../lib/kdsSync'
 import type {
   CateringItem,
@@ -80,8 +86,19 @@ export function EventPOS() {
   const setTableLines = useAppStore((s) => s.setTableLines)
   const addLineToActiveTable = useAppStore((s) => s.addLineToActiveTable)
   const addTable = useAppStore((s) => s.addTable)
+  const sendTableOrderToKds = useAppStore((s) => s.sendTableOrderToKds)
   const syncRecipesFromProjects = useInventoryStore((s) => s.syncRecipesFromProjects)
   const bootstrapInventory = useInventoryStore((s) => s.bootstrap)
+
+  const activeWaiterId = usePosSessionStore((s) => s.activeWaiterId)
+  const waiters = usePosSessionStore((s) => s.waiters)
+  const setActiveWaiter = usePosSessionStore((s) => s.setActiveWaiter)
+  const getActiveWaiter = usePosSessionStore((s) => s.getActiveWaiter)
+  const getWorkspaceTableId = usePosSessionStore((s) => s.getWorkspaceTableId)
+  const setWorkspaceTableId = usePosSessionStore((s) => s.setWorkspaceTableId)
+  const readyAlerts = usePosSessionStore((s) => s.readyAlerts)
+  const pushReadyAlert = usePosSessionStore((s) => s.pushReadyAlert)
+  const dismissReadyAlert = usePosSessionStore((s) => s.dismissReadyAlert)
 
   const unlockedTier = hasFeature(subscription || 'LITE', 'BUSINESS')
 
@@ -100,21 +117,41 @@ export function EventPOS() {
   const [doplatkovaPreview, setDoplatkovaPreview] = useState<string | null>(null)
   const [showPrinters, setShowPrinters] = useState(false)
   const [pairingRole, setPairingRole] = useState<PrinterRole | null>(null)
+  const [flashReady, setFlashReady] = useState<string | null>(null)
 
   const project = useMemo(() => migrateProject(activeRaw), [activeRaw])
   const posOpen = isPosUnlocked(project)
+  const activeWaiter = getActiveWaiter()
 
   const tables = useMemo(
     () => (project ? ensurePosTables(project.posTables) : []),
     [project],
   )
-  const activeTableId = project?.activeTableId || tables[0]?.id || null
+
+  // Device/waiter workspace table — never trust orphaned project.activeTableId alone
+  const activeTableId = useMemo(() => {
+    const fromWaiter = getWorkspaceTableId()
+    return resolveActiveTableId(tables, fromWaiter || project?.activeTableId)
+  }, [tables, project?.activeTableId, getWorkspaceTableId, activeWaiterId])
+
   const activeTable = useMemo(
     () => tables.find((t) => t.id === activeTableId) ?? tables[0] ?? null,
     [tables, activeTableId],
   )
   const cart = useMemo(() => activeTable?.lines ?? [], [activeTable])
   const tableLabel = activeTable?.label ?? 'Bar / Kasa'
+  const pendingKdsCount = useMemo(
+    () => (cart ?? []).filter((l) => !l.sentToKds).length,
+    [cart],
+  )
+
+  const myReadyAlerts = useMemo(
+    () =>
+      (readyAlerts ?? []).filter(
+        (a) => !a.seen && (!a.waiterId || a.waiterId === activeWaiterId)
+      ),
+    [readyAlerts, activeWaiterId],
+  )
 
   useEffect(() => {
     if (project?.id) ensureProjectPosReady(project.id)
@@ -125,6 +162,85 @@ export function EventPOS() {
       if (project) void syncRecipesFromProjects([project])
     })
   }, [bootstrapInventory, syncRecipesFromProjects, project])
+
+  // Keep waiter workspace ↔ project table in sync (fix orphaned IDs)
+  useEffect(() => {
+    if (!project?.id || !activeTableId) return
+    if (project.activeTableId !== activeTableId) {
+      setActiveTable(project.id, activeTableId)
+    }
+    if (getWorkspaceTableId() !== activeTableId) {
+      setWorkspaceTableId(activeTableId)
+    }
+  }, [
+    project?.id,
+    project?.activeTableId,
+    activeTableId,
+    setActiveTable,
+    getWorkspaceTableId,
+    setWorkspaceTableId,
+  ])
+
+  // Live KDS → waiter notifications
+  useEffect(() => {
+    const ch = getPosChannel()
+    if (!ch) return
+    const onMsg = (ev: MessageEvent<PosBroadcastMessage>) => {
+      if (ev.data?.type !== 'waiter_ready' || !ev.data.payload) return
+      const payload = ev.data.payload
+      if (payload.waiterId && payload.waiterId !== activeWaiterId) return
+      pushReadyAlert({
+        ticketId: payload.ticketId,
+        orderNumber: payload.orderNumber,
+        tableLabel: payload.tableLabel,
+        station: payload.station,
+        waiterId: payload.waiterId || activeWaiterId,
+        message: payload.message,
+      })
+      setFlashReady(payload.message)
+      setToast(payload.message)
+      window.setTimeout(() => setFlashReady(null), 8000)
+      try {
+        if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+          new Notification('EventFlow POS', { body: payload.message })
+        }
+      } catch {
+        // ignore
+      }
+    }
+    ch.addEventListener('message', onMsg)
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== 'eventflow-waiter-ready' || !e.newValue) return
+      try {
+        const payload = JSON.parse(e.newValue) as {
+          ticketId: string
+          orderNumber: string
+          tableLabel: string
+          station: 'kitchen' | 'bar'
+          waiterId: string
+          message: string
+        }
+        if (payload.waiterId && payload.waiterId !== activeWaiterId) return
+        pushReadyAlert({
+          ticketId: payload.ticketId,
+          orderNumber: payload.orderNumber,
+          tableLabel: payload.tableLabel,
+          station: payload.station,
+          waiterId: payload.waiterId || activeWaiterId,
+          message: payload.message,
+        })
+        setFlashReady(payload.message)
+        setToast(payload.message)
+      } catch {
+        // ignore
+      }
+    }
+    window.addEventListener('storage', onStorage)
+    return () => {
+      ch.removeEventListener('message', onMsg)
+      window.removeEventListener('storage', onStorage)
+    }
+  }, [activeWaiterId, pushReadyAlert, setToast])
 
   useEffect(() => {
     setSubCat('all')
@@ -181,19 +297,34 @@ export function EventPOS() {
       setToast('POS je zamčená — dokončete podpis a zálohu')
       return
     }
+    if (!activeTableId) {
+      setToast('Nejdříve vyberte stůl na mapě stolů')
+      return
+    }
     const planned = Math.max(1, item.plannedPortions || item.portion || 1)
     const costPer = (Number(item.foodCost) || 0) / planned
-    addLineToActiveTable(project.id, {
-      cateringId: item.id,
-      name: item.name,
-      category: item.category,
-      subcategory: item.subcategory || 'ostatni',
-      unitPrice: Number(item.sellPrice) || 0,
-      qty: 1,
-      vatRate: Number(item.vatRate) || 12,
-      foodCostPerUnit: costPer,
-      lineId: uid('line'),
-    })
+    addLineToActiveTable(
+      project.id,
+      {
+        cateringId: item.id,
+        name: item.name,
+        category: item.category,
+        subcategory: item.subcategory || 'ostatni',
+        unitPrice: Number(item.sellPrice) || 0,
+        qty: 1,
+        vatRate: Number(item.vatRate) || 12,
+        foodCostPerUnit: costPer,
+        lineId: uid('line'),
+        waiterId: activeWaiter.id,
+        waiterName: activeWaiter.name,
+        sentToKds: false,
+      },
+      {
+        tableId: activeTableId,
+        waiterId: activeWaiter.id,
+        waiterName: activeWaiter.name,
+      }
+    )
   }
 
   const changeQty = (line: POSCartLine, delta: number) => {
@@ -203,10 +334,11 @@ export function EventPOS() {
         const match = line.lineId
           ? l.lineId === line.lineId
           : !l.isCustom && l.cateringId === line.cateringId && !line.isCustom
-        return match ? { ...l, qty: l.qty + delta } : l
+        return match ? { ...l, qty: l.qty + delta, sentToKds: false } : l
       })
       .filter((l) => l.qty > 0)
     setTableLines(project.id, activeTable.id, next)
+    setWorkspaceTableId(activeTable.id)
   }
 
   const clearCart = () => {
@@ -219,8 +351,43 @@ export function EventPOS() {
       setToast('POS je zamčená — dokončete podpis a zálohu')
       return
     }
-    addLineToActiveTable(project.id, line)
+    if (!activeTableId) {
+      setToast('Nejdříve vyberte stůl na mapě stolů')
+      return
+    }
+    addLineToActiveTable(
+      project.id,
+      {
+        ...line,
+        waiterId: activeWaiter.id,
+        waiterName: activeWaiter.name,
+        sentToKds: false,
+      },
+      {
+        tableId: activeTableId,
+        waiterId: activeWaiter.id,
+        waiterName: activeWaiter.name,
+      }
+    )
     setToast(`Volná položka na ${tableLabel}: ${line.name}`)
+  }
+
+  const handleSendToKds = () => {
+    if (!project || !activeTable) return
+    const res = sendTableOrderToKds({
+      projectId: project.id,
+      tableId: activeTable.id,
+      waiterId: activeWaiter.id,
+      waiterName: activeWaiter.name,
+    })
+    if (!res.ok) setToast(res.error || 'Odeslání na KDS selhalo')
+  }
+
+  const selectTable = (tableId: string) => {
+    if (!project) return
+    setWorkspaceTableId(tableId)
+    setActiveTable(project.id, tableId)
+    setCheckoutOpen(false)
   }
 
   const finalizeSale = useCallback(
@@ -239,6 +406,9 @@ export function EventPOS() {
         cashAmount: result.cashAmount,
         cardAmount: result.cardAmount,
         changeGiven: result.changeGiven,
+        waiterId: activeWaiter.id,
+        waiterName: activeWaiter.name,
+        skipKds: payLines.every((l) => l.sentToKds),
       })
 
       if (!sale.ok) {
@@ -295,6 +465,8 @@ export function EventPOS() {
     [
       project,
       activeTable,
+      activeWaiter.id,
+      activeWaiter.name,
       completePosSale,
       safePrinters,
       profile.companyName,
@@ -364,7 +536,33 @@ export function EventPOS() {
     .filter((p): p is EventProject => Boolean(p))
 
   return (
-    <div style={{ animation: 'fadeUp 0.4s ease' }} className="pos-root">
+    <div style={{ animation: 'fadeUp 0.4s ease', touchAction: 'manipulation' }} className="pos-root">
+      {flashReady && (
+        <div
+          className="pos-ready-flash"
+          style={{
+            position: 'fixed',
+            top: 12,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 3000,
+            maxWidth: 'min(92vw, 640px)',
+            width: '100%',
+            padding: '1rem 1.25rem',
+            borderRadius: 14,
+            background: '#D4AF37',
+            color: '#0b0f14',
+            fontWeight: 900,
+            fontSize: '1.05rem',
+            boxShadow: '0 12px 40px rgba(212,175,55,0.45)',
+            textAlign: 'center',
+            border: '2px solid #fff',
+          }}
+        >
+          {flashReady}
+        </div>
+      )}
+
       <div
         style={{
           display: 'flex',
@@ -378,62 +576,86 @@ export function EventPOS() {
         <div>
           <h1 className="section-title gold-text">Event POS / Kasa</h1>
           <p className="section-sub">
-            Mapa stolů · otevřené účty · rozdělení plateb · volný prodej · terminál
+            Dotyková kasa · multi-číšník · KDS notifikace · stoly
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button
-            type="button"
-            className={showMap ? 'btn btn-gold' : 'btn btn-ghost'}
-            onClick={() => setShowMap((v) => !v)}
-          >
+          <button type="button" className={showMap ? 'btn btn-gold' : 'btn btn-ghost'} onClick={() => setShowMap((v) => !v)} style={{ minHeight: 48 }}>
             <Map size={15} /> {showMap ? 'Skrýt mapu stolů' : 'Mapa Stolů'}
           </button>
-          <button type="button" className="btn btn-ghost" onClick={() => setShowPrinters((v) => !v)}>
+          <button type="button" className="btn btn-ghost" onClick={() => setShowPrinters((v) => !v)} style={{ minHeight: 48 }}>
             <Settings2 size={15} /> Tiskárny
           </button>
-          <button
-            type="button"
-            className="btn btn-ghost"
-            onClick={() => openPosDisplayWindow('/pos/customer', 1)}
-          >
+          <button type="button" className="btn btn-ghost" onClick={() => openPosDisplayWindow('/pos/customer', 1)} style={{ minHeight: 48 }}>
             <Monitor size={15} /> Zákaznický display
           </button>
-          <button
-            type="button"
-            className="btn btn-ghost"
-            onClick={() => openPosDisplayWindow('/pos/kds', 2)}
-          >
-            <ChefHat size={15} /> KDS Kuchyň
+          <button type="button" className="btn btn-ghost" onClick={() => openPosDisplayWindow('/pos/kds/kitchen', 2)} style={{ minHeight: 48 }}>
+            <ChefHat size={15} /> Displej KUCHYŇ
+          </button>
+          <button type="button" className="btn btn-ghost" onClick={() => openPosDisplayWindow('/pos/kds/bar', 2)} style={{ minHeight: 48 }}>
+            <Wine size={15} /> Displej BAR
           </button>
           {project && posOpen && !project.posClosed && (
-            <button type="button" className="btn btn-ghost" onClick={handleClosePos}>
+            <button type="button" className="btn btn-ghost" onClick={handleClosePos} style={{ minHeight: 48 }}>
               <FileText size={15} /> Uzavřít kasu
             </button>
           )}
         </div>
       </div>
 
-      <div className="panel" style={{ marginBottom: 14 }}>
-        <div>
-          <label className="label">Aktivní akce z registru</label>
-          <select
-            className="select"
-            value={project?.id || ''}
-            onChange={(e) => {
-              setActiveProject(e.target.value || null)
-              setLastReceipt(null)
-              setCheckoutOpen(false)
-            }}
-          >
-            <option value="">— Vyberte akci —</option>
-            {registry.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name} · {p.documents?.nabidka || ''}
-                {isPosUnlocked(p) ? ' · ODEMČENO' : p.posClosed ? ' · UZAVŘENO' : ' · ZAMČENO'}
-              </option>
-            ))}
-          </select>
+      <div className="panel" style={{ marginBottom: 14, borderColor: 'var(--border-strong)' }}>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '1.2fr 1fr',
+            gap: 12,
+            alignItems: 'end',
+          }}
+          className="pos-select-row"
+        >
+          <div>
+            <label className="label">Aktivní akce z registru</label>
+            <select
+              className="select"
+              value={project?.id || ''}
+              onChange={(e) => {
+                setActiveProject(e.target.value || null)
+                setLastReceipt(null)
+                setCheckoutOpen(false)
+              }}
+              style={{ minHeight: 48 }}
+            >
+              <option value="">— Vyberte akci —</option>
+              {registry.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name} · {p.documents?.nabidka || ''}
+                  {isPosUnlocked(p) ? ' · ODEMČENO' : p.posClosed ? ' · UZAVŘENO' : ' · ZAMČENO'}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="label" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <UserRound size={13} color="var(--gold)" /> Přihlášený Číšník
+            </label>
+            <select
+              className="select"
+              value={activeWaiterId}
+              onChange={(e) => setActiveWaiter(e.target.value)}
+              style={{
+                minHeight: 48,
+                borderColor: activeWaiter.color,
+                boxShadow: `0 0 0 1px ${activeWaiter.color}55`,
+                fontWeight: 700,
+              }}
+            >
+              {waiters.map((w) => (
+                <option key={w.id} value={w.id}>
+                  {w.name} · {w.role}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
         {project && (
@@ -453,11 +675,17 @@ export function EventPOS() {
             </span>
             <span className="badge badge-gold">{project.documents?.faktura}</span>
             <span className="badge badge-gold">Aktivní: {tableLabel}</span>
+            <span className="badge badge-gold">Číšník: {activeWaiter.name}</span>
+            {myReadyAlerts.length > 0 && (
+              <span className="badge badge-warning" style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}>
+                <Bell size={12} /> {myReadyAlerts.length} připraveno k odnesení
+              </span>
+            )}
             {!posOpen && !project.posClosed && (
               <button
                 type="button"
                 className="btn btn-ghost"
-                style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem' }}
+                style={{ padding: '0.45rem 0.85rem', fontSize: '0.8rem', minHeight: 44 }}
                 onClick={() => setView('portal')}
               >
                 Otevřít klientský portál
@@ -467,15 +695,55 @@ export function EventPOS() {
         )}
       </div>
 
+      {myReadyAlerts.length > 0 && (
+        <div
+          className="panel"
+          style={{
+            marginBottom: 14,
+            borderColor: '#D4AF37',
+            background: 'rgba(212,175,55,0.12)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 8,
+          }}
+        >
+          <div style={{ fontWeight: 900, color: '#D4AF37', fontSize: '0.95rem' }}>
+            ⚠️ Připraveno k odnesení ({myReadyAlerts.length})
+          </div>
+          {myReadyAlerts.slice(0, 5).map((a) => (
+            <div
+              key={a.id}
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                gap: 10,
+                flexWrap: 'wrap',
+              }}
+            >
+              <div style={{ color: '#fff', fontWeight: 700, fontSize: '0.9rem' }}>{a.message}</div>
+              <button
+                type="button"
+                className="btn btn-gold"
+                style={{ minHeight: 44, touchAction: 'manipulation' }}
+                onClick={() => dismissReadyAlert(a.id)}
+              >
+                Potvrdit odnesení
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       {project && showMap && activeTableId && (
         <PosTableMap
           tables={tables}
           activeTableId={activeTableId}
-          onSelect={(id) => {
-            setActiveTable(project.id, id)
-            setCheckoutOpen(false)
+          onSelect={selectTable}
+          onAddTable={() => {
+            const id = addTable(project.id, `Stůl ${tables.length + 1}`)
+            if (id) selectTable(id)
           }}
-          onAddTable={() => addTable(project.id, `Stůl ${tables.length + 1}`)}
         />
       )}
 
@@ -637,16 +905,18 @@ export function EventPOS() {
             }}
           >
             <div
+              className="pos-menu-grid"
               style={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fill, minmax(132px, 1fr))',
-                gap: 10,
+                gridTemplateColumns: 'repeat(auto-fill, minmax(148px, 1fr))',
+                gap: 12,
                 opacity: posOpen && !posLocked ? 1 : 0.45,
                 pointerEvents: posOpen && !posLocked ? 'auto' : 'none',
                 maxHeight: '62vh',
                 overflowY: 'auto',
                 WebkitOverflowScrolling: 'touch',
                 paddingBottom: 8,
+                touchAction: 'manipulation',
               }}
             >
               {menuItems.map((item) => {
@@ -659,18 +929,21 @@ export function EventPOS() {
                   <button
                     key={item.id}
                     type="button"
-                    className="glass-glow"
                     onClick={() => addToCart(item)}
+                    className="pos-item-card"
                     style={{
-                      minHeight: 118,
-                      padding: '0.9rem 0.75rem',
-                      background: 'var(--bg-panel)',
-                      border: `1px solid ${linkedLow ? 'rgba(239,68,68,0.5)' : 'var(--border)'}`,
-                      borderRadius: 12,
+                      minHeight: 128,
+                      minWidth: 44,
+                      padding: '1rem 0.85rem',
+                      background: '#1e293b',
+                      border: `1px solid ${linkedLow ? 'rgba(239,68,68,0.65)' : '#334155'}`,
+                      borderRadius: 14,
                       cursor: 'pointer',
                       textAlign: 'left',
-                      color: 'inherit',
+                      color: '#fff',
                       position: 'relative',
+                      touchAction: 'manipulation',
+                      boxShadow: '0 4px 14px rgba(0,0,0,0.25)',
                     }}
                   >
                     {linkedLow && (
@@ -686,9 +959,10 @@ export function EventPOS() {
                       style={{
                         fontSize: '0.65rem',
                         textTransform: 'uppercase',
-                        letterSpacing: '0.06em',
-                        color: 'var(--gold)',
-                        marginBottom: 4,
+                        letterSpacing: '0.08em',
+                        color: '#94a3b8',
+                        marginBottom: 6,
+                        fontWeight: 700,
                       }}
                     >
                       {item.subcategory || item.category}
@@ -696,19 +970,34 @@ export function EventPOS() {
                     <div
                       style={{
                         fontFamily: 'var(--font-display)',
-                        fontSize: '1rem',
+                        fontSize: '1.05rem',
                         lineHeight: 1.25,
-                        marginBottom: 8,
-                        minHeight: 38,
+                        marginBottom: 10,
+                        minHeight: 44,
+                        color: '#ffffff',
+                        fontWeight: 800,
                       }}
                     >
                       {item.name}
                     </div>
-                    <div style={{ color: 'var(--gold)', fontWeight: 600 }}>
+                    <div
+                      style={{
+                        color: '#D4AF37',
+                        fontWeight: 900,
+                        fontSize: '1.15rem',
+                      }}
+                    >
                       {formatCurrency(item.sellPrice || 0)}
                     </div>
-                    <div style={{ fontSize: '0.7rem', color: 'var(--text-dim)', marginTop: 4 }}>
-                      {sold}/{planned}
+                    <div
+                      style={{
+                        fontSize: '0.7rem',
+                        color: '#64748b',
+                        marginTop: 6,
+                        fontWeight: 600,
+                      }}
+                    >
+                      {sold}/{planned} porcí
                     </div>
                   </button>
                 )
@@ -716,7 +1005,13 @@ export function EventPOS() {
               {!menuItems.length && (
                 <div
                   className="panel"
-                  style={{ gridColumn: '1 / -1', textAlign: 'center', color: 'var(--text-muted)' }}
+                  style={{
+                    gridColumn: '1 / -1',
+                    textAlign: 'center',
+                    color: '#94a3b8',
+                    background: '#1e293b',
+                    border: '1px solid #334155',
+                  }}
                 >
                   Žádné položky v této podkategorii.
                 </div>
@@ -724,32 +1019,44 @@ export function EventPOS() {
             </div>
 
             <div
-              className="panel"
+              className="panel pos-cart-panel"
               style={{
                 position: 'sticky',
                 top: 12,
-                borderColor: 'var(--border-strong)',
-                boxShadow: 'var(--shadow-gold)',
+                borderColor: '#334155',
+                background: 'rgba(15, 23, 42, 0.95)',
+                boxShadow: '0 0 28px rgba(212,175,55,0.12)',
+                touchAction: 'manipulation',
               }}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
-                <h3 style={{ fontSize: '1.1rem', display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <ShoppingCart size={16} color="var(--gold)" /> Účet · {tableLabel}
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10, gap: 8 }}>
+                <h3
+                  style={{
+                    fontSize: '1.15rem',
+                    display: 'flex',
+                    gap: 8,
+                    alignItems: 'center',
+                    color: '#fff',
+                    fontWeight: 800,
+                  }}
+                >
+                  <ShoppingCart size={16} color="#D4AF37" /> Účet · {tableLabel}
                 </h3>
                 {cart.length > 0 && !posLocked && (
                   <button
                     type="button"
                     className="btn btn-ghost"
-                    style={{ padding: 6 }}
+                    style={{ padding: 8, minHeight: 44, minWidth: 44, touchAction: 'manipulation' }}
                     onClick={clearCart}
+                    aria-label="Vymazat účet"
                   >
                     <Trash2 size={14} />
                   </button>
                 )}
               </div>
 
-              <p style={{ fontSize: '0.75rem', color: 'var(--text-dim)', marginBottom: 8 }}>
-                Položky zůstávají na stole do finální platby — můžete se vrátit na dashboard.
+              <p style={{ fontSize: '0.75rem', color: '#94a3b8', marginBottom: 8, fontWeight: 600 }}>
+                Číšník: {activeWaiter.name} · položky zůstávají na stole do platby
               </p>
 
               {posLocked && (
@@ -757,11 +1064,12 @@ export function EventPOS() {
                   style={{
                     marginBottom: 10,
                     padding: '0.65rem',
-                    background: 'var(--gold-subtle)',
+                    background: 'rgba(212,175,55,0.12)',
                     borderRadius: 8,
-                    border: '1px solid var(--border-strong)',
+                    border: '1px solid #D4AF37',
                     fontSize: '0.85rem',
-                    color: 'var(--gold)',
+                    color: '#D4AF37',
+                    fontWeight: 700,
                   }}
                 >
                   POS uzamčena — probíhá platba
@@ -772,9 +1080,10 @@ export function EventPOS() {
                 style={{
                   display: 'flex',
                   flexDirection: 'column',
-                  gap: 6,
+                  gap: 8,
                   maxHeight: 280,
                   overflowY: 'auto',
+                  WebkitOverflowScrolling: 'touch',
                 }}
               >
                 {(cart ?? []).map((line, idx) => (
@@ -784,17 +1093,21 @@ export function EventPOS() {
                       display: 'flex',
                       justifyContent: 'space-between',
                       gap: 8,
-                      padding: '0.55rem 0',
-                      borderBottom: '1px solid var(--border)',
+                      padding: '0.75rem',
+                      borderRadius: 12,
+                      background: '#1e293b',
+                      border: '1px solid #334155',
                     }}
                   >
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div
                         style={{
-                          fontSize: '0.88rem',
+                          fontSize: '0.95rem',
                           overflow: 'hidden',
                           textOverflow: 'ellipsis',
                           whiteSpace: 'nowrap',
+                          color: '#fff',
+                          fontWeight: 800,
                         }}
                       >
                         {line.name}
@@ -803,7 +1116,7 @@ export function EventPOS() {
                             style={{
                               marginLeft: 6,
                               fontSize: '0.65rem',
-                              color: 'var(--gold)',
+                              color: '#D4AF37',
                               textTransform: 'uppercase',
                               letterSpacing: '0.06em',
                             }}
@@ -811,28 +1124,64 @@ export function EventPOS() {
                             Volná
                           </span>
                         ) : null}
+                        {line.sentToKds ? (
+                          <span
+                            style={{
+                              marginLeft: 6,
+                              fontSize: '0.65rem',
+                              color: '#34d399',
+                              textTransform: 'uppercase',
+                              letterSpacing: '0.06em',
+                            }}
+                          >
+                            KDS ✓
+                          </span>
+                        ) : null}
                       </div>
-                      <div style={{ fontSize: '0.78rem', color: 'var(--gold)' }}>
+                      <div style={{ fontSize: '0.78rem', color: '#D4AF37', fontWeight: 700 }}>
                         {formatCurrency(line.unitPrice)} · DPH {line.vatRate}%
+                        {line.waiterName ? ` · ${line.waiterName}` : ''}
                       </div>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                       <button
                         type="button"
                         className="btn btn-ghost"
-                        style={{ padding: 4, minWidth: 36, minHeight: 36 }}
+                        style={{
+                          padding: 4,
+                          minWidth: 44,
+                          minHeight: 44,
+                          touchAction: 'manipulation',
+                          background: '#0f172a',
+                          border: '1px solid #475569',
+                        }}
                         disabled={posLocked}
                         onClick={() => changeQty(line, -1)}
                       >
                         <Minus size={14} />
                       </button>
-                      <span style={{ minWidth: 18, textAlign: 'center', fontWeight: 600 }}>
+                      <span
+                        style={{
+                          minWidth: 24,
+                          textAlign: 'center',
+                          fontWeight: 900,
+                          color: '#fff',
+                          fontSize: '1.05rem',
+                        }}
+                      >
                         {line.qty}
                       </span>
                       <button
                         type="button"
                         className="btn btn-ghost"
-                        style={{ padding: 4, minWidth: 36, minHeight: 36 }}
+                        style={{
+                          padding: 4,
+                          minWidth: 44,
+                          minHeight: 44,
+                          touchAction: 'manipulation',
+                          background: '#0f172a',
+                          border: '1px solid #475569',
+                        }}
                         disabled={posLocked}
                         onClick={() => changeQty(line, 1)}
                       >
@@ -842,41 +1191,94 @@ export function EventPOS() {
                   </div>
                 ))}
                 {!cart.length && (
-                  <div style={{ color: 'var(--text-dim)', fontSize: '0.9rem', padding: '1rem 0' }}>
-                    Klepněte na položku menu nebo přidejte volný prodej.
+                  <div
+                    style={{
+                      color: '#94a3b8',
+                      fontSize: '0.9rem',
+                      padding: '1.25rem 0.75rem',
+                      textAlign: 'center',
+                      border: '1px dashed #475569',
+                      borderRadius: 12,
+                      background: '#1e293b',
+                      fontWeight: 600,
+                    }}
+                  >
+                    Klepněte na položku menu — ihned se přidá do účtu stolu.
                   </div>
                 )}
               </div>
 
               <div
                 style={{
-                  marginTop: 12,
-                  paddingTop: 10,
-                  borderTop: '1px solid var(--border-strong)',
+                  marginTop: 14,
+                  paddingTop: 12,
+                  borderTop: '1px solid #334155',
                   display: 'flex',
                   justifyContent: 'space-between',
-                  fontSize: '1.2rem',
-                  fontWeight: 600,
+                  fontSize: '1.25rem',
+                  fontWeight: 900,
+                  color: '#fff',
                 }}
               >
                 <span>Celkem</span>
-                <span className="gold-text">{formatCurrency(totals.totalGross)}</span>
+                <span style={{ color: '#D4AF37' }}>{formatCurrency(totals.totalGross)}</span>
               </div>
+
+              {pendingKdsCount > 0 && (
+                <button
+                  type="button"
+                  onClick={handleSendToKds}
+                  disabled={!posOpen || posLocked}
+                  style={{
+                    width: '100%',
+                    marginTop: 12,
+                    padding: '0.95rem 1rem',
+                    minHeight: 52,
+                    borderRadius: 12,
+                    border: '2px solid #f59e0b',
+                    background: 'rgba(245,158,11,0.18)',
+                    color: '#fbbf24',
+                    fontWeight: 900,
+                    fontSize: '1rem',
+                    touchAction: 'manipulation',
+                    cursor: 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 8,
+                  }}
+                >
+                  <Send size={18} /> Odeslat na KDS ({pendingKdsCount})
+                </button>
+              )}
 
               <button
                 type="button"
-                className="btn btn-gold"
+                className="pos-checkout-btn"
                 style={{
                   width: '100%',
                   marginTop: 12,
-                  padding: '0.9rem',
-                  fontSize: '1rem',
-                  minHeight: 48,
+                  padding: '1rem',
+                  fontSize: '1.25rem',
+                  minHeight: 56,
+                  borderRadius: 12,
+                  border: 'none',
+                  background: '#D4AF37',
+                  color: '#0b0f14',
+                  fontWeight: 900,
+                  boxShadow: '0 10px 28px rgba(212,175,55,0.4)',
+                  touchAction: 'manipulation',
+                  cursor: !cart.length || !posOpen || posLocked ? 'not-allowed' : 'pointer',
+                  opacity: !cart.length || !posOpen || posLocked ? 0.4 : 1,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 10,
                 }}
                 disabled={!cart.length || !posOpen || posLocked}
                 onClick={() => setCheckoutOpen(true)}
               >
-                <Banknote size={16} /> Platba / Rozdělení účtu
+                <Banknote size={20} /> Zaplatit / Rozdělit účet
               </button>
             </div>
           </div>
@@ -943,8 +1345,25 @@ export function EventPOS() {
       />
 
       <style>{`
+        .pos-root,
+        .pos-root button,
+        .pos-item-card,
+        .pos-checkout-btn {
+          touch-action: manipulation;
+          -webkit-tap-highlight-color: rgba(212, 175, 55, 0.25);
+        }
+        .pos-item-card:active {
+          transform: scale(0.98);
+          border-color: #D4AF37 !important;
+        }
+        .pos-checkout-btn:not(:disabled):active {
+          transform: scale(0.99);
+          box-shadow: 0 6px 18px rgba(212,175,55,0.55) !important;
+        }
         @media (max-width: 900px) {
           .pos-layout { grid-template-columns: 1fr !important; }
+          .pos-cart-panel { position: relative !important; top: 0 !important; }
+          .pos-menu-grid { max-height: none !important; }
         }
         @media print {
           body * { visibility: hidden !important; }

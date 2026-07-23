@@ -34,6 +34,22 @@ export default function App() {
             }
           />
           <Route
+            path="/pos/kds/kitchen"
+            element={
+              <ErrorBoundary fallbackTitle="Chyba KDS Kuchyň">
+                <KitchenDisplayPage />
+              </ErrorBoundary>
+            }
+          />
+          <Route
+            path="/pos/kds/bar"
+            element={
+              <ErrorBoundary fallbackTitle="Chyba KDS Bar">
+                <KitchenDisplayPage />
+              </ErrorBoundary>
+            }
+          />
+          <Route
             path="/*"
             element={
               showHero ? (

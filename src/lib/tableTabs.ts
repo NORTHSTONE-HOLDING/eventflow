@@ -34,6 +34,17 @@ export function ensurePosTables(
   return createDefaultTables()
 }
 
+/** Resolve a valid table id — never keep orphaned activeTableId. */
+export function resolveActiveTableId(
+  tables: PosTableTab[] | null | undefined,
+  preferredId: string | null | undefined
+): string | null {
+  const list = ensurePosTables(tables)
+  if (!list.length) return null
+  if (preferredId && list.some((t) => t.id === preferredId)) return preferredId
+  return list[0].id
+}
+
 export function tableOpenTotal(table: PosTableTab | null | undefined): number {
   if (!table || !Array.isArray(table.lines)) return 0
   return Math.round(
@@ -61,7 +72,14 @@ export function mergeCartLine(
       l.vatRate === incoming.vatRate
   )
   if (idx >= 0) {
-    list[idx] = { ...list[idx], qty: list[idx].qty + incoming.qty }
+    list[idx] = {
+      ...list[idx],
+      qty: list[idx].qty + incoming.qty,
+      // New qty must go back to KDS; keep latest waiter stamp
+      sentToKds: false,
+      waiterId: incoming.waiterId || list[idx].waiterId,
+      waiterName: incoming.waiterName || list[idx].waiterName,
+    }
     return list
   }
   return [...list, { ...incoming, lineId: incoming.lineId || uid('line') }]

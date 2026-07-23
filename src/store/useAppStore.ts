@@ -12,6 +12,7 @@ import type {
   MetricSnapshot,
   POSCartLine,
   POSPaymentMethod,
+  PosOrder,
   PosPrinter,
   PosTableTab,
   StaffMember,
@@ -36,8 +37,10 @@ import { DEFAULT_PRINTERS } from '../lib/printerHardware'
 import {
   buildKdsTicketsFromCart,
   publishKdsTicket,
+  publishKdsStatus,
+  publishWaiterReady,
 } from '../lib/kdsSync'
-import { ensurePosTables, mergeCartLine, subtractPaidLines } from '../lib/tableTabs'
+import { ensurePosTables, mergeCartLine, resolveActiveTableId, subtractPaidLines } from '../lib/tableTabs'
 import { useInventoryStore } from './useInventoryStore'
 
 const defaultProfile: AgencyProfile = {
@@ -95,10 +98,7 @@ export function migrateProject(p: EventProject | null | undefined): EventProject
     warehouse,
     posTransactions: Array.isArray(p.posTransactions) ? p.posTransactions : [],
     posTables: ensurePosTables(p.posTables),
-    activeTableId:
-      p.activeTableId ||
-      ensurePosTables(p.posTables)[0]?.id ||
-      'table_default_1',
+    activeTableId: resolveActiveTableId(p.posTables, p.activeTableId),
     posExtrasTotal: Number(p.posExtrasTotal) || 0,
     doplatkovaId: p.doplatkovaId ?? null,
     doplatkovaText: p.doplatkovaText ?? null,
@@ -170,6 +170,7 @@ interface AppState {
   warehouseAlerts: WarehouseAlert[]
   printers: PosPrinter[]
   kdsTickets: KdsTicket[]
+  posOrders: PosOrder[]
 
   setView: (view: AppView) => void
   enterApp: (targetView?: AppView) => void
@@ -203,6 +204,8 @@ interface AppState {
       changeGiven?: number
       /** If true, remove paid lines from the active/open table tab */
       clearFromTable?: boolean
+      waiterId?: string
+      waiterName?: string
     }
   ) => { ok: boolean; receiptNumber?: string; error?: string; kdsTicketIds?: string[] }
   closePosAndGenerateDoplatkova: (projectId: string) => string | null
@@ -212,14 +215,28 @@ interface AppState {
 
   setActiveTable: (projectId: string, tableId: string) => void
   setTableLines: (projectId: string, tableId: string, lines: POSCartLine[]) => void
-  addLineToActiveTable: (projectId: string, line: POSCartLine) => void
+  addLineToActiveTable: (
+    projectId: string,
+    line: POSCartLine,
+    opts?: { tableId?: string | null; waiterId?: string; waiterName?: string }
+  ) => void
   renameTable: (projectId: string, tableId: string, label: string) => void
-  addTable: (projectId: string, label: string) => void
+  addTable: (projectId: string, label: string) => string | null
+  sendTableOrderToKds: (opts: {
+    projectId: string
+    tableId: string
+    waiterId: string
+    waiterName: string
+  }) => { ok: boolean; orderId?: string; ticketIds?: string[]; error?: string }
 
   upsertPrinter: (printer: PosPrinter) => void
   removePrinter: (printerId: string) => void
   setKdsTicketStatus: (ticketId: string, status: KdsTicketStatus) => void
   addKdsTickets: (tickets: KdsTicket[]) => void
+  updatePosOrderStatus: (
+    orderId: string,
+    status: PosOrder['status']
+  ) => void
 
   runLegalAudit: (text: string) => Promise<void>
   getActiveProject: () => EventProject | null
@@ -242,6 +259,7 @@ export const useAppStore = create<AppState>()(
       warehouseAlerts: [],
       printers: DEFAULT_PRINTERS,
       kdsTickets: [],
+      posOrders: [],
 
       setView: (view) => {
         const next = normalizeAppView(view)
@@ -474,7 +492,7 @@ export const useAppStore = create<AppState>()(
         const extrasAdd = charged ? tx.totalGross : 0
 
         const tableLabel = opts?.tableLabel || 'Bar / Kasa'
-        const catalogLines = lines.filter((l) => !l.isCustom)
+        const catalogLines = lines.filter((l) => !l.isCustom && !l.sentToKds)
         const kdsTickets = opts?.skipKds
           ? []
           : buildKdsTicketsFromCart({
@@ -483,6 +501,9 @@ export const useAppStore = create<AppState>()(
               receiptNumber: tx.receiptNumber,
               tableLabel,
               lines: catalogLines,
+              waiterId: opts?.waiterId,
+              waiterName: opts?.waiterName,
+              tableId: opts?.tableId,
             })
 
         for (const ticket of kdsTickets) {
@@ -622,25 +643,125 @@ export const useAppStore = create<AppState>()(
         get().updateProject(projectId, { posTables: tables, activeTableId: tableId })
       },
 
-      addLineToActiveTable: (projectId, line) => {
+      addLineToActiveTable: (projectId, line, opts) => {
         const p = migrateProject(get().projects.find((x) => x.id === projectId))
         if (!p) return
         const tables = ensurePosTables(p.posTables)
-        const activeId = p.activeTableId || tables[0]?.id
+        const activeId = resolveActiveTableId(
+          tables,
+          opts?.tableId || p.activeTableId
+        )
         if (!activeId) return
+        const stamped: POSCartLine = {
+          ...line,
+          waiterId: opts?.waiterId || line.waiterId,
+          waiterName: opts?.waiterName || line.waiterName,
+          lineId: line.lineId || uid('line'),
+        }
         const next = tables.map((t) => {
           if (t.id !== activeId) return t
           return {
             ...t,
-            lines: mergeCartLine(t.lines, line),
+            lines: mergeCartLine(t.lines, stamped),
             updatedAt: new Date().toISOString(),
             status: 'open' as const,
+            assignedWaiterId: opts?.waiterId || t.assignedWaiterId || null,
+            assignedWaiterName: opts?.waiterName || t.assignedWaiterName || null,
           }
         })
         get().updateProject(projectId, {
           posTables: next,
           activeTableId: activeId,
         })
+      },
+
+      sendTableOrderToKds: ({ projectId, tableId, waiterId, waiterName }) => {
+        const state = get()
+        const project = migrateProject(state.projects.find((p) => p.id === projectId))
+        if (!project) return { ok: false, error: 'Projekt nenalezen' }
+        const tables = ensurePosTables(project.posTables)
+        const table = tables.find((t) => t.id === tableId)
+        if (!table) return { ok: false, error: 'Stůl nenalezen' }
+        const pending = (table.lines ?? []).filter((l) => !l.sentToKds)
+        if (!pending.length) {
+          return { ok: false, error: 'Žádné nové položky k odeslání na KDS' }
+        }
+
+        const receiptNumber = `OBJ-${Date.now().toString(36).toUpperCase()}`
+        const orderId = uid('order')
+        const tickets = buildKdsTicketsFromCart({
+          projectId: project.id,
+          projectName: project.name,
+          receiptNumber,
+          tableLabel: table.label,
+          lines: pending,
+          waiterId,
+          waiterName,
+          orderId,
+          tableId: table.id,
+        })
+
+        for (const ticket of tickets) {
+          publishKdsTicket(ticket)
+        }
+
+        const markedLines = (table.lines ?? []).map((l) =>
+          l.sentToKds
+            ? l
+            : {
+                ...l,
+                sentToKds: true,
+                waiterId: l.waiterId || waiterId,
+                waiterName: l.waiterName || waiterName,
+              }
+        )
+
+        const order: PosOrder = {
+          id: orderId,
+          projectId: project.id,
+          tableId: table.id,
+          tableLabel: table.label,
+          waiterId,
+          waiterName,
+          lines: pending.map((l) => ({ ...l, waiterId, waiterName })),
+          createdAt: new Date().toISOString(),
+          status: 'sent',
+          kdsTicketIds: tickets.map((t) => t.id),
+          receiptNumber,
+        }
+
+        set({
+          kdsTickets: [...tickets, ...(state.kdsTickets ?? [])].slice(0, 120),
+          posOrders: [order, ...(state.posOrders ?? [])].slice(0, 200),
+          projects: state.projects.map((p) =>
+            p.id === projectId
+              ? {
+                  ...project,
+                  posTables: tables.map((t) =>
+                    t.id === table.id
+                      ? {
+                          ...t,
+                          lines: markedLines,
+                          assignedWaiterId: waiterId,
+                          assignedWaiterName: waiterName,
+                          updatedAt: new Date().toISOString(),
+                        }
+                      : t
+                  ),
+                  activeTableId: table.id,
+                }
+              : p
+          ),
+        })
+
+        get().setToast(
+          `Odesláno na KDS · ${tickets.length} ticket(y) · ${table.label} · ${waiterName}`
+        )
+        return {
+          ok: true,
+          orderId,
+          ticketIds: tickets.map((t) => t.id),
+        }
       },
 
       renameTable: (projectId, tableId, label) => {
@@ -654,7 +775,7 @@ export const useAppStore = create<AppState>()(
 
       addTable: (projectId, label) => {
         const p = migrateProject(get().projects.find((x) => x.id === projectId))
-        if (!p) return
+        if (!p) return null
         const tables = ensurePosTables(p.posTables)
         const neu: PosTableTab = {
           id: uid('table'),
@@ -667,6 +788,7 @@ export const useAppStore = create<AppState>()(
           posTables: [...tables, neu],
           activeTableId: neu.id,
         })
+        return neu.id
       },
 
       upsertPrinter: (printer) =>
@@ -690,17 +812,61 @@ export const useAppStore = create<AppState>()(
           printers: (s.printers ?? []).filter((p) => p.id !== printerId),
         })),
 
-      setKdsTicketStatus: (ticketId, status) =>
-        set((s) => ({
-          kdsTickets: (s.kdsTickets ?? []).map((t) =>
+      setKdsTicketStatus: (ticketId, status) => {
+        const state = get()
+        const ticket = (state.kdsTickets ?? []).find((t) => t.id === ticketId)
+        if (!ticket || ticket.status === status) return
+        set({
+          kdsTickets: (state.kdsTickets ?? []).map((t) =>
             t.id === ticketId ? { ...t, status } : t
+          ),
+        })
+        publishKdsStatus(ticketId, status)
+
+        if (status === 'preparing' && ticket.orderId) {
+          get().updatePosOrderStatus(ticket.orderId, 'preparing')
+        }
+
+        if (status === 'done') {
+          if (ticket.orderId) {
+            get().updatePosOrderStatus(ticket.orderId, 'ready')
+          }
+          const message = `⚠️ Objednávka ${ticket.receiptNumber} pro ${ticket.tableLabel} je PŘIPRAVENA K ODNESENÍ!`
+          publishWaiterReady({
+            ticketId: ticket.id,
+            orderNumber: ticket.receiptNumber,
+            tableLabel: ticket.tableLabel,
+            station: ticket.station,
+            waiterId: ticket.waiterId || '',
+            waiterName: ticket.waiterName || '',
+            message,
+          })
+        }
+      },
+
+      updatePosOrderStatus: (orderId, status) =>
+        set((s) => ({
+          posOrders: (s.posOrders ?? []).map((o) =>
+            o.id === orderId ? { ...o, status } : o
           ),
         })),
 
       addKdsTickets: (tickets) =>
-        set((s) => ({
-          kdsTickets: [...(tickets ?? []), ...(s.kdsTickets ?? [])].slice(0, 100),
-        })),
+        set((s) => {
+          const incoming = Array.isArray(tickets) ? tickets : []
+          const existing = Array.isArray(s.kdsTickets) ? s.kdsTickets : []
+          const byId = new Map<string, (typeof existing)[number]>()
+          for (const t of existing) byId.set(t.id, t)
+          for (const t of incoming) byId.set(t.id, { ...byId.get(t.id), ...t })
+          return {
+            kdsTickets: Array.from(byId.values())
+              .sort(
+                (a, b) =>
+                  new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+              )
+              .slice(0, 100),
+          }
+        }),
 
       runLegalAudit: async (text) => {
         set({ legalLoading: true })
@@ -735,6 +901,7 @@ export const useAppStore = create<AppState>()(
         warehouseAlerts: s.warehouseAlerts,
         printers: s.printers,
         kdsTickets: s.kdsTickets,
+        posOrders: s.posOrders,
       }),
       onRehydrateStorage: () => (state) => {
         queueMicrotask(() => {
@@ -757,6 +924,9 @@ export const useAppStore = create<AppState>()(
                 ? state!.printers
                 : DEFAULT_PRINTERS,
             kdsTickets: Array.isArray(state?.kdsTickets) ? state!.kdsTickets : [],
+            posOrders: Array.isArray((state as AppState | undefined)?.posOrders)
+              ? (state as AppState).posOrders
+              : [],
           })
         })
       },

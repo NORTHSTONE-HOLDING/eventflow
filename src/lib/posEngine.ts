@@ -47,9 +47,16 @@ export function cartTotals(lines: POSCartLine[]) {
 export function buildTransaction(
   lines: POSCartLine[],
   paymentMethod: POSPaymentMethod,
-  projectSequence: number
+  projectSequence: number,
+  extras?: {
+    cashAmount?: number
+    cardAmount?: number
+    changeGiven?: number
+    tableId?: string
+    tableLabel?: string
+  }
 ): POSTransaction {
-  const totals = cartTotals(lines)
+  const totals = cartTotals(lines ?? [])
   const charged = paymentMethod !== 'all_inclusive'
   const appendedToInvoice = paymentMethod === 'invoice'
   const gross = paymentMethod === 'all_inclusive' ? 0 : totals.totalGross
@@ -60,7 +67,7 @@ export function buildTransaction(
     id: uid('pos'),
     receiptNumber: nextReceiptNumber(projectSequence),
     timestamp: new Date().toISOString(),
-    lines: lines.map((l) => ({ ...l })),
+    lines: (lines ?? []).map((l) => ({ ...l })),
     paymentMethod,
     totalGross: gross,
     totalNet: net,
@@ -69,6 +76,11 @@ export function buildTransaction(
     portionsIssued: totals.portionsIssued,
     appendedToInvoice,
     charged,
+    cashAmount: extras?.cashAmount,
+    cardAmount: extras?.cardAmount,
+    changeGiven: extras?.changeGiven,
+    tableId: extras?.tableId,
+    tableLabel: extras?.tableLabel,
   }
 }
 
@@ -175,6 +187,10 @@ export function paymentMethodLabel(method: POSPaymentMethod): string {
       return 'Zapsat na celkovou fakturu'
     case 'all_inclusive':
       return 'Odkliknout porci / All-Inclusive'
+    case 'cash':
+      return 'Hotovost'
+    case 'combined':
+      return 'Kombinovaná platba (hotovost + karta)'
     default:
       return method
   }

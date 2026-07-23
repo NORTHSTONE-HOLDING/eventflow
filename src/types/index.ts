@@ -122,7 +122,12 @@ export interface DocumentIds {
   sequence: number
 }
 
-export type POSPaymentMethod = 'card' | 'invoice' | 'all_inclusive'
+export type POSPaymentMethod =
+  | 'card'
+  | 'invoice'
+  | 'all_inclusive'
+  | 'cash'
+  | 'combined'
 
 export interface POSCartLine {
   cateringId: string
@@ -133,6 +138,18 @@ export interface POSCartLine {
   qty: number
   vatRate: number
   foodCostPerUnit: number
+  /** Volná položka mimo katalog — bez skladového odepisu */
+  isCustom?: boolean
+  lineId?: string
+}
+
+export interface PosTableTab {
+  id: string
+  label: string
+  lines: POSCartLine[]
+  status: 'open' | 'paid'
+  updatedAt: string
+  note?: string
 }
 
 export type PrinterRole = 'bar' | 'kitchen' | 'receipt'
@@ -202,6 +219,11 @@ export interface POSTransaction {
   portionsIssued: number
   appendedToInvoice: boolean
   charged: boolean
+  cashAmount?: number
+  cardAmount?: number
+  changeGiven?: number
+  tableId?: string
+  tableLabel?: string
 }
 
 export interface EventProject {
@@ -232,6 +254,9 @@ export interface EventProject {
   /** Live warehouse for POS odepisování */
   warehouse: WarehouseItem[]
   posTransactions: POSTransaction[]
+  /** Open guest tabs / table map */
+  posTables: PosTableTab[]
+  activeTableId: string | null
   /** Extra bar / POS sales appended to doplatková faktura */
   posExtrasTotal: number
   doplatkovaId: string | null

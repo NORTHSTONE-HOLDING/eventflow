@@ -116,6 +116,7 @@ export function splitCartByStation(lines: POSCartLine[]): {
   const kitchen: POSCartLine[] = []
   const bar: POSCartLine[] = []
   for (const line of lines ?? []) {
+    if (line.isCustom) continue // volná položka → jen zákaznická účtenka
     if (line.category === 'beverage') bar.push(line)
     else if (line.category === 'food') kitchen.push(line)
     else kitchen.push(line)

@@ -381,6 +381,8 @@ export async function generateEventFromPrompt(
     totalRevenue: budget.revenue,
     warehouse,
     posTransactions: [],
+    posTables: [],
+    activeTableId: null,
     posExtrasTotal: 0,
     doplatkovaId: null,
     doplatkovaText: null,

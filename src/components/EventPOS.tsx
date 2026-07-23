@@ -3,7 +3,6 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   AlertTriangle,
   Bluetooth,
-  CreditCard,
   FileText,
   Lock,
   Minus,
@@ -18,8 +17,9 @@ import {
   X,
   CheckCircle2,
   Banknote,
-  ClipboardCheck,
   ChefHat,
+  Map,
+  Sparkles,
 } from 'lucide-react'
 import {
   useAppStore,
@@ -34,14 +34,14 @@ import {
   paymentMethodLabel,
 } from '../lib/posEngine'
 import { stockPercent, getLowStockItems } from '../lib/inventoryEngine'
-import { formatCurrency } from '../lib/documentIds'
+import { formatCurrency, uid } from '../lib/documentIds'
 import { POS_CATEGORIES, filterPosMenu } from '../lib/posCategories'
 import {
   dispatchPrintJobs,
   pairBluetoothPrinter,
   roleLabel,
 } from '../lib/printerHardware'
-import { runTerminalHandshake } from '../lib/terminalHandshake'
+import { ensurePosTables } from '../lib/tableTabs'
 import {
   emptyCustomerDisplay,
   openPosDisplayWindow,
@@ -56,8 +56,10 @@ import type {
   POSTransaction,
   PosPrinter,
   PrinterRole,
-  TerminalSession,
 } from '../types'
+import { PosTableMap } from './pos/PosTableMap'
+import { AdvancedCheckout, type CheckoutResult } from './pos/AdvancedCheckout'
+import { CustomItemModal } from './pos/CustomItemModal'
 
 export function EventPOS() {
   const subscription = useAppStore((s) => s.profile.subscription)
@@ -73,30 +75,43 @@ export function EventPOS() {
   const printers = useAppStore((s) => s.printers)
   const upsertPrinter = useAppStore((s) => s.upsertPrinter)
   const setToast = useAppStore((s) => s.setToast)
+  const setActiveTable = useAppStore((s) => s.setActiveTable)
+  const setTableLines = useAppStore((s) => s.setTableLines)
+  const addLineToActiveTable = useAppStore((s) => s.addLineToActiveTable)
+  const addTable = useAppStore((s) => s.addTable)
 
   const unlockedTier = hasFeature(subscription || 'LITE', 'BUSINESS')
 
   const safePrinters = useMemo(
     () => (Array.isArray(printers) ? printers : []),
-    [printers]
+    [printers],
   )
 
   const [mainCat, setMainCat] = useState<'food' | 'beverage'>('food')
   const [subCat, setSubCat] = useState<POSSubcategory | 'all'>('all')
-  const [cart, setCart] = useState<POSCartLine[]>([])
   const [checkoutOpen, setCheckoutOpen] = useState(false)
+  const [customOpen, setCustomOpen] = useState(false)
+  const [showMap, setShowMap] = useState(true)
   const [posLocked, setPosLocked] = useState(false)
-  const [terminalSession, setTerminalSession] = useState<TerminalSession | null>(null)
-  const [terminalError, setTerminalError] = useState<string | null>(null)
   const [lastReceipt, setLastReceipt] = useState<POSTransaction | null>(null)
   const [doplatkovaPreview, setDoplatkovaPreview] = useState<string | null>(null)
   const [showPrinters, setShowPrinters] = useState(false)
-  const [tableLabel, setTableLabel] = useState('Stůl 1')
   const [pairingRole, setPairingRole] = useState<PrinterRole | null>(null)
 
-  // Safe migrate once via useMemo — NOT inside Zustand selector
   const project = useMemo(() => migrateProject(activeRaw), [activeRaw])
   const posOpen = isPosUnlocked(project)
+
+  const tables = useMemo(
+    () => (project ? ensurePosTables(project.posTables) : []),
+    [project],
+  )
+  const activeTableId = project?.activeTableId || tables[0]?.id || null
+  const activeTable = useMemo(
+    () => tables.find((t) => t.id === activeTableId) ?? tables[0] ?? null,
+    [tables, activeTableId],
+  )
+  const cart = useMemo(() => activeTable?.lines ?? [], [activeTable])
+  const tableLabel = activeTable?.label ?? 'Bar / Kasa'
 
   useEffect(() => {
     if (project?.id) ensureProjectPosReady(project.id)
@@ -106,7 +121,6 @@ export function EventPOS() {
     setSubCat('all')
   }, [mainCat])
 
-  // Sync customer-facing display whenever cart changes
   useEffect(() => {
     if (!project) {
       publishCustomerDisplay(emptyCustomerDisplay())
@@ -121,183 +135,185 @@ export function EventPOS() {
         price: l.unitPrice * l.qty,
       })),
       total: totals.totalGross,
-      phase: terminalSession?.status === 'waiting_card' || terminalSession?.status === 'sending'
-        ? 'tap_card'
-        : terminalSession?.status === 'approved'
-          ? 'approved'
-          : terminalSession?.status === 'rejected'
-            ? 'rejected'
-            : cart.length
-              ? 'cart'
-              : 'idle',
-      message:
-        terminalSession?.message ||
-        (cart.length ? 'Vaše objednávka' : 'Vítejte · EventFlow'),
+      phase: checkoutOpen ? 'tap_card' : cart.length ? 'cart' : 'idle',
+      message: checkoutOpen
+        ? 'Probíhá platba…'
+        : cart.length
+          ? `Účet · ${tableLabel}`
+          : `Vítejte · ${tableLabel}`,
       updatedAt: new Date().toISOString(),
     })
-  }, [cart, project, terminalSession])
+  }, [cart, project, checkoutOpen, tableLabel])
 
   const metrics = useMemo(
     () => (project ? computePosLiveMetrics(project) : null),
-    [project]
+    [project],
   )
 
   const menuItems = useMemo(
     () => filterPosMenu(project?.catering, mainCat, subCat),
-    [project, mainCat, subCat]
+    [project, mainCat, subCat],
   )
 
   const lowStock = useMemo(
     () => getLowStockItems(project?.warehouse ?? []),
-    [project]
+    [project],
   )
 
   const projectAlerts = (warehouseAlerts ?? []).filter(
-    (a) => a.projectId === project?.id && !a.acknowledged
+    (a) => a.projectId === project?.id && !a.acknowledged,
   )
 
   const totals = cartTotals(cart ?? [])
-  const currentSubs =
-    POS_CATEGORIES.find((c) => c.id === mainCat)?.subs ?? []
+  const currentSubs = POS_CATEGORIES.find((c) => c.id === mainCat)?.subs ?? []
 
   const addToCart = (item: CateringItem) => {
-    if (!posOpen || posLocked) {
+    if (!project || !posOpen || posLocked) {
       setToast('POS je zamčená — dokončete podpis a zálohu')
       return
     }
     const planned = Math.max(1, item.plannedPortions || item.portion || 1)
     const costPer = (Number(item.foodCost) || 0) / planned
-
-    setCart((prev) => {
-      const list = Array.isArray(prev) ? prev : []
-      const existing = list.find((l) => l.cateringId === item.id)
-      if (existing) {
-        return list.map((l) =>
-          l.cateringId === item.id ? { ...l, qty: l.qty + 1 } : l
-        )
-      }
-      return [
-        ...list,
-        {
-          cateringId: item.id,
-          name: item.name,
-          category: item.category,
-          subcategory: item.subcategory || 'ostatni',
-          unitPrice: Number(item.sellPrice) || 0,
-          qty: 1,
-          vatRate: Number(item.vatRate) || 12,
-          foodCostPerUnit: costPer,
-        },
-      ]
+    addLineToActiveTable(project.id, {
+      cateringId: item.id,
+      name: item.name,
+      category: item.category,
+      subcategory: item.subcategory || 'ostatni',
+      unitPrice: Number(item.sellPrice) || 0,
+      qty: 1,
+      vatRate: Number(item.vatRate) || 12,
+      foodCostPerUnit: costPer,
+      lineId: uid('line'),
     })
   }
 
-  const changeQty = (id: string, delta: number) => {
-    if (posLocked) return
-    setCart((prev) =>
-      (prev ?? [])
-        .map((l) => (l.cateringId === id ? { ...l, qty: l.qty + delta } : l))
-        .filter((l) => l.qty > 0)
-    )
+  const changeQty = (line: POSCartLine, delta: number) => {
+    if (!project || !activeTable || posLocked) return
+    const next = (activeTable.lines ?? [])
+      .map((l) => {
+        const match = line.lineId
+          ? l.lineId === line.lineId
+          : !l.isCustom && l.cateringId === line.cateringId && !line.isCustom
+        return match ? { ...l, qty: l.qty + delta } : l
+      })
+      .filter((l) => l.qty > 0)
+    setTableLines(project.id, activeTable.id, next)
   }
 
-  const clearCart = () => setCart([])
+  const clearCart = () => {
+    if (!project || !activeTable || posLocked) return
+    setTableLines(project.id, activeTable.id, [])
+  }
+
+  const handleAddCustom = (line: POSCartLine) => {
+    if (!project || !posOpen || posLocked) {
+      setToast('POS je zamčená — dokončete podpis a zálohu')
+      return
+    }
+    addLineToActiveTable(project.id, line)
+    setToast(`Volná položka na ${tableLabel}: ${line.name}`)
+  }
 
   const finalizeSale = useCallback(
-    (method: POSPaymentMethod, receiptOverride?: string) => {
-      if (!project) return null
-      const result = completePosSale(project.id, cart, method, {
-        tableLabel: tableLabel || 'Bar / Kasa',
-      })
-      if (!result.ok) {
-        setToast(result.error || 'Prodej selhal')
+    (result: CheckoutResult) => {
+      if (!project || !activeTable) return null
+      const payLines = result.lines ?? []
+      if (!payLines.length) {
+        setToast('Vyberte položky k úhradě')
         return null
       }
 
-      const receiptNumber = receiptOverride || result.receiptNumber || 'UC'
-      const printCustomer = method === 'card' || method === 'invoice'
+      const sale = completePosSale(project.id, payLines, result.method, {
+        tableLabel: activeTable.label,
+        tableId: activeTable.id,
+        clearFromTable: true,
+        cashAmount: result.cashAmount,
+        cardAmount: result.cardAmount,
+        changeGiven: result.changeGiven,
+      })
+
+      if (!sale.ok) {
+        setToast(sale.error || 'Prodej selhal')
+        return null
+      }
+
+      const receiptNumber = sale.receiptNumber || 'UC'
+      const payTotals = cartTotals(payLines)
+      const printCustomer =
+        result.method === 'card' ||
+        result.method === 'invoice' ||
+        result.method === 'cash' ||
+        result.method === 'combined'
+
       dispatchPrintJobs({
         printers: safePrinters,
         projectName: project.name,
         receiptNumber,
-        tableLabel: tableLabel || 'Bar / Kasa',
-        lines: cart,
+        tableLabel: activeTable.label,
+        lines: payLines,
         companyName: profile.companyName || 'EventFlow',
-        totalGross: method === 'all_inclusive' ? 0 : totals.totalGross,
-        totalVat: method === 'all_inclusive' ? 0 : totals.totalVat,
-        paymentLabel: paymentMethodLabel(method),
+        totalGross: result.method === 'all_inclusive' ? 0 : payTotals.totalGross,
+        totalVat: result.method === 'all_inclusive' ? 0 : payTotals.totalVat,
+        paymentLabel: paymentMethodLabel(result.method),
         printCustomerReceipt: printCustomer,
       })
 
-      const tx = buildLocalReceiptSnapshot(cart, method, receiptNumber)
+      const tx = buildLocalReceiptSnapshot(payLines, result.method, receiptNumber, {
+        cashAmount: result.cashAmount,
+        cardAmount: result.cardAmount,
+        changeGiven: result.changeGiven,
+        tableId: activeTable.id,
+        tableLabel: activeTable.label,
+      })
       setLastReceipt(tx)
-      clearCart()
       setCheckoutOpen(false)
-      setTerminalSession(null)
-      setTerminalError(null)
       setPosLocked(false)
-      return result
-    },
-    [
-      project,
-      cart,
-      completePosSale,
-      tableLabel,
-      safePrinters,
-      profile.companyName,
-      totals.totalGross,
-      totals.totalVat,
-      setToast,
-    ]
-  )
 
-  const runCardPayment = async () => {
-    if (!project || !cart.length) return
-    setPosLocked(true)
-    setTerminalError(null)
-    setCheckoutOpen(true)
-
-    const result = await runTerminalHandshake({
-      amountCzK: totals.totalGross,
-      provider: 'stripe_terminal',
-      onStatus: (session) => setTerminalSession({ ...session }),
-    })
-
-    if (result.approved) {
-      finalizeSale('card', undefined)
       publishCustomerDisplay({
         projectName: project.name,
         lines: [],
-        total: totals.totalGross,
+        total: result.method === 'all_inclusive' ? 0 : payTotals.totalGross,
         phase: 'approved',
-        message: 'Platba schválena — děkujeme',
+        message:
+          result.method === 'cash' && result.changeGiven
+            ? `Hotovost OK · vrátit ${result.changeGiven.toLocaleString('cs-CZ')} Kč`
+            : 'Platba schválena — děkujeme',
         updatedAt: new Date().toISOString(),
       })
-    } else {
-      setTerminalError(
-        result.declineReason ||
-          'Platba zamítnuta. Košík zůstává aktivní — zkuste jinou kartu.'
-      )
-      setPosLocked(false)
-      setTerminalSession(result.session)
-      publishCustomerDisplay({
-        projectName: project.name,
-        lines: cart.map((l) => ({
-          name: l.name,
-          qty: l.qty,
-          price: l.unitPrice * l.qty,
-        })),
-        total: totals.totalGross,
-        phase: 'rejected',
-        message: 'Platba zamítnuta',
-        updatedAt: new Date().toISOString(),
-      })
-    }
-  }
 
-  const runSimplePayment = (method: 'invoice' | 'all_inclusive') => {
-    if (posLocked) return
-    finalizeSale(method)
+      return sale
+    },
+    [
+      project,
+      activeTable,
+      completePosSale,
+      safePrinters,
+      profile.companyName,
+      setToast,
+    ],
+  )
+
+  const handleCheckoutComplete = async (result: CheckoutResult) => {
+    setPosLocked(true)
+    try {
+      if (result.method === 'card' || result.method === 'combined') {
+        publishCustomerDisplay({
+          projectName: project?.name || 'EventFlow',
+          lines: (result.lines ?? []).map((l) => ({
+            name: l.name,
+            qty: l.qty,
+            price: l.unitPrice * l.qty,
+          })),
+          total: cartTotals(result.lines ?? []).totalGross,
+          phase: 'approved',
+          message: 'Platba kartou schválena',
+          updatedAt: new Date().toISOString(),
+        })
+      }
+      finalizeSale(result)
+    } finally {
+      setPosLocked(false)
+    }
   }
 
   const handlePairPrinter = async (role: PrinterRole) => {
@@ -353,10 +369,17 @@ export function EventPOS() {
         <div>
           <h1 className="section-title gold-text">Event POS / Kasa</h1>
           <p className="section-sub">
-            Multi-tiskárny · terminál handshake · KDS · zákaznický display
+            Mapa stolů · otevřené účty · rozdělení plateb · volný prodej · terminál
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className={showMap ? 'btn btn-gold' : 'btn btn-ghost'}
+            onClick={() => setShowMap((v) => !v)}
+          >
+            <Map size={15} /> {showMap ? 'Skrýt mapu stolů' : 'Mapa Stolů'}
+          </button>
           <button type="button" className="btn btn-ghost" onClick={() => setShowPrinters((v) => !v)}>
             <Settings2 size={15} /> Tiskárny
           </button>
@@ -383,54 +406,44 @@ export function EventPOS() {
       </div>
 
       <div className="panel" style={{ marginBottom: 14 }}>
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: '1fr auto',
-            gap: 12,
-            alignItems: 'end',
-          }}
-          className="pos-select-row"
-        >
-          <div>
-            <label className="label">Aktivní akce z registru</label>
-            <select
-              className="select"
-              value={project?.id || ''}
-              onChange={(e) => {
-                setActiveProject(e.target.value || null)
-                clearCart()
-                setLastReceipt(null)
-              }}
-            >
-              <option value="">— Vyberte akci —</option>
-              {registry.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name} · {p.documents?.nabidka || ''}
-                  {isPosUnlocked(p) ? ' · ODEMČENO' : p.posClosed ? ' · UZAVŘENO' : ' · ZAMČENO'}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="label">Stůl / zóna</label>
-            <input
-              className="input"
-              value={tableLabel}
-              onChange={(e) => setTableLabel(e.target.value)}
-              style={{ width: 140 }}
-            />
-          </div>
+        <div>
+          <label className="label">Aktivní akce z registru</label>
+          <select
+            className="select"
+            value={project?.id || ''}
+            onChange={(e) => {
+              setActiveProject(e.target.value || null)
+              setLastReceipt(null)
+              setCheckoutOpen(false)
+            }}
+          >
+            <option value="">— Vyberte akci —</option>
+            {registry.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name} · {p.documents?.nabidka || ''}
+                {isPosUnlocked(p) ? ' · ODEMČENO' : p.posClosed ? ' · UZAVŘENO' : ' · ZAMČENO'}
+              </option>
+            ))}
+          </select>
         </div>
 
         {project && (
-          <div style={{ marginTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <div
+            style={{
+              marginTop: 10,
+              display: 'flex',
+              gap: 8,
+              flexWrap: 'wrap',
+              alignItems: 'center',
+            }}
+          >
             <span
               className={`badge ${posOpen ? 'badge-success' : project.posClosed ? 'badge-warning' : 'badge-danger'}`}
             >
               {posOpen ? 'POS ODEMČENA' : project.posClosed ? 'KASA UZAVŘENA' : 'POS ZAMČENA'}
             </span>
             <span className="badge badge-gold">{project.documents?.faktura}</span>
+            <span className="badge badge-gold">Aktivní: {tableLabel}</span>
             {!posOpen && !project.posClosed && (
               <button
                 type="button"
@@ -445,6 +458,18 @@ export function EventPOS() {
         )}
       </div>
 
+      {project && showMap && activeTableId && (
+        <PosTableMap
+          tables={tables}
+          activeTableId={activeTableId}
+          onSelect={(id) => {
+            setActiveTable(project.id, id)
+            setCheckoutOpen(false)
+          }}
+          onAddTable={() => addTable(project.id, `Stůl ${tables.length + 1}`)}
+        />
+      )}
+
       {showPrinters && (
         <PrinterConfigPanel
           printers={safePrinters}
@@ -455,7 +480,10 @@ export function EventPOS() {
       )}
 
       {!project && (
-        <div className="panel" style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}>
+        <div
+          className="panel"
+          style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}
+        >
           Vyberte aktivní akci z registru, nebo vytvořte novou v AI Planneru.
           <div style={{ marginTop: 12 }}>
             <button type="button" className="btn btn-gold" onClick={() => setView('planner')}>
@@ -475,8 +503,14 @@ export function EventPOS() {
               marginBottom: 14,
             }}
           >
-            <MetricCard label="Aktuální Obrat Kasy" value={formatCurrency(metrics?.currentTurnover ?? 0)} />
-            <MetricCard label="Reálná Marže v %" value={`${(metrics?.realMarginPercent ?? 0).toFixed(1)} %`} />
+            <MetricCard
+              label="Aktuální Obrat Kasy"
+              value={formatCurrency(metrics?.currentTurnover ?? 0)}
+            />
+            <MetricCard
+              label="Reálná Marže v %"
+              value={`${(metrics?.realMarginPercent ?? 0).toFixed(1)} %`}
+            />
             <MetricCard
               label="Porce vs. Plán"
               value={`${metrics?.portionsIssued ?? 0} / ${metrics?.portionsPlanned ?? 0}`}
@@ -499,7 +533,10 @@ export function EventPOS() {
                 gap: 12,
               }}
             >
-              <motion.div animate={{ opacity: [1, 0.35, 1] }} transition={{ duration: 1.1, repeat: Infinity }}>
+              <motion.div
+                animate={{ opacity: [1, 0.35, 1] }}
+                transition={{ duration: 1.1, repeat: Infinity }}
+              >
                 <AlertTriangle size={22} color="#fca5a5" />
               </motion.div>
               <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
@@ -518,7 +555,6 @@ export function EventPOS() {
             </div>
           )}
 
-          {/* Category navigation */}
           <div
             className="panel"
             style={{
@@ -529,19 +565,38 @@ export function EventPOS() {
               gap: 10,
             }}
           >
-            <div style={{ display: 'flex', gap: 8, overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
-              {POS_CATEGORIES.map((cat) => (
-                <button
-                  key={cat.id}
-                  type="button"
-                  className={mainCat === cat.id ? 'btn btn-gold' : 'btn btn-ghost'}
-                  style={{ flexShrink: 0, minHeight: 44, padding: '0.7rem 1.2rem' }}
-                  onClick={() => setMainCat(cat.id as 'food' | 'beverage')}
-                >
-                  {cat.id === 'food' ? <Utensils size={16} /> : <Wine size={16} />}
-                  {cat.label}
-                </button>
-              ))}
+            <div
+              style={{
+                display: 'flex',
+                gap: 8,
+                flexWrap: 'wrap',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+              }}
+            >
+              <div style={{ display: 'flex', gap: 8, overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+                {POS_CATEGORIES.map((cat) => (
+                  <button
+                    key={cat.id}
+                    type="button"
+                    className={mainCat === cat.id ? 'btn btn-gold' : 'btn btn-ghost'}
+                    style={{ flexShrink: 0, minHeight: 44, padding: '0.7rem 1.2rem' }}
+                    onClick={() => setMainCat(cat.id as 'food' | 'beverage')}
+                  >
+                    {cat.id === 'food' ? <Utensils size={16} /> : <Wine size={16} />}
+                    {cat.label}
+                  </button>
+                ))}
+              </div>
+              <button
+                type="button"
+                className="btn btn-gold"
+                style={{ flexShrink: 0, minHeight: 44 }}
+                disabled={!posOpen || posLocked}
+                onClick={() => setCustomOpen(true)}
+              >
+                <Sparkles size={15} /> ➕ Volná položka / Rychlý prodej
+              </button>
             </div>
             <div style={{ display: 'flex', gap: 6, overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
               {currentSubs.map((sub) => (
@@ -589,7 +644,7 @@ export function EventPOS() {
                 const sold = item.soldPortions || 0
                 const planned = item.plannedPortions || item.portion || 1
                 const linkedLow = lowStock.some((w) =>
-                  (w.linkedCateringIds ?? []).includes(item.id)
+                  (w.linkedCateringIds ?? []).includes(item.id),
                 )
                 return (
                   <button
@@ -659,7 +714,6 @@ export function EventPOS() {
               )}
             </div>
 
-            {/* Cart / cashier screen */}
             <div
               className="panel"
               style={{
@@ -671,14 +725,23 @@ export function EventPOS() {
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
                 <h3 style={{ fontSize: '1.1rem', display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <ShoppingCart size={16} color="var(--gold)" /> Košík · Pokladna
+                  <ShoppingCart size={16} color="var(--gold)" /> Účet · {tableLabel}
                 </h3>
                 {cart.length > 0 && !posLocked && (
-                  <button type="button" className="btn btn-ghost" style={{ padding: 6 }} onClick={clearCart}>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    style={{ padding: 6 }}
+                    onClick={clearCart}
+                  >
                     <Trash2 size={14} />
                   </button>
                 )}
               </div>
+
+              <p style={{ fontSize: '0.75rem', color: 'var(--text-dim)', marginBottom: 8 }}>
+                Položky zůstávají na stole do finální platby — můžete se vrátit na dashboard.
+              </p>
 
               {posLocked && (
                 <div
@@ -692,14 +755,22 @@ export function EventPOS() {
                     color: 'var(--gold)',
                   }}
                 >
-                  POS uzamčena — probíhá handshake s terminálem
+                  POS uzamčena — probíhá platba
                 </div>
               )}
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 280, overflowY: 'auto' }}>
-                {(cart ?? []).map((line) => (
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 6,
+                  maxHeight: 280,
+                  overflowY: 'auto',
+                }}
+              >
+                {(cart ?? []).map((line, idx) => (
                   <div
-                    key={line.cateringId}
+                    key={line.lineId || `${line.cateringId}_${idx}`}
                     style={{
                       display: 'flex',
                       justifyContent: 'space-between',
@@ -718,9 +789,22 @@ export function EventPOS() {
                         }}
                       >
                         {line.name}
+                        {line.isCustom ? (
+                          <span
+                            style={{
+                              marginLeft: 6,
+                              fontSize: '0.65rem',
+                              color: 'var(--gold)',
+                              textTransform: 'uppercase',
+                              letterSpacing: '0.06em',
+                            }}
+                          >
+                            Volná
+                          </span>
+                        ) : null}
                       </div>
                       <div style={{ fontSize: '0.78rem', color: 'var(--gold)' }}>
-                        {formatCurrency(line.unitPrice)}
+                        {formatCurrency(line.unitPrice)} · DPH {line.vatRate}%
                       </div>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -729,17 +813,19 @@ export function EventPOS() {
                         className="btn btn-ghost"
                         style={{ padding: 4, minWidth: 36, minHeight: 36 }}
                         disabled={posLocked}
-                        onClick={() => changeQty(line.cateringId, -1)}
+                        onClick={() => changeQty(line, -1)}
                       >
                         <Minus size={14} />
                       </button>
-                      <span style={{ minWidth: 18, textAlign: 'center', fontWeight: 600 }}>{line.qty}</span>
+                      <span style={{ minWidth: 18, textAlign: 'center', fontWeight: 600 }}>
+                        {line.qty}
+                      </span>
                       <button
                         type="button"
                         className="btn btn-ghost"
                         style={{ padding: 4, minWidth: 36, minHeight: 36 }}
                         disabled={posLocked}
-                        onClick={() => changeQty(line.cateringId, 1)}
+                        onClick={() => changeQty(line, 1)}
                       >
                         <Plus size={14} />
                       </button>
@@ -748,7 +834,7 @@ export function EventPOS() {
                 ))}
                 {!cart.length && (
                   <div style={{ color: 'var(--text-dim)', fontSize: '0.9rem', padding: '1rem 0' }}>
-                    Klepněte na položku menu.
+                    Klepněte na položku menu nebo přidejte volný prodej.
                   </div>
                 )}
               </div>
@@ -771,15 +857,17 @@ export function EventPOS() {
               <button
                 type="button"
                 className="btn btn-gold"
-                style={{ width: '100%', marginTop: 12, padding: '0.9rem', fontSize: '1rem', minHeight: 48 }}
-                disabled={!cart.length || !posOpen || posLocked}
-                onClick={() => {
-                  setTerminalError(null)
-                  setTerminalSession(null)
-                  setCheckoutOpen(true)
+                style={{
+                  width: '100%',
+                  marginTop: 12,
+                  padding: '0.9rem',
+                  fontSize: '1rem',
+                  minHeight: 48,
                 }}
+                disabled={!cart.length || !posOpen || posLocked}
+                onClick={() => setCheckoutOpen(true)}
               >
-                <Banknote size={16} /> Platba / Checkout
+                <Banknote size={16} /> Platba / Rozdělení účtu
               </button>
             </div>
           </div>
@@ -794,10 +882,28 @@ export function EventPOS() {
           )}
 
           {doplatkovaPreview && (
-            <div className="panel" style={{ marginTop: 14, whiteSpace: 'pre-wrap', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
+            <div
+              className="panel"
+              style={{
+                marginTop: 14,
+                whiteSpace: 'pre-wrap',
+                fontSize: '0.85rem',
+                color: 'var(--text-muted)',
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  marginBottom: 10,
+                }}
+              >
                 <h3 style={{ color: 'var(--text)' }}>Doplatková faktura</h3>
-                <button type="button" className="btn btn-ghost" onClick={() => setDoplatkovaPreview(null)}>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => setDoplatkovaPreview(null)}
+                >
                   <X size={14} />
                 </button>
               </div>
@@ -808,29 +914,28 @@ export function EventPOS() {
       )}
 
       <AnimatePresence>
-        {checkoutOpen && (
-          <CheckoutModal
-            totals={totals}
-            terminalSession={terminalSession}
-            terminalError={terminalError}
-            posLocked={posLocked}
+        {checkoutOpen && activeTable && (
+          <AdvancedCheckout
+            open={checkoutOpen}
+            tableLines={cart}
+            tableLabel={activeTable.label}
             onClose={() => {
-              if (!posLocked) {
-                setCheckoutOpen(false)
-                setTerminalError(null)
-              }
+              if (!posLocked) setCheckoutOpen(false)
             }}
-            onCard={runCardPayment}
-            onInvoice={() => runSimplePayment('invoice')}
-            onAllInclusive={() => runSimplePayment('all_inclusive')}
+            onComplete={handleCheckoutComplete}
           />
         )}
       </AnimatePresence>
 
+      <CustomItemModal
+        open={customOpen}
+        onClose={() => setCustomOpen(false)}
+        onAdd={handleAddCustom}
+      />
+
       <style>{`
         @media (max-width: 900px) {
           .pos-layout { grid-template-columns: 1fr !important; }
-          .pos-select-row { grid-template-columns: 1fr !important; }
         }
         @media print {
           body * { visibility: hidden !important; }
@@ -897,7 +1002,13 @@ function PrinterConfigPanel({
           <X size={14} />
         </button>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+          gap: 10,
+        }}
+      >
         {roles.map((role) => {
           const printer = printers.find((p) => p.role === role)
           return (
@@ -932,159 +1043,9 @@ function PrinterConfigPanel({
       </div>
       <p style={{ marginTop: 10, fontSize: '0.8rem', color: 'var(--text-dim)' }}>
         Jídlo → Kuchyňská bonička · Pití → Barová objednávka · Účtenka → Zákaznická tiskárna (80mm).
+        Volné položky jdou pouze na Tiskárnu Účtenky.
       </p>
     </div>
-  )
-}
-
-function CheckoutModal({
-  totals,
-  terminalSession,
-  terminalError,
-  posLocked,
-  onClose,
-  onCard,
-  onInvoice,
-  onAllInclusive,
-}: {
-  totals: ReturnType<typeof cartTotals>
-  terminalSession: TerminalSession | null
-  terminalError: string | null
-  posLocked: boolean
-  onClose: () => void
-  onCard: () => void
-  onInvoice: () => void
-  onAllInclusive: () => void
-}) {
-  const waiting =
-    terminalSession?.status === 'sending' ||
-    terminalSession?.status === 'waiting_card' ||
-    posLocked
-
-  return (
-    <motion.div
-      className="modal-overlay no-print"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      onClick={() => !waiting && onClose()}
-    >
-      <motion.div
-        className="modal"
-        style={{ maxWidth: 480 }}
-        initial={{ y: 24, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        exit={{ y: 16, opacity: 0 }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
-          <h2 style={{ fontSize: '1.4rem' }}>Platba / Checkout</h2>
-          <button
-            type="button"
-            className="btn btn-ghost"
-            style={{ padding: 6 }}
-            onClick={onClose}
-            disabled={waiting}
-          >
-            <X size={16} />
-          </button>
-        </div>
-
-        <div
-          style={{
-            textAlign: 'center',
-            padding: '1rem',
-            marginBottom: 16,
-            background: 'var(--gold-subtle)',
-            borderRadius: 10,
-            border: '1px solid var(--border-strong)',
-          }}
-        >
-          <div className="label">Přesná částka pro terminál</div>
-          <div className="gold-text" style={{ fontSize: '2rem', fontFamily: 'var(--font-display)' }}>
-            {formatCurrency(totals.totalGross)}
-          </div>
-        </div>
-
-        {waiting ? (
-          <div style={{ textAlign: 'center', padding: '1.5rem', color: 'var(--text-muted)' }}>
-            <motion.div
-              animate={{ rotate: 360 }}
-              transition={{ duration: 1.2, repeat: Infinity, ease: 'linear' }}
-              style={{ display: 'inline-block', marginBottom: 12 }}
-            >
-              <CreditCard size={36} color="var(--gold)" />
-            </motion.div>
-            <div style={{ color: 'var(--gold)', fontWeight: 600, marginBottom: 8 }}>
-              {terminalSession?.message ||
-                `Odesláno do terminálu. Částka: ${totals.totalGross.toLocaleString('cs-CZ')} Kč. Čekání na přiložení karty…`}
-            </div>
-            <div style={{ fontSize: '0.85rem' }}>
-              Stripe Terminal / SumUp · automatický přenos částky (bez ručního zadání)
-            </div>
-          </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {terminalError && (
-              <div
-                style={{
-                  padding: '0.75rem',
-                  background: 'rgba(239,68,68,0.12)',
-                  border: '1px solid rgba(239,68,68,0.4)',
-                  borderRadius: 8,
-                  color: '#fca5a5',
-                  fontSize: '0.9rem',
-                }}
-              >
-                {terminalError}
-              </div>
-            )}
-            <button
-              type="button"
-              className="btn btn-gold"
-              style={{ padding: '1rem', justifyContent: 'flex-start', minHeight: 56 }}
-              onClick={onCard}
-            >
-              <CreditCard size={18} />
-              <div style={{ textAlign: 'left' }}>
-                <div>Platba Kartou / Terminál</div>
-                <div style={{ fontSize: '0.75rem', opacity: 0.85, fontWeight: 400 }}>
-                  API handshake · částka {formatCurrency(totals.totalGross)} automaticky
-                </div>
-              </div>
-            </button>
-            <button
-              type="button"
-              className="btn btn-ghost"
-              style={{ padding: '1rem', justifyContent: 'flex-start', minHeight: 56 }}
-              onClick={onInvoice}
-            >
-              <FileText size={18} color="var(--gold)" />
-              <div style={{ textAlign: 'left' }}>
-                <div>Zapsat na celkovou fakturu</div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 400 }}>
-                  Doplatková faktura + dispatch kuchyně/bar
-                </div>
-              </div>
-            </button>
-            <button
-              type="button"
-              className="btn btn-ghost"
-              style={{ padding: '1rem', justifyContent: 'flex-start', minHeight: 56 }}
-              onClick={onAllInclusive}
-            >
-              <ClipboardCheck size={18} color="var(--gold)" />
-              <div style={{ textAlign: 'left' }}>
-                <div>Odkliknout porci / All-Inclusive</div>
-                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 400 }}>
-                  Bez platby · bonička do kuchyně/baru
-                </div>
-              </div>
-            </button>
-          </div>
-        )}
-      </motion.div>
-    </motion.div>
   )
 }
 
@@ -1101,7 +1062,15 @@ function ReceiptPanel({
 }) {
   return (
     <div className="panel" style={{ marginTop: 14 }}>
-      <div className="no-print" style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10, gap: 8 }}>
+      <div
+        className="no-print"
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          marginBottom: 10,
+          gap: 8,
+        }}
+      >
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <CheckCircle2 size={18} color="var(--success)" />
           <h3 style={{ fontSize: '1.05rem' }}>Účtenka {tx.receiptNumber}</h3>
@@ -1130,13 +1099,17 @@ function ReceiptPanel({
         <div style={{ textAlign: 'center', marginBottom: 8 }}>
           <strong>{profileName}</strong>
           <div>{project.name}</div>
+          {tx.tableLabel ? <div>{tx.tableLabel}</div> : null}
         </div>
         <div>{tx.receiptNumber}</div>
         <div>{new Date(tx.timestamp).toLocaleString('cs-CZ')}</div>
         <div>{paymentMethodLabel(tx.paymentMethod)}</div>
         <hr />
         {(tx.lines ?? []).map((l, i) => (
-          <div key={`${l.cateringId}-${i}`} style={{ display: 'flex', justifyContent: 'space-between' }}>
+          <div
+            key={`${l.lineId || l.cateringId}-${i}`}
+            style={{ display: 'flex', justifyContent: 'space-between' }}
+          >
             <span>
               {l.name} ×{l.qty}
             </span>
@@ -1144,6 +1117,24 @@ function ReceiptPanel({
           </div>
         ))}
         <hr />
+        {tx.paymentMethod === 'cash' && tx.changeGiven != null && (
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span>Vráceno</span>
+            <span>{tx.changeGiven.toLocaleString('cs-CZ')} Kč</span>
+          </div>
+        )}
+        {tx.paymentMethod === 'combined' && (
+          <>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span>Hotovost</span>
+              <span>{(tx.cashAmount ?? 0).toLocaleString('cs-CZ')} Kč</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span>Karta</span>
+              <span>{(tx.cardAmount ?? 0).toLocaleString('cs-CZ')} Kč</span>
+            </div>
+          </>
+        )}
         <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700 }}>
           <span>CELKEM</span>
           <span>{tx.totalGross.toLocaleString('cs-CZ')} Kč</span>
@@ -1156,7 +1147,14 @@ function ReceiptPanel({
 function buildLocalReceiptSnapshot(
   lines: POSCartLine[],
   method: POSPaymentMethod,
-  receiptNumber: string
+  receiptNumber: string,
+  extras?: {
+    cashAmount?: number
+    cardAmount?: number
+    changeGiven?: number
+    tableId?: string
+    tableLabel?: string
+  },
 ): POSTransaction {
   const totals = cartTotals(lines)
   const charged = method !== 'all_inclusive'
@@ -1173,5 +1171,10 @@ function buildLocalReceiptSnapshot(
     portionsIssued: totals.portionsIssued,
     appendedToInvoice: method === 'invoice',
     charged,
+    cashAmount: extras?.cashAmount,
+    cardAmount: extras?.cardAmount,
+    changeGiven: extras?.changeGiven,
+    tableId: extras?.tableId,
+    tableLabel: extras?.tableLabel,
   }
 }

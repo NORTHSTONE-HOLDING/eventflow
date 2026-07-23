@@ -13,13 +13,14 @@ import type {
   POSCartLine,
   POSPaymentMethod,
   PosPrinter,
+  PosTableTab,
   StaffMember,
   SubscriptionTier,
   TimelineItem,
   WarehouseAlert,
 } from '../types'
 import { generateEventFromPrompt, getAIRecommendations } from '../lib/aiParser'
-import { setDocumentSequence } from '../lib/documentIds'
+import { setDocumentSequence, uid } from '../lib/documentIds'
 import { auditContractText } from '../lib/legalAudit'
 import {
   buildWarehouseFromCatering,
@@ -36,6 +37,7 @@ import {
   buildKdsTicketsFromCart,
   publishKdsTicket,
 } from '../lib/kdsSync'
+import { ensurePosTables, mergeCartLine, subtractPaidLines } from '../lib/tableTabs'
 
 const defaultProfile: AgencyProfile = {
   companyName: '',
@@ -90,6 +92,11 @@ export function migrateProject(p: EventProject | null | undefined): EventProject
     catering,
     warehouse,
     posTransactions: Array.isArray(p.posTransactions) ? p.posTransactions : [],
+    posTables: ensurePosTables(p.posTables),
+    activeTableId:
+      p.activeTableId ||
+      ensurePosTables(p.posTables)[0]?.id ||
+      'table_default_1',
     posExtrasTotal: Number(p.posExtrasTotal) || 0,
     doplatkovaId: p.doplatkovaId ?? null,
     doplatkovaText: p.doplatkovaText ?? null,
@@ -111,6 +118,7 @@ export function migrateProject(p: EventProject | null | undefined): EventProject
 function needsPosMigration(p: EventProject): boolean {
   if (!Array.isArray(p.warehouse) || p.warehouse.length === 0) return true
   if (!Array.isArray(p.posTransactions)) return true
+  if (!Array.isArray(p.posTables) || p.posTables.length === 0) return true
   const first = p.catering?.[0]
   if (first && (first.sellPrice == null || first.subcategory == null)) return true
   return false
@@ -184,12 +192,27 @@ interface AppState {
     projectId: string,
     lines: POSCartLine[],
     paymentMethod: POSPaymentMethod,
-    opts?: { tableLabel?: string; skipKds?: boolean }
+    opts?: {
+      tableLabel?: string
+      tableId?: string
+      skipKds?: boolean
+      cashAmount?: number
+      cardAmount?: number
+      changeGiven?: number
+      /** If true, remove paid lines from the active/open table tab */
+      clearFromTable?: boolean
+    }
   ) => { ok: boolean; receiptNumber?: string; error?: string; kdsTicketIds?: string[] }
   closePosAndGenerateDoplatkova: (projectId: string) => string | null
   acknowledgeAlert: (alertId: string) => void
   clearAcknowledgedAlerts: () => void
   ensureProjectPosReady: (projectId: string) => void
+
+  setActiveTable: (projectId: string, tableId: string) => void
+  setTableLines: (projectId: string, tableId: string, lines: POSCartLine[]) => void
+  addLineToActiveTable: (projectId: string, line: POSCartLine) => void
+  renameTable: (projectId: string, tableId: string, label: string) => void
+  addTable: (projectId: string, label: string) => void
 
   upsertPrinter: (printer: PosPrinter) => void
   removePrinter: (printerId: string) => void
@@ -385,6 +408,8 @@ export const useAppStore = create<AppState>()(
         const newAlerts: WarehouseAlert[] = []
 
         for (const line of lines) {
+          // Volná položka — bez skladového odepisu
+          if (line.isCustom || String(line.cateringId).startsWith('custom_')) continue
           const item = catering.find((c) => c.id === line.cateringId)
           if (!item) continue
           const result = decrementWarehouseForSale(
@@ -403,18 +428,29 @@ export const useAppStore = create<AppState>()(
           )
         }
 
+        const charged =
+          paymentMethod === 'card' ||
+          paymentMethod === 'cash' ||
+          paymentMethod === 'combined' ||
+          paymentMethod === 'invoice'
+
         const tx = buildTransaction(
           lines,
           paymentMethod,
-          migrated.documents?.sequence || 1
+          migrated.documents?.sequence || 1,
+          {
+            cashAmount: opts?.cashAmount,
+            cardAmount: opts?.cardAmount,
+            changeGiven: opts?.changeGiven,
+            tableId: opts?.tableId,
+            tableLabel: opts?.tableLabel,
+          }
         )
 
-        const extrasAdd =
-          paymentMethod === 'invoice' || paymentMethod === 'card'
-            ? tx.totalGross
-            : 0
+        const extrasAdd = charged ? tx.totalGross : 0
 
         const tableLabel = opts?.tableLabel || 'Bar / Kasa'
+        const catalogLines = lines.filter((l) => !l.isCustom)
         const kdsTickets = opts?.skipKds
           ? []
           : buildKdsTicketsFromCart({
@@ -422,11 +458,25 @@ export const useAppStore = create<AppState>()(
               projectName: migrated.name,
               receiptNumber: tx.receiptNumber,
               tableLabel,
-              lines,
+              lines: catalogLines,
             })
 
         for (const ticket of kdsTickets) {
           publishKdsTicket(ticket)
+        }
+
+        let posTables = ensurePosTables(migrated.posTables)
+        if (opts?.clearFromTable && opts.tableId) {
+          posTables = posTables.map((t) => {
+            if (t.id !== opts.tableId) return t
+            const remaining = subtractPaidLines(t.lines, lines)
+            return {
+              ...t,
+              lines: remaining,
+              status: remaining.length === 0 ? 'open' : t.status,
+              updatedAt: new Date().toISOString(),
+            }
+          })
         }
 
         const existingAlerts = state.warehouseAlerts ?? []
@@ -456,6 +506,7 @@ export const useAppStore = create<AppState>()(
                   ...migrated,
                   warehouse,
                   catering,
+                  posTables,
                   posTransactions: [tx, ...(migrated.posTransactions ?? [])],
                   posExtrasTotal: (migrated.posExtrasTotal || 0) + extrasAdd,
                 }
@@ -471,6 +522,15 @@ export const useAppStore = create<AppState>()(
           get().setToast(`Porce odkliknuta · ${tx.receiptNumber}`)
         } else if (paymentMethod === 'invoice') {
           get().setToast(`Připsáno na doplatkovou fakturu · ${tx.receiptNumber}`)
+        } else if (paymentMethod === 'cash') {
+          get().setToast(
+            `Hotovost OK · ${tx.receiptNumber}` +
+              (opts?.changeGiven ? ` · vrátit ${opts.changeGiven} Kč` : '')
+          )
+        } else if (paymentMethod === 'combined') {
+          get().setToast(
+            `Kombinovaná platba OK · hotovost ${opts?.cashAmount ?? 0} Kč + karta ${opts?.cardAmount ?? 0} Kč`
+          )
         } else {
           get().setToast(`Platba kartou OK · ${tx.receiptNumber}`)
         }
@@ -517,6 +577,73 @@ export const useAppStore = create<AppState>()(
         set((s) => ({
           warehouseAlerts: (s.warehouseAlerts ?? []).filter((a) => !a.acknowledged),
         })),
+
+      setActiveTable: (projectId, tableId) => {
+        get().updateProject(projectId, { activeTableId: tableId })
+      },
+
+      setTableLines: (projectId, tableId, lines) => {
+        const p = get().projects.find((x) => x.id === projectId)
+        if (!p) return
+        const tables = ensurePosTables(p.posTables).map((t) =>
+          t.id === tableId
+            ? {
+                ...t,
+                lines: Array.isArray(lines) ? lines : [],
+                updatedAt: new Date().toISOString(),
+                status: 'open' as const,
+              }
+            : t
+        )
+        get().updateProject(projectId, { posTables: tables, activeTableId: tableId })
+      },
+
+      addLineToActiveTable: (projectId, line) => {
+        const p = migrateProject(get().projects.find((x) => x.id === projectId))
+        if (!p) return
+        const tables = ensurePosTables(p.posTables)
+        const activeId = p.activeTableId || tables[0]?.id
+        if (!activeId) return
+        const next = tables.map((t) => {
+          if (t.id !== activeId) return t
+          return {
+            ...t,
+            lines: mergeCartLine(t.lines, line),
+            updatedAt: new Date().toISOString(),
+            status: 'open' as const,
+          }
+        })
+        get().updateProject(projectId, {
+          posTables: next,
+          activeTableId: activeId,
+        })
+      },
+
+      renameTable: (projectId, tableId, label) => {
+        const p = get().projects.find((x) => x.id === projectId)
+        if (!p) return
+        const tables = ensurePosTables(p.posTables).map((t) =>
+          t.id === tableId ? { ...t, label: label.trim() || t.label } : t
+        )
+        get().updateProject(projectId, { posTables: tables })
+      },
+
+      addTable: (projectId, label) => {
+        const p = migrateProject(get().projects.find((x) => x.id === projectId))
+        if (!p) return
+        const tables = ensurePosTables(p.posTables)
+        const neu: PosTableTab = {
+          id: uid('table'),
+          label: label.trim() || `Stůl ${tables.length + 1}`,
+          lines: [],
+          status: 'open',
+          updatedAt: new Date().toISOString(),
+        }
+        get().updateProject(projectId, {
+          posTables: [...tables, neu],
+          activeTableId: neu.id,
+        })
+      },
 
       upsertPrinter: (printer) =>
         set((s) => {

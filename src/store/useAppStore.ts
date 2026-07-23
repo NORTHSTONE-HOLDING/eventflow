@@ -6,10 +6,13 @@ import type {
   CateringItem,
   ChecklistItem,
   EventProject,
+  KdsTicket,
+  KdsTicketStatus,
   LegalRisk,
   MetricSnapshot,
   POSCartLine,
   POSPaymentMethod,
+  PosPrinter,
   StaffMember,
   SubscriptionTier,
   TimelineItem,
@@ -28,6 +31,11 @@ import {
   buildTransaction,
   isPosUnlocked,
 } from '../lib/posEngine'
+import { DEFAULT_PRINTERS } from '../lib/printerHardware'
+import {
+  buildKdsTicketsFromCart,
+  publishKdsTicket,
+} from '../lib/kdsSync'
 
 const defaultProfile: AgencyProfile = {
   companyName: '',
@@ -68,8 +76,9 @@ export function normalizeAppView(view: unknown): AppView {
 }
 
 /** Migrate pre-POS projects so POS never crashes on missing fields. */
-export function migrateProject(p: EventProject): EventProject {
-  const catering = normalizeCateringForPos(p.catering ?? [])
+export function migrateProject(p: EventProject | null | undefined): EventProject | null {
+  if (!p || typeof p !== 'object') return null
+  const catering = normalizeCateringForPos(Array.isArray(p.catering) ? p.catering : [])
   const warehouse =
     Array.isArray(p.warehouse) && p.warehouse.length > 0
       ? p.warehouse
@@ -77,6 +86,7 @@ export function migrateProject(p: EventProject): EventProject {
 
   return {
     ...p,
+    name: p.name || 'Bez názvu',
     catering,
     warehouse,
     posTransactions: Array.isArray(p.posTransactions) ? p.posTransactions : [],
@@ -84,11 +94,26 @@ export function migrateProject(p: EventProject): EventProject {
     doplatkovaId: p.doplatkovaId ?? null,
     doplatkovaText: p.doplatkovaText ?? null,
     posClosed: Boolean(p.posClosed),
-    timeline: p.timeline ?? [],
-    budgetLines: p.budgetLines ?? [],
-    checklist: p.checklist ?? [],
-    staff: p.staff ?? [],
+    timeline: Array.isArray(p.timeline) ? p.timeline : [],
+    budgetLines: Array.isArray(p.budgetLines) ? p.budgetLines : [],
+    checklist: Array.isArray(p.checklist) ? p.checklist : [],
+    staff: Array.isArray(p.staff) ? p.staff : [],
+    documents: p.documents ?? {
+      nabidka: 'CN2026000',
+      smlouva: 'SOD2026000',
+      faktura: 'F2026000',
+      protokol: 'PP2026000',
+      sequence: 0,
+    },
   }
+}
+
+function needsPosMigration(p: EventProject): boolean {
+  if (!Array.isArray(p.warehouse) || p.warehouse.length === 0) return true
+  if (!Array.isArray(p.posTransactions)) return true
+  const first = p.catering?.[0]
+  if (first && (first.sellPrice == null || first.subcategory == null)) return true
+  return false
 }
 
 export function computeMetrics(projects: EventProject[]): MetricSnapshot {
@@ -133,6 +158,8 @@ interface AppState {
   legalLoading: boolean
   toast: string | null
   warehouseAlerts: WarehouseAlert[]
+  printers: PosPrinter[]
+  kdsTickets: KdsTicket[]
 
   setView: (view: AppView) => void
   enterApp: (targetView?: AppView) => void
@@ -153,16 +180,21 @@ interface AppState {
   setClientSignature: (projectId: string, signature: string) => void
   markDepositPaid: (projectId: string) => void
 
-  /** Complete a POS checkout: inventory odepis, metrics, optional invoice append */
   completePosSale: (
     projectId: string,
     lines: POSCartLine[],
-    paymentMethod: POSPaymentMethod
-  ) => { ok: boolean; receiptNumber?: string; error?: string }
+    paymentMethod: POSPaymentMethod,
+    opts?: { tableLabel?: string; skipKds?: boolean }
+  ) => { ok: boolean; receiptNumber?: string; error?: string; kdsTicketIds?: string[] }
   closePosAndGenerateDoplatkova: (projectId: string) => string | null
   acknowledgeAlert: (alertId: string) => void
   clearAcknowledgedAlerts: () => void
   ensureProjectPosReady: (projectId: string) => void
+
+  upsertPrinter: (printer: PosPrinter) => void
+  removePrinter: (printerId: string) => void
+  setKdsTicketStatus: (ticketId: string, status: KdsTicketStatus) => void
+  addKdsTickets: (tickets: KdsTicket[]) => void
 
   runLegalAudit: (text: string) => Promise<void>
   getActiveProject: () => EventProject | null
@@ -183,6 +215,8 @@ export const useAppStore = create<AppState>()(
       legalLoading: false,
       toast: null,
       warehouseAlerts: [],
+      printers: DEFAULT_PRINTERS,
+      kdsTickets: [],
 
       setView: (view) => {
         const next = normalizeAppView(view)
@@ -236,7 +270,7 @@ export const useAppStore = create<AppState>()(
             )
             setDocumentSequence(maxSeq + 1)
             return {
-              projects: [migrateProject(project), ...safeProjects],
+              projects: [migrateProject(project)!, ...safeProjects],
               activeProjectId: project.id,
               aiLoading: false,
               view: 'planner',
@@ -256,9 +290,13 @@ export const useAppStore = create<AppState>()(
 
       updateProject: (id, patch) =>
         set((s) => ({
-          projects: (s.projects ?? []).map((p) =>
-            p.id === id ? migrateProject({ ...p, ...patch }) : p
-          ),
+          projects: (s.projects ?? []).map((p) => {
+            if (p.id !== id) return p
+            const merged = { ...p, ...patch }
+            return needsPosMigration(merged)
+              ? migrateProject(merged)!
+              : merged
+          }),
         })),
 
       updateTimeline: (projectId, timeline) =>
@@ -287,7 +325,7 @@ export const useAppStore = create<AppState>()(
               ...p,
               catering: merged,
               warehouse: buildWarehouseFromCatering(merged),
-            })
+            })!
           }),
         })),
 
@@ -318,22 +356,30 @@ export const useAppStore = create<AppState>()(
       ensureProjectPosReady: (projectId) => {
         const p = get().projects.find((x) => x.id === projectId)
         if (!p) return
-        get().updateProject(projectId, migrateProject(p))
+        if (!needsPosMigration(p)) return
+        const migrated = migrateProject(p)
+        if (!migrated) return
+        set((s) => ({
+          projects: (s.projects ?? []).map((x) =>
+            x.id === projectId ? migrated : x
+          ),
+        }))
       },
 
-      completePosSale: (projectId, lines, paymentMethod) => {
+      completePosSale: (projectId, lines, paymentMethod, opts) => {
         const state = get()
         const project = state.projects.find((p) => p.id === projectId)
         if (!project) return { ok: false, error: 'Projekt nenalezen' }
-        if (!isPosUnlocked(project)) {
+        const migrated = migrateProject(project)
+        if (!migrated) return { ok: false, error: 'Projekt nelze načíst' }
+        if (!isPosUnlocked(migrated)) {
           return {
             ok: false,
             error: 'POS je zamčená — vyžaduje podpis klienta a uhrazenou zálohu',
           }
         }
-        if (!lines.length) return { ok: false, error: 'Košík je prázdný' }
+        if (!lines?.length) return { ok: false, error: 'Košík je prázdný' }
 
-        const migrated = migrateProject(project)
         let warehouse = [...(migrated.warehouse ?? [])]
         let catering = [...(migrated.catering ?? [])]
         const newAlerts: WarehouseAlert[] = []
@@ -349,7 +395,7 @@ export const useAppStore = create<AppState>()(
             project.name
           )
           warehouse = result.warehouse
-          newAlerts.push(...result.alerts)
+          newAlerts.push(...(result.alerts ?? []))
           catering = catering.map((c) =>
             c.id === line.cateringId
               ? { ...c, soldPortions: (c.soldPortions || 0) + line.qty }
@@ -368,7 +414,21 @@ export const useAppStore = create<AppState>()(
             ? tx.totalGross
             : 0
 
-        // Deduplicate alerts for same warehouse item (keep lowest %)
+        const tableLabel = opts?.tableLabel || 'Bar / Kasa'
+        const kdsTickets = opts?.skipKds
+          ? []
+          : buildKdsTicketsFromCart({
+              projectId: migrated.id,
+              projectName: migrated.name,
+              receiptNumber: tx.receiptNumber,
+              tableLabel,
+              lines,
+            })
+
+        for (const ticket of kdsTickets) {
+          publishKdsTicket(ticket)
+        }
+
         const existingAlerts = state.warehouseAlerts ?? []
         const mergedAlerts = [...existingAlerts]
         for (const alert of newAlerts) {
@@ -389,6 +449,7 @@ export const useAppStore = create<AppState>()(
 
         set({
           warehouseAlerts: mergedAlerts.slice(0, 50),
+          kdsTickets: [...kdsTickets, ...(state.kdsTickets ?? [])].slice(0, 100),
           projects: state.projects.map((p) =>
             p.id === projectId
               ? {
@@ -414,7 +475,11 @@ export const useAppStore = create<AppState>()(
           get().setToast(`Platba kartou OK · ${tx.receiptNumber}`)
         }
 
-        return { ok: true, receiptNumber: tx.receiptNumber }
+        return {
+          ok: true,
+          receiptNumber: tx.receiptNumber,
+          kdsTicketIds: kdsTickets.map((t) => t.id),
+        }
       },
 
       closePosAndGenerateDoplatkova: (projectId) => {
@@ -422,6 +487,7 @@ export const useAppStore = create<AppState>()(
         const project = state.projects.find((p) => p.id === projectId)
         if (!project) return null
         const migrated = migrateProject(project)
+        if (!migrated) return null
         const doc = buildDoplatkovaFaktura(migrated, state.profile)
         set({
           projects: state.projects.map((p) =>
@@ -452,6 +518,39 @@ export const useAppStore = create<AppState>()(
           warehouseAlerts: (s.warehouseAlerts ?? []).filter((a) => !a.acknowledged),
         })),
 
+      upsertPrinter: (printer) =>
+        set((s) => {
+          const list = Array.isArray(s.printers) ? [...s.printers] : []
+          const idx = list.findIndex((p) => p.id === printer.id)
+          if (idx >= 0) {
+            list[idx] = printer
+            return { printers: list }
+          }
+          const roleIdx = list.findIndex((p) => p.role === printer.role)
+          if (roleIdx >= 0) {
+            list[roleIdx] = printer
+            return { printers: list }
+          }
+          return { printers: [...list, printer] }
+        }),
+
+      removePrinter: (printerId) =>
+        set((s) => ({
+          printers: (s.printers ?? []).filter((p) => p.id !== printerId),
+        })),
+
+      setKdsTicketStatus: (ticketId, status) =>
+        set((s) => ({
+          kdsTickets: (s.kdsTickets ?? []).map((t) =>
+            t.id === ticketId ? { ...t, status } : t
+          ),
+        })),
+
+      addKdsTickets: (tickets) =>
+        set((s) => ({
+          kdsTickets: [...(tickets ?? []), ...(s.kdsTickets ?? [])].slice(0, 100),
+        })),
+
       runLegalAudit: async (text) => {
         set({ legalLoading: true })
         try {
@@ -469,7 +568,7 @@ export const useAppStore = create<AppState>()(
         if (!projects.length) return null
         const found =
           projects.find((p) => p?.id === s.activeProjectId) ?? projects[0] ?? null
-        return found ? migrateProject(found) : null
+        return migrateProject(found)
       },
 
       getMetrics: () => computeMetrics(get().projects ?? []),
@@ -483,11 +582,15 @@ export const useAppStore = create<AppState>()(
         showHero: s.showHero,
         view: normalizeAppView(s.view),
         warehouseAlerts: s.warehouseAlerts,
+        printers: s.printers,
+        kdsTickets: s.kdsTickets,
       }),
       onRehydrateStorage: () => (state) => {
         queueMicrotask(() => {
           const projects = Array.isArray(state?.projects)
-            ? state!.projects.map(migrateProject)
+            ? state!.projects
+                .map((p) => migrateProject(p))
+                .filter((p): p is EventProject => Boolean(p))
             : []
           useAppStore.setState({
             hydrated: true,
@@ -498,6 +601,11 @@ export const useAppStore = create<AppState>()(
             warehouseAlerts: Array.isArray(state?.warehouseAlerts)
               ? state!.warehouseAlerts
               : [],
+            printers:
+              Array.isArray(state?.printers) && state!.printers.length
+                ? state!.printers
+                : DEFAULT_PRINTERS,
+            kdsTickets: Array.isArray(state?.kdsTickets) ? state!.kdsTickets : [],
           })
         })
       },
@@ -505,12 +613,14 @@ export const useAppStore = create<AppState>()(
   )
 )
 
+/**
+ * Stable selector — returns the raw project reference from the store.
+ * NEVER call migrateProject here (new object every read → infinite re-render crash).
+ */
 export function selectActiveProject(s: AppState): EventProject | null {
   const projects = Array.isArray(s.projects) ? s.projects : []
   if (!projects.length) return null
-  const found =
-    projects.find((p) => p?.id === s.activeProjectId) ?? projects[0] ?? null
-  return found ? migrateProject(found) : null
+  return projects.find((p) => p?.id === s.activeProjectId) ?? projects[0] ?? null
 }
 
 export { isPosUnlocked }

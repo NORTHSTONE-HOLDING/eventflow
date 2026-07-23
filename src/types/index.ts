@@ -52,6 +52,10 @@ export interface RecipeIngredient {
   unit: string
 }
 
+export type POSFoodSubcategory = 'predkrmy' | 'hlavni' | 'dezerty' | 'raut'
+export type POSDrinkSubcategory = 'pivo' | 'vino' | 'koktejly' | 'nealko' | 'destilaty'
+export type POSSubcategory = POSFoodSubcategory | POSDrinkSubcategory | 'ostatni'
+
 export interface CateringItem {
   id: string
   name: string
@@ -61,6 +65,7 @@ export interface CateringItem {
   allergens: string[]
   inventory: string[]
   category: 'food' | 'beverage' | 'other'
+  subcategory: POSSubcategory
   /** POS sell price per portion (Kč, vč. DPH) */
   sellPrice: number
   vatRate: number
@@ -123,10 +128,65 @@ export interface POSCartLine {
   cateringId: string
   name: string
   category: 'food' | 'beverage' | 'other'
+  subcategory: POSSubcategory
   unitPrice: number
   qty: number
   vatRate: number
   foodCostPerUnit: number
+}
+
+export type PrinterRole = 'bar' | 'kitchen' | 'receipt'
+export type PrinterConnection = 'bluetooth' | 'network' | 'simulated'
+
+export interface PosPrinter {
+  id: string
+  name: string
+  role: PrinterRole
+  connection: PrinterConnection
+  address: string
+  paired: boolean
+  paperWidthMm: 80
+  lastSeen: string | null
+}
+
+export type KdsTicketStatus = 'new' | 'preparing' | 'done'
+
+export interface KdsTicketLine {
+  name: string
+  qty: number
+  note?: string
+}
+
+export interface KdsTicket {
+  id: string
+  projectId: string
+  projectName: string
+  receiptNumber: string
+  station: 'kitchen' | 'bar'
+  tableLabel: string
+  createdAt: string
+  status: KdsTicketStatus
+  lines: KdsTicketLine[]
+}
+
+export interface TerminalSession {
+  id: string
+  amount: number
+  currency: 'CZK'
+  status: 'idle' | 'sending' | 'waiting_card' | 'approved' | 'rejected' | 'cancelled'
+  message: string
+  provider: 'stripe_terminal' | 'sumup'
+  startedAt: string | null
+  finishedAt: string | null
+}
+
+export interface CustomerDisplayState {
+  projectName: string
+  lines: Array<{ name: string; qty: number; price: number }>
+  total: number
+  phase: 'idle' | 'cart' | 'tap_card' | 'approved' | 'rejected'
+  message: string
+  updatedAt: string
 }
 
 export interface POSTransaction {

@@ -4,6 +4,8 @@ import { HeroScreen } from './components/HeroScreen'
 import { AppShell } from './components/AppShell'
 import { StaffCheckinPage } from './components/StaffPanel'
 import { ClientPortalRoute } from './components/ClientPortalRoute'
+import { CustomerDisplayPage } from './components/CustomerDisplay'
+import { KitchenDisplayPage } from './components/KitchenDisplay'
 import { ErrorBoundary } from './components/ErrorBoundary'
 
 export default function App() {
@@ -15,6 +17,22 @@ export default function App() {
         <Routes>
           <Route path="/staff-checkin" element={<StaffCheckinPage />} />
           <Route path="/portal" element={<ClientPortalRoute />} />
+          <Route
+            path="/pos/customer"
+            element={
+              <ErrorBoundary fallbackTitle="Chyba zákaznického displaye">
+                <CustomerDisplayPage />
+              </ErrorBoundary>
+            }
+          />
+          <Route
+            path="/pos/kds"
+            element={
+              <ErrorBoundary fallbackTitle="Chyba KDS">
+                <KitchenDisplayPage />
+              </ErrorBoundary>
+            }
+          />
           <Route
             path="/*"
             element={

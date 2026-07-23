@@ -212,18 +212,42 @@ export function normalizeCateringForPos(items: CateringItem[]): CateringItem[] {
       Number(item.sellPrice) > 0
         ? Number(item.sellPrice)
         : Math.round(costPer * 2.4) || (item.category === 'beverage' ? 95 : 180)
+
+    const text = `${item.name || ''} ${item.recipe || ''}`.toLowerCase()
+    let subcategory = item.subcategory
+    if (!subcategory) {
+      if (item.category === 'beverage') {
+        if (/pivo|beer|ležák|ležak/.test(text)) subcategory = 'pivo'
+        else if (/víno|vino|prosecco|sekt/.test(text)) subcategory = 'vino'
+        else if (/rum|whisky|vodka|gin|destil/.test(text)) subcategory = 'destilaty'
+        else if (/koktejl|mocktail|drink/.test(text)) subcategory = 'koktejly'
+        else subcategory = 'nealko'
+      } else if (item.category === 'food') {
+        if (/dezer|dezert|fondant|macaron|tartalet|coffee/.test(text)) subcategory = 'dezerty'
+        else if (/canapé|predkrm|předkrm|bruschetta|polév/.test(text)) subcategory = 'predkrmy'
+        else if (/raut|buffet|finger/.test(text)) subcategory = 'raut'
+        else subcategory = 'hlavni'
+      } else {
+        subcategory = 'ostatni'
+      }
+    }
+
     return {
       ...item,
+      allergens: Array.isArray(item.allergens) ? item.allergens : [],
+      inventory: Array.isArray(item.inventory) ? item.inventory : [],
       sellPrice,
       vatRate: item.vatRate ?? (item.category === 'beverage' ? 21 : 12),
       plannedPortions: planned,
       soldPortions: Number(item.soldPortions) || 0,
+      subcategory,
       ingredients: inferIngredientsFromCatering({
         ...item,
         plannedPortions: planned,
         sellPrice,
         vatRate: item.vatRate ?? 12,
         soldPortions: 0,
+        subcategory,
         ingredients: item.ingredients ?? [],
       }),
     }

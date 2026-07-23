@@ -5,12 +5,12 @@ import { normalizeCateringForPos } from './inventoryEngine'
 function item(
   partial: Omit<
     CateringItem,
-    'sellPrice' | 'vatRate' | 'plannedPortions' | 'soldPortions' | 'ingredients'
+    'sellPrice' | 'vatRate' | 'plannedPortions' | 'soldPortions' | 'ingredients' | 'subcategory'
   > &
     Partial<
       Pick<
         CateringItem,
-        'sellPrice' | 'vatRate' | 'plannedPortions' | 'soldPortions' | 'ingredients'
+        'sellPrice' | 'vatRate' | 'plannedPortions' | 'soldPortions' | 'ingredients' | 'subcategory'
       >
     >
 ): CateringItem {
@@ -18,6 +18,7 @@ function item(
   return normalizeCateringForPos([
     {
       ...partial,
+      subcategory: partial.subcategory || 'ostatni',
       sellPrice: partial.sellPrice ?? 0,
       vatRate: partial.vatRate ?? (partial.category === 'beverage' ? 21 : 12),
       plannedPortions: planned,
@@ -49,6 +50,7 @@ export async function scanMenuFromImage(file: File): Promise<CateringItem[]> {
         allergens: [],
         inventory: ['Pivo 24 ks'],
         category: 'beverage',
+        subcategory: 'pivo',
         sellPrice: 65,
         ingredients: [{ name: 'Pivo', qtyPerPortion: 1, unit: 'ks' }],
       }),

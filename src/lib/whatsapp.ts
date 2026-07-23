@@ -41,3 +41,26 @@ export function openWhatsApp(phone: string, message: string) {
 export function buildDebtWhatsAppMessage(notice: string): string {
   return notice
 }
+
+/** Strict pre-litigation WhatsApp notice with instant checkout link. */
+export function buildPredzalobniWhatsAppPayload(opts: {
+  clientName: string
+  companyName: string
+  invoiceId: string
+  amountLabel: string
+  dueDateLabel: string
+  contractId: string
+  protocolId: string
+  paymentLink: string
+}): string {
+  return (
+    `⚠️ PŘEDŽALOBNÍ VÝZVA (§ 142a OSŘ)\n\n` +
+    `${opts.clientName}, evidujeme neuhrazenou pohledávku ${opts.invoiceId} ` +
+    `ve výši ${opts.amountLabel} (splatnost ${opts.dueDateLabel}).\n\n` +
+    `Porušení platební povinnosti ze Smlouvy o dílo ${opts.contractId} ` +
+    `a Předávacího protokolu ${opts.protocolId} (digitální podpis).\n\n` +
+    `Bez úhrady do 15 dnů podáme žalobu; zákonný úrok z prodlení narůstá denně.\n\n` +
+    `💳 OKAMŽITÁ PLATBA:\n${opts.paymentLink}\n\n` +
+    `— ${opts.companyName || 'EventFlow'} · právní vymáhání pohledávek`
+  )
+}

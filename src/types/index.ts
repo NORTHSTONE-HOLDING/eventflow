@@ -27,6 +27,8 @@ export interface AgencyProfile {
   vopAccepted: boolean
   gdprAccepted: boolean
   registeredAt: string | null
+  /** Manager PIN to unlock Admin Dashboard from /pos-terminal (digits). */
+  managerPin?: string
 }
 
 export interface TimelineItem {
@@ -333,6 +335,19 @@ export interface EventProject {
   doplatkovaId: string | null
   doplatkovaText: string | null
   posClosed: boolean
+  /** Final / doplatek invoice settled */
+  finalPaymentPaid: boolean
+  /** ISO date of final invoice due date */
+  invoiceDueDate: string | null
+  /** Last AI debt collection analysis snapshot (Czech legal text) */
+  debtLegalAnalysis?: {
+    generatedAt: string
+    sectionBreach: string
+    sectionPreAction: string
+    whatsappNotice: string
+    source: 'openai' | 'simulated'
+    model: string
+  } | null
 }
 
 export interface LegalRisk {

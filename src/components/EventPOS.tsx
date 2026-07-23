@@ -68,7 +68,15 @@ import { PosTableMap } from './pos/PosTableMap'
 import { AdvancedCheckout, type CheckoutResult } from './pos/AdvancedCheckout'
 import { CustomItemModal } from './pos/CustomItemModal'
 
-export function EventPOS() {
+export type EventPosMode = 'admin' | 'staff'
+
+interface EventPOSProps {
+  /** staff = isolated /pos-terminal (no analytics, subscriptions chrome, warehouse admin) */
+  mode?: EventPosMode
+}
+
+export function EventPOS({ mode = 'admin' }: EventPOSProps) {
+  const staffMode = mode === 'staff'
   const subscription = useAppStore((s) => s.profile.subscription)
   const profile = useAppStore((s) => s.profile)
   const projects = useAppStore((s) => s.projects)
@@ -516,7 +524,7 @@ export function EventPOS() {
     if (text) setDoplatkovaPreview(text)
   }
 
-  if (!unlockedTier) {
+  if (!unlockedTier && !staffMode) {
     return (
       <div style={{ animation: 'fadeUp 0.4s ease' }}>
         <h1 className="section-title gold-text">Event POS / Kasa</h1>
@@ -563,31 +571,52 @@ export function EventPOS() {
         </div>
       )}
 
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'flex-start',
-          flexWrap: 'wrap',
-          gap: 16,
-          marginBottom: 16,
-        }}
-      >
-        <div>
-          <h1 className="section-title gold-text">Event POS / Kasa</h1>
-          <p className="section-sub">
-            Dotyková kasa · multi-číšník · KDS notifikace · stoly
-          </p>
+      {!staffMode && (
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'flex-start',
+            flexWrap: 'wrap',
+            gap: 16,
+            marginBottom: 16,
+          }}
+        >
+          <div>
+            <h1 className="section-title gold-text">Event POS / Kasa</h1>
+            <p className="section-sub">
+              Dotyková kasa · multi-číšník · KDS notifikace · stoly
+            </p>
+          </div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button type="button" className={showMap ? 'btn btn-gold' : 'btn btn-ghost'} onClick={() => setShowMap((v) => !v)} style={{ minHeight: 48 }}>
+              <Map size={15} /> {showMap ? 'Skrýt mapu stolů' : 'Mapa Stolů'}
+            </button>
+            <button type="button" className="btn btn-ghost" onClick={() => setShowPrinters((v) => !v)} style={{ minHeight: 48 }}>
+              <Settings2 size={15} /> Tiskárny
+            </button>
+            <button type="button" className="btn btn-ghost" onClick={() => openPosDisplayWindow('/pos/customer', 1)} style={{ minHeight: 48 }}>
+              <Monitor size={15} /> Zákaznický display
+            </button>
+            <button type="button" className="btn btn-ghost" onClick={() => openPosDisplayWindow('/pos/kds/kitchen', 2)} style={{ minHeight: 48 }}>
+              <ChefHat size={15} /> Displej KUCHYŇ
+            </button>
+            <button type="button" className="btn btn-ghost" onClick={() => openPosDisplayWindow('/pos/kds/bar', 2)} style={{ minHeight: 48 }}>
+              <Wine size={15} /> Displej BAR
+            </button>
+            {project && posOpen && !project.posClosed && (
+              <button type="button" className="btn btn-ghost" onClick={handleClosePos} style={{ minHeight: 48 }}>
+                <FileText size={15} /> Uzavřít kasu
+              </button>
+            )}
+          </div>
         </div>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+      )}
+
+      {staffMode && (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
           <button type="button" className={showMap ? 'btn btn-gold' : 'btn btn-ghost'} onClick={() => setShowMap((v) => !v)} style={{ minHeight: 48 }}>
             <Map size={15} /> {showMap ? 'Skrýt mapu stolů' : 'Mapa Stolů'}
-          </button>
-          <button type="button" className="btn btn-ghost" onClick={() => setShowPrinters((v) => !v)} style={{ minHeight: 48 }}>
-            <Settings2 size={15} /> Tiskárny
-          </button>
-          <button type="button" className="btn btn-ghost" onClick={() => openPosDisplayWindow('/pos/customer', 1)} style={{ minHeight: 48 }}>
-            <Monitor size={15} /> Zákaznický display
           </button>
           <button type="button" className="btn btn-ghost" onClick={() => openPosDisplayWindow('/pos/kds/kitchen', 2)} style={{ minHeight: 48 }}>
             <ChefHat size={15} /> Displej KUCHYŇ
@@ -595,58 +624,58 @@ export function EventPOS() {
           <button type="button" className="btn btn-ghost" onClick={() => openPosDisplayWindow('/pos/kds/bar', 2)} style={{ minHeight: 48 }}>
             <Wine size={15} /> Displej BAR
           </button>
-          {project && posOpen && !project.posClosed && (
-            <button type="button" className="btn btn-ghost" onClick={handleClosePos} style={{ minHeight: 48 }}>
-              <FileText size={15} /> Uzavřít kasu
-            </button>
-          )}
         </div>
-      </div>
+      )}
 
-      <div className="panel" style={{ marginBottom: 14, borderColor: 'var(--border-strong)' }}>
+      <div className="panel" style={{ marginBottom: 14, borderColor: 'var(--border-strong)', background: staffMode ? '#0f172a' : undefined }}>
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: '1.2fr 1fr',
+            gridTemplateColumns: staffMode ? '1fr' : '1.2fr 1fr',
             gap: 12,
             alignItems: 'end',
           }}
           className="pos-select-row"
         >
-          <div>
-            <label className="label">Aktivní akce z registru</label>
-            <select
-              className="select"
-              value={project?.id || ''}
-              onChange={(e) => {
-                setActiveProject(e.target.value || null)
-                setLastReceipt(null)
-                setCheckoutOpen(false)
-              }}
-              style={{ minHeight: 48 }}
-            >
-              <option value="">— Vyberte akci —</option>
-              {registry.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name} · {p.documents?.nabidka || ''}
-                  {isPosUnlocked(p) ? ' · ODEMČENO' : p.posClosed ? ' · UZAVŘENO' : ' · ZAMČENO'}
-                </option>
-              ))}
-            </select>
-          </div>
+          {!staffMode && (
+            <div>
+              <label className="label">Aktivní akce z registru</label>
+              <select
+                className="select"
+                value={project?.id || ''}
+                onChange={(e) => {
+                  setActiveProject(e.target.value || null)
+                  setLastReceipt(null)
+                  setCheckoutOpen(false)
+                }}
+                style={{ minHeight: 48 }}
+              >
+                <option value="">— Vyberte akci —</option>
+                {registry.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} · {p.documents?.nabidka || ''}
+                    {isPosUnlocked(p) ? ' · ODEMČENO' : p.posClosed ? ' · UZAVŘENO' : ' · ZAMČENO'}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <div>
             <label className="label" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-              <UserRound size={13} color="var(--gold)" /> Přihlášený Číšník
+              <UserRound size={13} color="#D4AF37" /> Přihlášený Číšník
             </label>
             <select
               className="select"
               value={activeWaiterId}
               onChange={(e) => setActiveWaiter(e.target.value)}
               style={{
-                minHeight: 48,
+                minHeight: 52,
                 borderColor: activeWaiter.color,
                 boxShadow: `0 0 0 1px ${activeWaiter.color}55`,
-                fontWeight: 700,
+                fontWeight: 800,
+                background: '#1e293b',
+                color: '#fff',
+                touchAction: 'manipulation',
               }}
             >
               {waiters.map((w) => (
@@ -668,12 +697,13 @@ export function EventPOS() {
               alignItems: 'center',
             }}
           >
-            <span
-              className={`badge ${posOpen ? 'badge-success' : project.posClosed ? 'badge-warning' : 'badge-danger'}`}
-            >
-              {posOpen ? 'POS ODEMČENA' : project.posClosed ? 'KASA UZAVŘENA' : 'POS ZAMČENA'}
-            </span>
-            <span className="badge badge-gold">{project.documents?.faktura}</span>
+            {!staffMode && (
+              <span
+                className={`badge ${posOpen ? 'badge-success' : project.posClosed ? 'badge-warning' : 'badge-danger'}`}
+              >
+                {posOpen ? 'POS ODEMČENA' : project.posClosed ? 'KASA UZAVŘENA' : 'POS ZAMČENA'}
+              </span>
+            )}
             <span className="badge badge-gold">Aktivní: {tableLabel}</span>
             <span className="badge badge-gold">Číšník: {activeWaiter.name}</span>
             {myReadyAlerts.length > 0 && (
@@ -681,7 +711,7 @@ export function EventPOS() {
                 <Bell size={12} /> {myReadyAlerts.length} připraveno k odnesení
               </span>
             )}
-            {!posOpen && !project.posClosed && (
+            {!staffMode && !posOpen && !project.posClosed && (
               <button
                 type="button"
                 className="btn btn-ghost"
@@ -747,7 +777,7 @@ export function EventPOS() {
         />
       )}
 
-      {showPrinters && (
+      {!staffMode && showPrinters && (
         <PrinterConfigPanel
           printers={safePrinters}
           pairingRole={pairingRole}
@@ -761,45 +791,51 @@ export function EventPOS() {
           className="panel"
           style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-muted)' }}
         >
-          Vyberte aktivní akci z registru, nebo vytvořte novou v AI Planneru.
-          <div style={{ marginTop: 12 }}>
-            <button type="button" className="btn btn-gold" onClick={() => setView('planner')}>
-              AI Planner
-            </button>
-          </div>
+          {staffMode
+            ? 'Terminál čeká na aktivní akci — manažer musí vybrat zakázku v Admin Dashboardu.'
+            : 'Vyberte aktivní akci z registru, nebo vytvořte novou v AI Planneru.'}
+          {!staffMode && (
+            <div style={{ marginTop: 12 }}>
+              <button type="button" className="btn btn-gold" onClick={() => setView('planner')}>
+                AI Planner
+              </button>
+            </div>
+          )}
         </div>
       )}
 
       {project && (
         <>
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
-              gap: 10,
-              marginBottom: 14,
-            }}
-          >
-            <MetricCard
-              label="Aktuální Obrat Kasy"
-              value={formatCurrency(metrics?.currentTurnover ?? 0)}
-            />
-            <MetricCard
-              label="Reálná Marže v %"
-              value={`${(metrics?.realMarginPercent ?? 0).toFixed(1)} %`}
-            />
-            <MetricCard
-              label="Porce vs. Plán"
-              value={`${metrics?.portionsIssued ?? 0} / ${metrics?.portionsPlanned ?? 0}`}
-            />
-            <MetricCard
-              label="Skladové alerty"
-              value={String(lowStock.length + projectAlerts.length)}
-              danger={lowStock.length > 0}
-            />
-          </div>
+          {!staffMode && (
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+                gap: 10,
+                marginBottom: 14,
+              }}
+            >
+              <MetricCard
+                label="Aktuální Obrat Kasy"
+                value={formatCurrency(metrics?.currentTurnover ?? 0)}
+              />
+              <MetricCard
+                label="Reálná Marže v %"
+                value={`${(metrics?.realMarginPercent ?? 0).toFixed(1)} %`}
+              />
+              <MetricCard
+                label="Porce vs. Plán"
+                value={`${metrics?.portionsIssued ?? 0} / ${metrics?.portionsPlanned ?? 0}`}
+              />
+              <MetricCard
+                label="Skladové alerty"
+                value={String(lowStock.length + projectAlerts.length)}
+                danger={lowStock.length > 0}
+              />
+            </div>
+          )}
 
-          {(lowStock.length > 0 || projectAlerts.length > 0) && (
+          {!staffMode && (lowStock.length > 0 || projectAlerts.length > 0) && (
             <div
               className="panel"
               style={{
@@ -1283,7 +1319,7 @@ export function EventPOS() {
             </div>
           </div>
 
-          {lastReceipt && (
+          {!staffMode && lastReceipt && (
             <ReceiptPanel
               tx={lastReceipt}
               project={project}
@@ -1292,7 +1328,7 @@ export function EventPOS() {
             />
           )}
 
-          {doplatkovaPreview && (
+          {!staffMode && doplatkovaPreview && (
             <div
               className="panel"
               style={{

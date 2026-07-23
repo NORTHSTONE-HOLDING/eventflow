@@ -60,6 +60,7 @@ const defaultProfile: AgencyProfile = {
   vopAccepted: false,
   gdprAccepted: false,
   registeredAt: null,
+  managerPin: '2580',
 }
 
 const APP_VIEWS: AppView[] = [
@@ -103,6 +104,9 @@ export function migrateProject(p: EventProject | null | undefined): EventProject
     doplatkovaId: p.doplatkovaId ?? null,
     doplatkovaText: p.doplatkovaText ?? null,
     posClosed: Boolean(p.posClosed),
+    finalPaymentPaid: Boolean(p.finalPaymentPaid),
+    invoiceDueDate: p.invoiceDueDate ?? null,
+    debtLegalAnalysis: p.debtLegalAnalysis ?? null,
     timeline: Array.isArray(p.timeline) ? p.timeline : [],
     budgetLines: Array.isArray(p.budgetLines) ? p.budgetLines : [],
     checklist: Array.isArray(p.checklist) ? p.checklist : [],

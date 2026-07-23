@@ -417,6 +417,9 @@ export async function generateEventFromPrompt(
     doplatkovaId: null,
     doplatkovaText: null,
     posClosed: false,
+    finalPaymentPaid: false,
+    invoiceDueDate: null,
+    debtLegalAnalysis: null,
   }
 }
 

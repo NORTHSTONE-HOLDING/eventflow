@@ -12,10 +12,13 @@ import { EventPOS } from './EventPOS'
 import { InventoryHub } from './inventory/InventoryHub'
 import { CloudSyncBadge } from './inventory/CloudSyncBadge'
 import { ErrorBoundary } from './ErrorBoundary'
+import { ManagerPinGate } from './ManagerPinGate'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import type { AppView } from '../types'
 import { wireInventoryConnectivity } from '../store/useInventoryStore'
+import { useStaffLockStore } from '../store/useStaffLockStore'
 
 function renderView(view: AppView) {
   switch (view) {
@@ -49,7 +52,10 @@ export function AppShell() {
   const rawView = useAppStore((s) => s.view)
   const setView = useAppStore((s) => s.setView)
   const toast = useAppStore((s) => s.toast)
+  const profilePin = useAppStore((s) => s.profile.managerPin)
   const view = normalizeAppView(rawView)
+  const navigate = useNavigate()
+  const staffTerminalLocked = useStaffLockStore((s) => s.staffTerminalLocked)
 
   useEffect(() => {
     if (rawView !== view) {
@@ -60,6 +66,22 @@ export function AppShell() {
   useEffect(() => {
     wireInventoryConnectivity()
   }, [])
+
+  // RBAC: staff terminal lock blocks Admin Dashboard until Manager PIN
+  if (staffTerminalLocked) {
+    return (
+      <div style={{ minHeight: '100vh', background: '#070a0e' }}>
+        <ManagerPinGate
+          open
+          expectedPin={profilePin}
+          onSuccess={() => {
+            setView('dashboard')
+          }}
+          onCancel={() => navigate('/pos-terminal', { replace: true })}
+        />
+      </div>
+    )
+  }
 
   return (
     <div

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { Check, Crown, Lock } from 'lucide-react'
 import { useAppStore } from '../store/useAppStore'
+import { useStaffLockStore } from '../store/useStaffLockStore'
 import { SUBSCRIPTION_PLANS } from '../lib/subscriptions'
 import { Modal } from './Modal'
 import type { AgencyProfile, SubscriptionTier } from '../types'
@@ -35,8 +36,11 @@ export function ProfileSettings() {
     setToast('Agentura úspěšně registrována')
   }
 
+  const setManagerPin = useStaffLockStore((s) => s.setManagerPin)
+
   const handleSave = () => {
     updateProfile(form)
+    if (form.managerPin) setManagerPin(form.managerPin)
     setToast('Profil uložen — údaje se autofillují do hlaviček dokumentů')
   }
 
@@ -128,6 +132,22 @@ export function ProfileSettings() {
             )}
           </div>
         )}
+
+        <div style={{ marginTop: 20 }}>
+          <label className="label">Manager PIN (odemknutí Admin Dashboardu z /pos-terminal)</label>
+          <input
+            className="input"
+            type="password"
+            inputMode="numeric"
+            value={String(form.managerPin ?? '2580')}
+            onChange={(e) => set('managerPin', e.target.value.replace(/\D/g, '').slice(0, 8))}
+            placeholder="2580"
+            style={{ maxWidth: 220, minHeight: 48, letterSpacing: '0.25em', fontWeight: 800 }}
+          />
+          <p style={{ fontSize: '0.78rem', color: 'var(--text-dim)', marginTop: 6 }}>
+            Personál na terminálu nemůže opustit kasu bez tohoto PIN (výchozí 2580).
+          </p>
+        </div>
 
         <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
           {profile.registeredAt ? (

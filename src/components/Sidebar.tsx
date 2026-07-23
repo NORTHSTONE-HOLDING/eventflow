@@ -18,6 +18,8 @@ import { Logo } from './Logo'
 import { useAppStore, normalizeAppView } from '../store/useAppStore'
 import { hasFeature } from '../lib/subscriptions'
 import type { AppView } from '../types'
+import { useNavigate } from 'react-router-dom'
+import { useStaffLockStore } from '../store/useStaffLockStore'
 
 const NAV: Array<{
   id: AppView
@@ -44,6 +46,8 @@ export function Sidebar() {
   const subscription = useAppStore((s) => s.profile.subscription)
   const companyName = useAppStore((s) => s.profile.companyName)
   const [open, setOpen] = useState(false)
+  const navigate = useNavigate()
+  const lockStaffTerminal = useStaffLockStore((s) => s.lockStaffTerminal)
 
   const nav = (
     <>
@@ -92,6 +96,35 @@ export function Sidebar() {
             </button>
           )
         })}
+        {hasFeature(subscription, 'BUSINESS') && (
+          <button
+            type="button"
+            onClick={() => {
+              lockStaffTerminal()
+              setOpen(false)
+              navigate('/pos-terminal')
+            }}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              padding: '0.65rem 0.85rem',
+              borderRadius: 8,
+              border: '1px solid rgba(212,175,55,0.35)',
+              background: 'rgba(212,175,55,0.08)',
+              color: '#D4AF37',
+              cursor: 'pointer',
+              fontSize: '0.88rem',
+              fontWeight: 700,
+              textAlign: 'left',
+              marginTop: 6,
+            }}
+          >
+            <MonitorSmartphone size={17} />
+            <span style={{ flex: 1 }}>Terminál personálu</span>
+            <Lock size={12} opacity={0.8} />
+          </button>
+        )}
       </nav>
 
       <div

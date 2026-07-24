@@ -714,6 +714,9 @@ export const useInventoryStore = create<InventoryState>()(
                 pack_volume: neu.pack_volume ?? existing.pack_volume,
                 supplier: neu.supplier || existing.supplier,
                 category: neu.category || existing.category,
+                subcategory: neu.subcategory || existing.subcategory,
+                // Keep existing cashier lock unless already unlocked by manager
+                pos_visible: existing.pos_visible,
                 updated_at: new Date().toISOString(),
               })
               items = items.map((i) => (i.id === existing.id ? updatedItem : i))

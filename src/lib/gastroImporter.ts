@@ -1,8 +1,10 @@
 /**
- * Universal gastro migration importer — CSV / Excel-like text → clean InventoryItem rows.
- * Uses OpenAI when VITE_OPENAI_API_KEY is set; otherwise deterministic client-side simulation.
+ * Universal Data Importer — EventFlow Sklad
+ * SheetJS (.xlsx/.csv) → AI classification (gpt-4o-mini) → warehouse rows
+ * CRITICAL: all imports set pos_visible = false (cashier lock until Do kasy toggle)
  */
 
+import * as XLSX from 'xlsx'
 import type { InventoryItem, InventoryUnit } from '../types'
 import { createEmptyInventoryItem, normalizeName, normalizeUnit } from './inventoryModels'
 import { inferPackVolumeLiters } from './unitConversion'
@@ -14,6 +16,7 @@ import {
 import {
   getRegistryCategories,
   registerCategoryFromImportLabel,
+  useCategoryRegistryStore,
 } from '../store/useCategoryRegistryStore'
 
 /** Czech display label or custom category name from importer / AI. */
@@ -22,6 +25,8 @@ export type GastroImportCategory = string
 export interface GastroImportDraft {
   name: string
   category: GastroImportCategory
+  /** Czech subcategory label from AI (e.g. Pivo, Hlavní chody) */
+  subcategory: string
   unit: InventoryUnit | string
   quantity: number
   minimum: number
@@ -38,7 +43,26 @@ export interface GastroImportResult {
   items: GastroImportDraft[]
   source: 'openai' | 'simulated'
   message: string
+  headers?: string[]
+  rowCount?: number
 }
+
+export type GastroImportProgressPhase =
+  | 'reading'
+  | 'parsing'
+  | 'ai'
+  | 'classifying'
+  | 'done'
+  | 'error'
+
+export type GastroImportProgress = {
+  phase: GastroImportProgressPhase
+  detail: string
+  percent: number
+}
+
+const AI_SYSTEM_PROMPT = `Jseš elitní gastro datový analytik pro systém EventFlow. Tvým úkolem je zanalyzovat tento exportní soubor produktů z cizího pokladního systému. Rozklíčuj chaotické názvy sloupců a extrahuj: Název položky, Nákupní cenu, Prodejní cenu, Sazbu DPH, Jednotku (ks, kg, l) a Množství skladem. 
+ZÁROVEŇ každou položku inteligentně zařaď do našich hlavních kategorií ('Jídlo', 'Pití', 'Inventář', 'Technika') a vymysli k ní logickou českou podkategorii (např. pokud je v názvu 'Plzeň' nebo 'Pivo', podkategorie bude 'Pivo'; pokud 'Vodka' nebo 'Rum', podkategorie bude 'Alkohol'; pokud 'Svíčková' nebo 'Steak', podkategorie bude 'Hlavní chody'). Vygeneruj chybějící unikátní čárové kódy / EAN. Vrať striktně čistou JSON strukturu bez okolních textů.`
 
 const BUILTIN_LABEL_MAP: Record<string, string> = {
   jidlo: 'Jídlo',
@@ -59,11 +83,34 @@ const BUILTIN_LABEL_MAP: Record<string, string> = {
   av: 'Technika',
 }
 
+/** Czech subcategory labels → known inventory subcategory ids */
+const CZECH_SUB_TO_ID: Record<string, string> = {
+  pivo: 'pivo',
+  vino: 'vino',
+  alkohol: 'alkohol',
+  nealko: 'nealko',
+  koktejly: 'alkohol',
+  destilaty: 'alkohol',
+  predkrmy: 'predkrmy',
+  hlavni: 'hlavni',
+  hlavni_chody: 'hlavni',
+  dezerty: 'dezerty',
+  raut: 'raut',
+  obaly: 'obaly',
+  pribor: 'pribor',
+  pribory: 'pribor',
+  dekorace: 'dekorace',
+  ozvuceni: 'ozvuceni',
+  osvetleni: 'osvetleni',
+  av_technika: 'av',
+  av: 'av',
+  ostatni: 'ostatni',
+}
+
 function toAppCategory(label: GastroImportCategory): string {
   const categories = getRegistryCategories()
   const found = findCategoryDef(categories, label)
   if (found) return found.id
-  // Register unknown custom labels so POS/Sklad filters stay in sync
   return registerCategoryFromImportLabel(label)
 }
 
@@ -76,7 +123,6 @@ function classifyCategory(name: string, rawCat: string): GastroImportCategory {
     if (BUILTIN_LABEL_MAP[key]) return BUILTIN_LABEL_MAP[key]
     const found = findCategoryDef(categories, rawCat)
     if (found) return found.label
-    // Preserve non-empty custom category strings from the sheet
     if (rawCat.trim().length >= 2 && !/^\d+$/.test(rawCat.trim())) {
       return rawCat.trim()
     }
@@ -85,13 +131,87 @@ function classifyCategory(name: string, rawCat: string): GastroImportCategory {
   if (/mikrofon|repro|projektor|ozvuc|osvetl|technika|kabel|av\b/.test(blob)) {
     return 'Technika'
   }
-  if (/pivo|vino|víno|rum|vodka|gin|whisky|cola|limonad|kava|káva|prosecco|destil|sirup|nealko/.test(blob)) {
+  if (
+    /pivo|plzen|plzeň|vino|víno|rum|vodka|gin|whisky|cola|limonad|kava|káva|prosecco|destil|sirup|nealko|mojito/.test(
+      blob,
+    )
+  ) {
     return 'Pití'
   }
-  if (/talir|talíř|sklenic|pribor|příbor|ubrous|dekor|inventar|židle|stul|stůl/.test(blob)) {
+  if (/talir|talíř|sklenic|pribor|příbor|ubrous|dekor|inventar|židle|stul|stůl|mycí|uklid/.test(blob)) {
     return 'Inventář'
   }
   return 'Jídlo'
+}
+
+/** High-fidelity client-side subcategory inference (AI fallback). */
+export function classifySubcategoryLabel(name: string, categoryLabel: string): string {
+  const n = normalizeName(name)
+  const cat = normalizeName(categoryLabel)
+
+  if (cat === 'piti' || cat === 'beverage') {
+    if (/pivo|plzen|plzen|koz|budvar|lezak|ležák|ipa|apa|ale\b/.test(n)) return 'Pivo'
+    if (/vino|prosecco|sekt|champagne|chardonnay|sauvignon|riesling/.test(n)) return 'Víno'
+    if (/rum|vodka|gin|whisky|whiskey|becherovka|slivovice|tequila|destil|fernet|absinth/.test(n)) {
+      return 'Alkohol'
+    }
+    if (/mojito|koktejl|aperol|negroni|gin.?tonic|cuba.?libre/.test(n)) return 'Alkohol'
+    return 'Nealko'
+  }
+
+  if (cat === 'jidlo' || cat === 'raw' || cat === 'food') {
+    if (/dezer|dezert|fondant|cake|zmrzlin|tiramisu|cheesecake|kolac|koláč/.test(n)) return 'Dezerty'
+    if (/predkrm|canape|bruschetta|polev|polév|amuse|carpaccio/.test(n)) return 'Předkrmy'
+    if (/raut|buffet|finger|stanice/.test(n)) return 'Raut'
+    if (/svickov|svíčkov|steak|hověz|losos|rizoto|knedl|gulas|guláš|hlavni/.test(n)) {
+      return 'Hlavní chody'
+    }
+    if (/bezlep/.test(n)) return 'Bezlepkové chody'
+    return 'Hlavní chody'
+  }
+
+  if (cat === 'technika' || cat === 'tech') {
+    if (/mikrofon|repro|ozvuc|mixer|sound/.test(n)) return 'Ozvučení'
+    if (/svetlo|osvetl|led|light/.test(n)) return 'Osvětlení'
+    return 'AV technika'
+  }
+
+  if (cat === 'inventar' || cat === 'package') {
+    if (/talir|sklenic|kelimek|krabic|obal/.test(n)) return 'Obaly'
+    if (/pribor|vidlic|nuz|lzic/.test(n)) return 'Příbory'
+    if (/dekor|kvetin|vaz/.test(n)) return 'Dekorace'
+  }
+
+  return 'Ostatní'
+}
+
+function resolveSubcategoryId(
+  categoryId: string,
+  subcategoryLabel: string,
+  productName: string,
+): string {
+  const label = (subcategoryLabel || classifySubcategoryLabel(productName, categoryId)).trim()
+  if (!label) return inferInventorySubcategory(productName, categoryId)
+
+  const key = normalizeName(label)
+  const mapped = CZECH_SUB_TO_ID[key]
+  const categories = getRegistryCategories()
+  const parent = findCategoryDef(categories, categoryId)
+
+  if (mapped && parent?.subs.some((s) => s.id === mapped)) {
+    return mapped
+  }
+
+  const existing = parent?.subs.find(
+    (s) => normalizeName(s.label) === key || s.id === key || s.id === mapped,
+  )
+  if (existing) return existing.id
+
+  // Register custom Czech subcategory under parent (e.g. IPA Piva, Bezlepkové chody)
+  const reg = useCategoryRegistryStore.getState().addCustomSubcategory(categoryId, label)
+  if (reg.ok && reg.subcategory) return reg.subcategory.id
+
+  return inferInventorySubcategory(productName, categoryId)
 }
 
 function detectUnit(name: string, rawUnit: string): InventoryUnit | string {
@@ -114,11 +234,12 @@ function genBarcode(name: string, index: number): string {
 function hashCode(s: string): number {
   let h = 0
   for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0
-  return h
+  return Math.abs(h)
 }
 
-function parseNumber(raw: string | undefined): number {
-  if (!raw) return 0
+function parseNumber(raw: string | undefined | number | null): number {
+  if (raw == null || raw === '') return 0
+  if (typeof raw === 'number') return Number.isFinite(raw) ? raw : 0
   const cleaned = String(raw)
     .replace(/\s/g, '')
     .replace('Kč', '')
@@ -129,7 +250,44 @@ function parseNumber(raw: string | undefined): number {
   return Number.isFinite(n) ? n : 0
 }
 
-/** Split CSV / TSV / semicolon sheets */
+function cellToString(v: unknown): string {
+  if (v == null) return ''
+  if (typeof v === 'string') return v.trim()
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v)
+  return String(v).trim()
+}
+
+/** SheetJS: File → matrix of strings (first sheet). */
+export async function parseFileToMatrix(file: File): Promise<{
+  rows: string[][]
+  headers: string[]
+  sheetName: string
+}> {
+  const buf = await file.arrayBuffer()
+  const workbook = XLSX.read(buf, {
+    type: 'array',
+    cellDates: true,
+    dense: false,
+  })
+  const sheetName = workbook.SheetNames[0] || 'Sheet1'
+  const sheet = workbook.Sheets[sheetName]
+  if (!sheet) {
+    return { rows: [], headers: [], sheetName }
+  }
+  const raw = XLSX.utils.sheet_to_json<(string | number | boolean | null)[]>(sheet, {
+    header: 1,
+    defval: '',
+    raw: false,
+    blankrows: false,
+  })
+  const rows = (raw || [])
+    .map((row) => (Array.isArray(row) ? row.map(cellToString) : []))
+    .filter((row) => row.some((c) => c.length > 0))
+  const headers = rows[0] ? [...rows[0]] : []
+  return { rows, headers, sheetName }
+}
+
+/** Split CSV / TSV / semicolon sheets (text fallback). */
 export function parseSpreadsheetText(text: string): string[][] {
   const lines = text
     .replace(/^\uFEFF/, '')
@@ -172,16 +330,17 @@ function mapHeader(header: string[]): Record<string, number> {
   const idx: Record<string, number> = {}
   header.forEach((h, i) => {
     const k = normalizeName(h)
-    if (/nazev|name|polozka|item|produkt/.test(k)) idx.name = i
+    if (/nazev|name|polozka|item|produkt|zbozi/.test(k)) idx.name = i
+    else if (/podkategor|subcat/.test(k)) idx.subcategory = i
     else if (/kategor|category|skupina|typ/.test(k)) idx.category = i
     else if (/jednot|unit|mj/.test(k)) idx.unit = i
-    else if (/mnozstvi|quantity|qty|sklad|stock|stav/.test(k)) idx.qty = i
+    else if (/mnozstvi|quantity|qty|sklad|stock|stav|pocet/.test(k)) idx.qty = i
     else if (/minimum|min|pojist/.test(k)) idx.min = i
-    else if (/nakup|purchase|cost|cena_n/.test(k)) idx.purchase = i
-    else if (/prodej|sale|price|cena_p|cena$/.test(k) && idx.purchase == null) idx.purchase = i
-    else if (/prodej|sale|price|cena_p/.test(k)) idx.sale = i
+    else if (/nakup|purchase|cost|cena_n|vcenenak/.test(k)) idx.purchase = i
+    else if (/prodej|sale|price|cena_p|prodejni/.test(k)) idx.sale = i
+    else if (/^cena$/.test(k) && idx.purchase == null) idx.purchase = i
     else if (/dph|vat|sazba/.test(k)) idx.vat = i
-    else if (/ean|barcode|carovy|čárov/.test(k)) idx.barcode = i
+    else if (/ean|barcode|carovy|carovy.?kod/.test(k)) idx.barcode = i
     else if (/dodavat|supplier|firma/.test(k)) idx.supplier = i
     else if (/objem|volume|pack|obsah/.test(k)) idx.pack = i
   })
@@ -190,10 +349,45 @@ function mapHeader(header: string[]): Record<string, number> {
   return idx
 }
 
+function normalizeDraft(
+  partial: Partial<GastroImportDraft> & { name: string },
+  index: number,
+): GastroImportDraft {
+  const name = String(partial.name || '').trim()
+  const category = classifyCategory(name, String(partial.category || ''))
+  const subcategory =
+    String(partial.subcategory || '').trim() || classifySubcategoryLabel(name, category)
+  const unit = detectUnit(name, String(partial.unit || 'ks'))
+  const purchase = parseNumber(partial.purchase_price)
+  const sale =
+    parseNumber(partial.sale_price) || (purchase > 0 ? Math.round(purchase * 1.8) : 0)
+  const quantity = parseNumber(partial.quantity)
+  return {
+    name,
+    category,
+    subcategory,
+    unit,
+    quantity,
+    minimum:
+      parseNumber(partial.minimum) || Math.max(1, Math.round(quantity * 0.15) || 1),
+    purchase_price: purchase,
+    sale_price: sale,
+    vat_rate:
+      parseNumber(partial.vat_rate) ||
+      (normalizeName(category) === 'piti' || normalizeName(category) === 'technika' ? 21 : 12),
+    barcode: String(partial.barcode || '').trim() || genBarcode(name, index),
+    supplier: String(partial.supplier || 'Import migrace').trim() || 'Import migrace',
+    pack_volume:
+      partial.pack_volume != null && Number(partial.pack_volume) > 0
+        ? Number(partial.pack_volume)
+        : inferPackVolumeLiters(name, String(unit)),
+  }
+}
+
 function simulateParseRows(rows: string[][]): GastroImportDraft[] {
   if (!rows.length) return []
-  const header = rows[0].map((c) => c.toLowerCase())
-  const looksHeader = /nazev|name|polozka|produkt|kategor/.test(header.join(' '))
+  const headerJoined = rows[0].map((c) => c.toLowerCase()).join(' ')
+  const looksHeader = /nazev|name|polozka|produkt|kategor|zbozi|cena|qty|mnoz/.test(headerJoined)
   const data = looksHeader ? rows.slice(1) : rows
   const map = looksHeader ? mapHeader(rows[0]) : { name: 0, qty: 1, unit: 2, purchase: 3 }
 
@@ -202,45 +396,47 @@ function simulateParseRows(rows: string[][]): GastroImportDraft[] {
       const name = (cells[map.name ?? 0] || '').trim()
       if (!name || name.length < 2) return null
       const rawCat = map.category != null ? cells[map.category] || '' : ''
-      const category = classifyCategory(name, rawCat)
-      const unit = detectUnit(name, map.unit != null ? cells[map.unit] || '' : '')
-      const quantity = parseNumber(map.qty != null ? cells[map.qty] : undefined) || 0
-      const minimum = parseNumber(map.min != null ? cells[map.min] : undefined) || Math.max(1, Math.round(quantity * 0.15))
-      const purchase = parseNumber(map.purchase != null ? cells[map.purchase] : undefined)
-      const sale =
-        parseNumber(map.sale != null ? cells[map.sale] : undefined) ||
-        (purchase > 0 ? Math.round(purchase * 1.8) : 0)
-      const vat =
-        parseNumber(map.vat != null ? cells[map.vat] : undefined) ||
-        (normalizeName(category) === 'piti' || normalizeName(category) === 'technika' ? 21 : 12)
-      const barcodeRaw = map.barcode != null ? (cells[map.barcode] || '').trim() : ''
-      const barcode = barcodeRaw || genBarcode(name, index)
-      const supplier = (map.supplier != null ? cells[map.supplier] : '') || 'Import migrace'
-      const packRaw = parseNumber(map.pack != null ? cells[map.pack] : undefined)
-      const pack_volume =
-        packRaw > 0 ? packRaw : inferPackVolumeLiters(name, String(unit))
-
-      return {
-        name,
-        category,
-        unit,
-        quantity,
-        minimum,
-        purchase_price: purchase,
-        sale_price: sale,
-        vat_rate: vat,
-        barcode,
-        supplier,
-        pack_volume,
-      } satisfies GastroImportDraft
+      const rawSub = map.subcategory != null ? cells[map.subcategory] || '' : ''
+      return normalizeDraft(
+        {
+          name,
+          category: rawCat,
+          subcategory: rawSub,
+          unit: map.unit != null ? cells[map.unit] || '' : '',
+          quantity: parseNumber(map.qty != null ? cells[map.qty] : undefined),
+          minimum: parseNumber(map.min != null ? cells[map.min] : undefined),
+          purchase_price: parseNumber(map.purchase != null ? cells[map.purchase] : undefined),
+          sale_price: parseNumber(map.sale != null ? cells[map.sale] : undefined),
+          vat_rate: parseNumber(map.vat != null ? cells[map.vat] : undefined),
+          barcode: map.barcode != null ? cells[map.barcode] || '' : '',
+          supplier: map.supplier != null ? cells[map.supplier] || '' : '',
+          pack_volume: parseNumber(map.pack != null ? cells[map.pack] : undefined) || null,
+        },
+        index,
+      )
     })
     .filter((x): x is GastroImportDraft => Boolean(x))
 }
 
-async function openaiParseSheet(text: string): Promise<GastroImportDraft[] | null> {
+function matrixToAiPayload(rows: string[][], maxRows = 180): string {
+  const slice = rows.slice(0, maxRows + 1)
+  return JSON.stringify({
+    headers: slice[0] || [],
+    rows: slice.slice(1),
+    total_rows: Math.max(0, rows.length - 1),
+  })
+}
+
+async function openaiClassifyMatrix(
+  rows: string[][],
+  fileName: string,
+): Promise<GastroImportDraft[] | null> {
   const key = (import.meta.env.VITE_OPENAI_API_KEY as string | undefined)?.trim()
   if (!key) return null
   try {
+    const registryLabels = getRegistryCategories()
+      .map((c) => c.label)
+      .join(', ')
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -254,14 +450,32 @@ async function openaiParseSheet(text: string): Promise<GastroImportDraft[] | nul
         messages: [
           {
             role: 'system',
-            content:
-              'Jsi gastro migrátor EventFlow. Z tabulky dodavatele/konkurence vytěž čisté položky skladu. Vrať JSON { "items": [ { "name", "category": "Jídlo"|"Pití"|"Inventář"|"Technika"|vlastní_název_kategorie, "unit": "ks"|"kg"|"l"|"ml"|"g", "quantity", "minimum", "purchase_price", "sale_price", "vat_rate", "barcode", "supplier", "pack_volume" } ] }. pack_volume je litry u lahví/sudů (0.7, 50) nebo null. Preferuj systémové kategorie; vlastní kategorie (např. Tabákové výrobky, VIP Merch) zachovej přesně. Doplň chybějící EAN.',
+            content: `${AI_SYSTEM_PROMPT}
+
+Výstupní formát JSON:
+{
+  "items": [
+    {
+      "name": "string",
+      "category": "Jídlo"|"Pití"|"Inventář"|"Technika",
+      "subcategory": "česká podkategorie",
+      "unit": "ks"|"kg"|"l"|"ml"|"g",
+      "quantity": number,
+      "minimum": number,
+      "purchase_price": number,
+      "sale_price": number,
+      "vat_rate": number,
+      "barcode": "string",
+      "supplier": "string",
+      "pack_volume": number|null
+    }
+  ]
+}
+Dostupné hlavní kategorie v EventFlow: ${registryLabels}.`,
           },
           {
             role: 'user',
-            content: `Migruj tento sheet do EventFlow skladu. Dostupné kategorie: ${getRegistryCategories()
-              .map((c) => c.label)
-              .join(', ')}.\n\n${text.slice(0, 12000)}`,
+            content: `Soubor: ${fileName}\n\nTabulková data (headers + rows):\n${matrixToAiPayload(rows)}`,
           },
         ],
       }),
@@ -272,83 +486,154 @@ async function openaiParseSheet(text: string): Promise<GastroImportDraft[] | nul
     }
     const content = json.choices?.[0]?.message?.content
     if (!content) return null
-    const parsed = JSON.parse(content) as { items?: GastroImportDraft[] }
+    const parsed = JSON.parse(content) as {
+      items?: Array<Partial<GastroImportDraft> & { name?: string }>
+    }
     if (!Array.isArray(parsed.items)) return null
-    return parsed.items.map((it, index) => {
-      const rawCategory = String(it.category || '').trim()
-      const category = rawCategory
-        ? classifyCategory(String(it.name), rawCategory)
-        : classifyCategory(String(it.name), '')
-      return {
-        name: String(it.name || '').trim(),
-        category,
-        unit: detectUnit(String(it.name), String(it.unit || 'ks')),
-        quantity: Number(it.quantity) || 0,
-        minimum: Number(it.minimum) || 1,
-        purchase_price: Number(it.purchase_price) || 0,
-        sale_price: Number(it.sale_price) || 0,
-        vat_rate: Number(it.vat_rate) || 12,
-        barcode: String(it.barcode || '').trim() || genBarcode(String(it.name), index),
-        supplier: String(it.supplier || 'Import migrace'),
-        pack_volume:
-          it.pack_volume != null
-            ? Number(it.pack_volume)
-            : inferPackVolumeLiters(String(it.name), String(it.unit || 'ks')),
-      }
-    })
+    return parsed.items
+      .map((it, index) => {
+        const name = String(it.name || '').trim()
+        if (!name) return null
+        return normalizeDraft(
+          {
+            name,
+            category: String(it.category || ''),
+            subcategory: String(it.subcategory || ''),
+            unit: String(it.unit || 'ks'),
+            quantity: Number(it.quantity) || 0,
+            minimum: Number(it.minimum) || 0,
+            purchase_price: Number(it.purchase_price) || 0,
+            sale_price: Number(it.sale_price) || 0,
+            vat_rate: Number(it.vat_rate) || 0,
+            barcode: String(it.barcode || ''),
+            supplier: String(it.supplier || 'Import migrace'),
+            pack_volume: it.pack_volume != null ? Number(it.pack_volume) : null,
+          },
+          index,
+        )
+      })
+      .filter((x): x is GastroImportDraft => Boolean(x))
   } catch {
     return null
   }
 }
 
-export async function importGastroSpreadsheet(file: File): Promise<GastroImportResult> {
-  const buf = await file.arrayBuffer()
-  let text = ''
-  const name = file.name.toLowerCase()
-  if (name.endsWith('.xlsx') || name.endsWith('.xls')) {
-    // Binary Excel without SheetJS: decode as latin1 text best-effort + ask user for CSV.
-    // Many exports are CSV mislabeled; try UTF-8 first.
-    text = new TextDecoder('utf-8').decode(buf)
-    if (!text.includes(',') && !text.includes(';') && !text.includes('\t')) {
-      text = new TextDecoder('latin1').decode(buf)
-    }
-  } else {
-    text = new TextDecoder('utf-8').decode(buf)
+/**
+ * Full pipeline: SheetJS parse → OpenAI classify (or high-fidelity local fallback).
+ */
+export async function importGastroSpreadsheet(
+  file: File,
+  onProgress?: (p: GastroImportProgress) => void,
+): Promise<GastroImportResult> {
+  const report = (phase: GastroImportProgressPhase, detail: string, percent: number) => {
+    onProgress?.({ phase, detail, percent })
   }
 
-  const ai = await openaiParseSheet(text)
-  if (ai?.length) {
+  try {
+    report('reading', 'Načítám soubor…', 8)
+    const lower = file.name.toLowerCase()
+    const allowed =
+      lower.endsWith('.csv') ||
+      lower.endsWith('.xlsx') ||
+      lower.endsWith('.xls') ||
+      lower.endsWith('.txt')
+    if (!allowed) {
+      report('error', 'Nepodporovaný formát souboru', 100)
+      return {
+        ok: false,
+        items: [],
+        source: 'simulated',
+        message: 'Podporované formáty: .csv, .xlsx, .xls',
+      }
+    }
+
+    report('parsing', 'SheetJS převádí matici sloupců…', 22)
+    let rows: string[][] = []
+    let headers: string[] = []
+    try {
+      const parsed = await parseFileToMatrix(file)
+      rows = parsed.rows
+      headers = parsed.headers
+    } catch {
+      const text = new TextDecoder('utf-8').decode(await file.arrayBuffer())
+      rows = parseSpreadsheetText(text)
+      headers = rows[0] || []
+    }
+
+    if (!rows.length) {
+      report('error', 'Prázdný soubor', 100)
+      return {
+        ok: false,
+        items: [],
+        source: 'simulated',
+        message: 'Soubor neobsahuje žádná rozpoznatelná data',
+        headers,
+        rowCount: 0,
+      }
+    }
+
+    report(
+      'ai',
+      'AI analyzuje strukturu souboru a třídí položky do kategorií...',
+      48,
+    )
+    const ai = await openaiClassifyMatrix(rows, file.name)
+    if (ai?.length) {
+      report('classifying', 'Dokončuji AI klasifikaci kategorií a podkategorií…', 88)
+      report('done', `AI hotovo · ${ai.length} položek`, 100)
+      return {
+        ok: true,
+        items: ai,
+        source: 'openai',
+        message: `✨ Úspěšně připraveno ${ai.length} položek. Kategorie a podkategorie byly automaticky přiřazeny pomocí AI.`,
+        headers,
+        rowCount: Math.max(0, rows.length - 1),
+      }
+    }
+
+    report('classifying', 'Lokální AI simulace třídí kategorie a podkategorie…', 72)
+    const simulated = simulateParseRows(rows)
+    if (!simulated.length) {
+      report('error', 'Nepodařilo se rozpoznat řádky', 100)
+      return {
+        ok: false,
+        items: [],
+        source: 'simulated',
+        message:
+          'Nepodařilo se rozpoznat řádky — použijte CSV/Excel s hlavičkou Název, Cena, Množství…',
+        headers,
+        rowCount: Math.max(0, rows.length - 1),
+      }
+    }
+    report('done', `Simulace hotova · ${simulated.length} položek`, 100)
     return {
       ok: true,
-      items: ai.filter((i) => i.name),
-      source: 'openai',
-      message: `AI migrace dokončena · ${ai.length} položek z „${file.name}"`,
+      items: simulated,
+      source: 'simulated',
+      message: `✨ Úspěšně připraveno ${simulated.length} položek. Kategorie a podkategorie byly automaticky přiřazeny pomocí AI.`,
+      headers,
+      rowCount: Math.max(0, rows.length - 1),
     }
-  }
-
-  const rows = parseSpreadsheetText(text)
-  const simulated = simulateParseRows(rows)
-  if (!simulated.length) {
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Import selhal'
+    report('error', msg, 100)
     return {
       ok: false,
       items: [],
       source: 'simulated',
-      message:
-        'Nepodařilo se rozpoznat řádky — použijte CSV/Excel s hlavičkou Název, Kategorie, Jednotka, Množství, Cena',
+      message: `Chyba importu: ${msg}`,
     }
-  }
-  return {
-    ok: true,
-    items: simulated,
-    source: 'simulated',
-    message: `Lokální migrace dokončena · ${simulated.length} položek z „${file.name}"`,
   }
 }
 
 export function draftsToInventoryItems(drafts: GastroImportDraft[]): InventoryItem[] {
   return drafts.map((d) => {
     const categoryId = toAppCategory(d.category)
-    const subcategory = inferInventorySubcategory(d.name, categoryId)
+    const subcategory = resolveSubcategoryId(
+      categoryId,
+      d.subcategory || '',
+      d.name,
+    )
     const warehouse =
       categoryId === 'beverage'
         ? 'Bar import'
@@ -375,9 +660,8 @@ export function draftsToInventoryItems(drafts: GastroImportDraft[]): InventoryIt
       minimum_quantity: d.minimum,
       pack_volume: d.pack_volume,
       warehouse_section: warehouse,
-      // AI / Excel import = skladová surovina, ne automatická dlaždice v Kase
+      // CRITICAL: cashier lock — not visible in /pos-terminal until Do kasy toggle
       pos_visible: false,
     })
   })
 }
-

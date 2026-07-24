@@ -36,6 +36,7 @@ import { formatStockWithPack } from '../../lib/unitConversion'
 import {
   importGastroSpreadsheet,
   type GastroImportDraft,
+  type GastroImportProgress,
 } from '../../lib/gastroImporter'
 import type { InventoryItem, InventoryUnit } from '../../types'
 
@@ -124,6 +125,9 @@ export function InventoryCatalogPanel() {
   const [importBusy, setImportBusy] = useState(false)
   const [importPreview, setImportPreview] = useState<GastroImportDraft[]>([])
   const [importMsg, setImportMsg] = useState('')
+  const [importSuccess, setImportSuccess] = useState<string | null>(null)
+  const [importProgress, setImportProgress] = useState<GastroImportProgress | null>(null)
+  const [importDragOver, setImportDragOver] = useState(false)
   const [photoBusy, setPhotoBusy] = useState(false)
   const [filterCat, setFilterCat] = useState<string>(ALL_CATEGORY_ID)
   const [filterSub, setFilterSub] = useState<string>(ALL_SUBCATEGORY_ID)
@@ -351,32 +355,64 @@ export function InventoryCatalogPanel() {
     if (!file) return
     setImportBusy(true)
     setImportMsg('')
+    setImportSuccess(null)
+    setImportPreview([])
+    setImportProgress({
+      phase: 'reading',
+      detail: 'AI analyzuje strukturu souboru a třídí položky do kategorií...',
+      percent: 5,
+    })
     try {
-      const res = await importGastroSpreadsheet(file)
+      const res = await importGastroSpreadsheet(file, (p) => setImportProgress(p))
       setImportMsg(res.message)
       setImportPreview(res.items)
-      if (!res.ok) setToast(res.message)
+      if (!res.ok) {
+        setToast(res.message)
+        setImportProgress({ phase: 'error', detail: res.message, percent: 100 })
+        return
+      }
+      setImportProgress({
+        phase: 'done',
+        detail: 'Náhled připraven — potvrďte zápis do skladu',
+        percent: 100,
+      })
     } finally {
       setImportBusy(false)
+      window.setTimeout(() => {
+        setImportProgress((prev) => (prev?.phase === 'done' || prev?.phase === 'error' ? null : prev))
+      }, 600)
     }
   }
 
   const commitImport = async () => {
     if (!importPreview.length) return
     setImportBusy(true)
+    setImportSuccess(null)
+    setImportProgress({
+      phase: 'classifying',
+      detail: 'Zapisuji položky do skladu jako neprodejné (mimo Kasu)…',
+      percent: 40,
+    })
     try {
+      const count = importPreview.length
       const res = await importGastroDrafts(importPreview)
       if (!res.ok) {
         setToast(res.error || 'Import selhal')
+        setImportProgress({
+          phase: 'error',
+          detail: res.error || 'Import selhal',
+          percent: 100,
+        })
         return
       }
-      setToast(
-        `Import hotov · nové ${res.created} · aktualizované ${res.updated} · AI dohledává fotky…`,
-      )
+      const badge = `✨ Úspěšně naimportováno ${count} položek. Kategorie a podkategorie byly automaticky přiřazeny pomocí AI.`
+      setImportSuccess(badge)
+      setToast(badge)
       setImportPreview([])
-      setImportOpen(false)
+      setImportProgress({ phase: 'done', detail: badge, percent: 100 })
     } finally {
       setImportBusy(false)
+      window.setTimeout(() => setImportProgress(null), 900)
     }
   }
 
@@ -580,82 +616,182 @@ export function InventoryCatalogPanel() {
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -6 }}
-            style={{ borderColor: `${GOLD}66` }}
+            style={{ borderColor: `${GOLD}66`, position: 'relative' }}
           >
-            <strong style={{ color: GOLD }}>Universal Gastro Migrace</strong>
+            <strong style={{ color: GOLD, fontSize: '1.08rem' }}>
+              Universal Data Importer · Excel & CSV
+            </strong>
             <p style={{ color: '#94a3b8', fontSize: '0.85rem', margin: '8px 0 12px' }}>
-              Nahrajte CSV/Excel ze starého systému. AI mapuje Jídlo / Pití / Inventář / Technika i
-              vlastní kategorie (např. Tabákové výrobky), doplní EAN, ceny a produktové fotky.
+              Nahrajte export z cizího pokladního systému (.csv / .xlsx). AI rozklíčuje sloupce,
+              přiřadí kategorie (Jídlo, Pití, Inventář, Technika) i české podkategorie a zapíše
+              položky do skladu jako neprodejné — do Kasy je dostanete až tlačítkem Do kasy.
             </p>
             <div
-              onDragOver={(e) => e.preventDefault()}
+              onDragOver={(e) => {
+                e.preventDefault()
+                setImportDragOver(true)
+              }}
+              onDragLeave={() => setImportDragOver(false)}
               onDrop={(e) => {
                 e.preventDefault()
+                setImportDragOver(false)
                 void onFile(e.dataTransfer.files?.[0] || null)
               }}
-              onClick={() => fileRef.current?.click()}
+              onClick={() => !importBusy && fileRef.current?.click()}
               style={{
                 border: `2px dashed ${GOLD}`,
-                borderRadius: 14,
-                padding: '2rem 1rem',
+                borderRadius: 16,
+                padding: '2.4rem 1.25rem',
                 textAlign: 'center',
-                cursor: 'pointer',
-                background: 'rgba(212,175,55,0.06)',
+                cursor: importBusy ? 'wait' : 'pointer',
+                background: importDragOver
+                  ? 'rgba(212,175,55,0.16)'
+                  : 'linear-gradient(160deg, rgba(212,175,55,0.1), #020617 65%)',
                 touchAction: 'manipulation',
+                minHeight: 168,
+                boxShadow: importDragOver
+                  ? '0 0 28px rgba(212,175,55,0.25)'
+                  : '0 0 0 1px rgba(212,175,55,0.12) inset',
+                transition: 'background 0.15s ease, box-shadow 0.15s ease',
               }}
             >
-              <Upload size={28} color={GOLD} />
-              <div style={{ marginTop: 8, fontWeight: 800, color: '#e2e8f0' }}>
-                Přetáhněte soubor nebo klepněte pro výběr
+              <Upload size={36} color={GOLD} />
+              <div style={{ marginTop: 12, fontWeight: 900, color: '#fef3c7', fontSize: '1.05rem' }}>
+                Přetáhněte Excel / CSV nebo klepněte pro výběr
               </div>
-              <div style={{ color: '#64748b', fontSize: '0.78rem', marginTop: 4 }}>
-                .csv · .xlsx · .xls · .txt
+              <div style={{ color: '#94a3b8', fontSize: '0.82rem', marginTop: 6, fontWeight: 600 }}>
+                Podporováno: .csv · .xlsx · .xls · SheetJS parsing · AI třídění
               </div>
               <input
                 ref={fileRef}
                 type="file"
-                accept=".csv,.xlsx,.xls,.txt,text/csv"
+                accept=".csv,.xlsx,.xls,.txt,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
                 hidden
-                onChange={(e) => void onFile(e.target.files?.[0] || null)}
+                onChange={(e) => {
+                  const f = e.target.files?.[0] || null
+                  e.target.value = ''
+                  void onFile(f)
+                }}
               />
             </div>
-            {importBusy && (
-              <div style={{ marginTop: 10, color: GOLD, display: 'flex', gap: 8, alignItems: 'center' }}>
-                <Loader2 className="spin" size={16} /> Zpracovávám migraci…
-              </div>
+
+            <AnimatePresence>
+              {importProgress && importBusy && (
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    zIndex: 5,
+                    borderRadius: 12,
+                    background: 'rgba(2,6,23,0.88)',
+                    backdropFilter: 'blur(6px)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 14,
+                    padding: 24,
+                    border: `1px solid ${GOLD}`,
+                  }}
+                >
+                  <Loader2 className="spin" size={28} color={GOLD} />
+                  <div
+                    style={{
+                      color: '#fef3c7',
+                      fontWeight: 800,
+                      textAlign: 'center',
+                      maxWidth: 420,
+                      lineHeight: 1.4,
+                    }}
+                  >
+                    {importProgress.detail ||
+                      'AI analyzuje strukturu souboru a třídí položky do kategorií...'}
+                  </div>
+                  <div
+                    style={{
+                      width: 'min(320px, 80%)',
+                      height: 8,
+                      borderRadius: 999,
+                      background: '#0b1220',
+                      border: '1px solid rgba(212,175,55,0.35)',
+                      overflow: 'hidden',
+                    }}
+                  >
+                    <motion.div
+                      animate={{ width: `${Math.max(8, importProgress.percent)}%` }}
+                      transition={{ ease: 'easeOut', duration: 0.35 }}
+                      style={{
+                        height: '100%',
+                        background: 'linear-gradient(90deg, #b8860b, #D4AF37, #f5e6a3)',
+                        boxShadow: '0 0 12px rgba(212,175,55,0.55)',
+                      }}
+                    />
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {importSuccess && (
+              <motion.div
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                style={{
+                  marginTop: 12,
+                  padding: '0.85rem 1rem',
+                  borderRadius: 12,
+                  border: `1.5px solid ${GOLD}`,
+                  background: 'linear-gradient(135deg, rgba(212,175,55,0.18), rgba(15,23,42,0.95))',
+                  color: '#fef3c7',
+                  fontWeight: 800,
+                  boxShadow: '0 0 22px rgba(212,175,55,0.2)',
+                }}
+              >
+                {importSuccess}
+                <div style={{ marginTop: 6, fontSize: '0.78rem', color: '#cbd5e1', fontWeight: 600 }}>
+                  Položky jsou ve skladu jako neprodejné. Aktivujte prodej zeleným tlačítkem Do kasy.
+                </div>
+              </motion.div>
             )}
-            {importMsg && (
+
+            {importMsg && !importSuccess && (
               <div style={{ marginTop: 10, color: '#cbd5e1', fontWeight: 600 }}>{importMsg}</div>
             )}
+
             {importPreview.length > 0 && (
               <>
                 <div
                   style={{
                     marginTop: 12,
-                    maxHeight: 220,
+                    maxHeight: 260,
                     overflow: 'auto',
-                    border: '1px solid #334155',
-                    borderRadius: 10,
+                    border: `1px solid ${GOLD}44`,
+                    borderRadius: 12,
+                    background: 'rgba(2,6,23,0.55)',
                   }}
                 >
                   <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
                     <thead>
                       <tr style={{ color: '#94a3b8', textAlign: 'left' }}>
                         <th style={{ padding: 8 }}>Název</th>
-                        <th style={{ padding: 8 }}>Kat.</th>
+                        <th style={{ padding: 8 }}>Kategorie</th>
+                        <th style={{ padding: 8 }}>Podkategorie</th>
                         <th style={{ padding: 8 }}>MJ</th>
                         <th style={{ padding: 8 }}>Qty</th>
                         <th style={{ padding: 8 }}>EAN</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {importPreview.slice(0, 40).map((row, i) => (
+                      {importPreview.slice(0, 60).map((row, i) => (
                         <tr key={`${row.name}-${i}`} style={{ borderTop: '1px solid #1e293b' }}>
-                          <td style={{ padding: 8 }}>{row.name}</td>
-                          <td style={{ padding: 8 }}>{row.category}</td>
+                          <td style={{ padding: 8, fontWeight: 700 }}>{row.name}</td>
+                          <td style={{ padding: 8, color: GOLD }}>{row.category}</td>
+                          <td style={{ padding: 8 }}>{row.subcategory}</td>
                           <td style={{ padding: 8 }}>{row.unit}</td>
                           <td style={{ padding: 8 }}>{row.quantity}</td>
-                          <td style={{ padding: 8 }}>{row.barcode}</td>
+                          <td style={{ padding: 8, color: '#94a3b8' }}>{row.barcode}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -664,11 +800,11 @@ export function InventoryCatalogPanel() {
                 <button
                   type="button"
                   className="btn btn-gold"
-                  style={{ marginTop: 12, minHeight: 48, fontWeight: 900 }}
+                  style={{ marginTop: 12, minHeight: 52, fontWeight: 900, width: '100%' }}
                   disabled={importBusy}
                   onClick={() => void commitImport()}
                 >
-                  Potvrdit import ({importPreview.length}) · AI fotky
+                  Zapsat do skladu ({importPreview.length}) · mimo Kasu · AI fotky
                 </button>
               </>
             )}

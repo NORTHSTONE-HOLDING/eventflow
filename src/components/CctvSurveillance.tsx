@@ -1,17 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import {
   AlertTriangle,
-  Archive,
   Flame,
   Lock,
   MessageCircle,
   Monitor,
   Radio,
+  ScrollText,
   ShieldAlert,
   Siren,
-  Trash2,
 } from 'lucide-react'
 import { useAppStore, selectActiveProject, migrateProject } from '../store/useAppStore'
 import { useCctvStore, CCTV_RETENTION_DAYS } from '../store/useCctvStore'
@@ -20,15 +19,18 @@ import {
   buildWalkoutWhatsAppMessage,
   czechOrderStatus,
   isTableUnpaidOpen,
+  type CctvCamera,
 } from '../lib/cctvEngine'
+import { cctvStorageStatusLabel } from '../lib/cctvStorage'
 import { openWhatsApp } from '../lib/whatsapp'
 import { ensurePosTables as ensureTables } from '../lib/tableTabs'
 import { CctvCameraFeed, CctvFullscreenModal } from './cctv/CctvCameraTile'
-import type { CctvCamera } from '../lib/cctvEngine'
+import { CctvArchivePanel } from './cctv/CctvArchivePanel'
 
 const GOLD = '#D4AF37'
 
 export function CctvSurveillance() {
+  const navigate = useNavigate()
   const subscription = useAppStore((s) => s.profile.subscription)
   const profile = useAppStore((s) => s.profile)
   const setView = useAppStore((s) => s.setView)
@@ -39,26 +41,28 @@ export function CctvSurveillance() {
 
   const cameras = useCctvStore((s) => s.cameras)
   const alerts = useCctvStore((s) => s.alerts)
+  const eventLog = useCctvStore((s) => s.eventLog)
   const monitoring = useCctvStore((s) => s.monitoring)
   const aiToggles = useCctvStore((s) => s.aiToggles)
-  const recordings = useCctvStore((s) => s.recordings)
-  const lastRetentionPurgeAt = useCctvStore((s) => s.lastRetentionPurgeAt)
-  const lastPurgedCount = useCctvStore((s) => s.lastPurgedCount)
+  const flashingCameraId = useCctvStore((s) => s.flashingCameraId)
+  const theftSimRunning = useCctvStore((s) => s.theftSimRunning)
+  const customZones = useCctvStore((s) => s.customZones)
   const setMonitoring = useCctvStore((s) => s.setMonitoring)
   const setAiToggle = useCctvStore((s) => s.setAiToggle)
   const updateCamera = useCctvStore((s) => s.updateCamera)
+  const addCustomZone = useCctvStore((s) => s.addCustomZone)
+  const getZoneRegistry = useCctvStore((s) => s.getZoneRegistry)
   const ensureCameras = useCctvStore((s) => s.ensureCameras)
   const seedDemoArchiveIfEmpty = useCctvStore((s) => s.seedDemoArchiveIfEmpty)
   const runRetentionPurge = useCctvStore((s) => s.runRetentionPurge)
-  const runWalkoutSimulation = useCctvStore((s) => s.runWalkoutSimulation)
+  const runTheftSimulation = useCctvStore((s) => s.runTheftSimulation)
   const runFightSimulation = useCctvStore((s) => s.runFightSimulation)
   const acknowledgeAlert = useCctvStore((s) => s.acknowledgeAlert)
   const clearAcknowledged = useCctvStore((s) => s.clearAcknowledged)
-  const getArchiveByDay = useCctvStore((s) => s.getArchiveByDay)
+  const clearEventLog = useCctvStore((s) => s.clearEventLog)
 
   const [emergencyPhone, setEmergencyPhone] = useState(profile.phone || '')
   const [fullscreenCam, setFullscreenCam] = useState<CctvCamera | null>(null)
-  const [archiveOpen, setArchiveOpen] = useState(true)
 
   const unlocked = hasFeature(subscription, 'BUSINESS')
   const tables = useMemo(
@@ -71,19 +75,15 @@ export function CctvSurveillance() {
     [tables, posOrders],
   )
 
-  const archiveByDay = useMemo(() => getArchiveByDay(), [recordings, getArchiveByDay])
+  const zoneRegistry = useMemo(() => getZoneRegistry(), [customZones, getZoneRegistry])
 
   useEffect(() => {
     if (!unlocked) return
     ensureCameras()
     seedDemoArchiveIfEmpty()
-    const purged = runRetentionPurge()
-    if (purged > 0) {
-      setToast(`Retence ${CCTV_RETENTION_DAYS} dní: smazáno ${purged} expirovaných segmentů`)
-    }
-  }, [unlocked, ensureCameras, seedDemoArchiveIfEmpty, runRetentionPurge, setToast])
+    runRetentionPurge()
+  }, [unlocked, ensureCameras, seedDemoArchiveIfEmpty, runRetentionPurge])
 
-  // Periodic retention sweep (capacity guard)
   useEffect(() => {
     if (!unlocked) return
     const id = window.setInterval(() => {
@@ -107,24 +107,23 @@ export function CctvSurveillance() {
     )
   }
 
-  const triggerWalkout = () => {
-    if (!project) {
-      setToast('Nejdříve vyberte aktivní akci')
-      return
-    }
-    if (!unpaidTables.length) {
-      setToast(
-        'Žádný stůl ve stavu OTEVŘENO s neuhrazeným účtem — přidejte položky na stůl v POS',
-      )
-      return
-    }
-    const alert = runWalkoutSimulation({
+  const openTvWall = () => {
+    // Explicit router switch to standalone layout (no AppShell / sidebar)
+    navigate('/cctv-wall')
+  }
+
+  const openTvWallNewWindow = () => {
+    window.open(`${window.location.origin}/cctv-wall`, 'eventflow_cctv_wall', 'noopener,noreferrer')
+  }
+
+  const triggerTheft = async () => {
+    const alert = await runTheftSimulation({
       tables,
       orders: posOrders ?? [],
-      projectId: project.id,
+      projectId: project?.id || 'sim',
     })
     if (!alert) {
-      setToast('Simulace selhala — zkontrolujte kamery / AI přepínače')
+      setToast('Simulace již běží — počkejte na dokončení 3s sekvence')
       return
     }
     setToast(alert.message)
@@ -174,24 +173,31 @@ export function CctvSurveillance() {
         <div>
           <h1 className="section-title gold-text">AI Kamerový dohled (CCTV)</h1>
           <p className="section-sub">
-            Dynamické párování · TV režim · archiv {CCTV_RETENTION_DAYS} dní · pokročilá AI analýza
+            Dynamické párování · TV režim · archiv {CCTV_RETENTION_DAYS} dní · Supabase Storage
+          </p>
+          <p style={{ color: '#64748b', fontSize: '0.75rem', fontWeight: 600, marginTop: 4 }}>
+            {cctvStorageStatusLabel()}
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <Link
-            to="/cctv-wall"
+          <button
+            type="button"
             className="btn btn-ghost"
-            style={{
-              minHeight: 48,
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 8,
-              textDecoration: 'none',
-            }}
-            title="Samostatná TV matice bez ERP navigace"
+            style={{ minHeight: 48 }}
+            onClick={openTvWall}
+            title="Přepnout React router na /cctv-wall (bez ERP)"
           >
             <Monitor size={15} /> TV režim /cctv-wall
-          </Link>
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            style={{ minHeight: 48 }}
+            onClick={openTvWallNewWindow}
+            title="Otevřít TV matici v novém okně / monitoru"
+          >
+            Nový monitor
+          </button>
           <button
             type="button"
             className={monitoring ? 'btn btn-gold' : 'btn btn-ghost'}
@@ -203,17 +209,20 @@ export function CctvSurveillance() {
           <button
             type="button"
             className="btn btn-gold"
+            disabled={theftSimRunning}
             style={{
               minHeight: 52,
               fontWeight: 900,
-              background: '#ef4444',
+              background: theftSimRunning ? '#7f1d1d' : '#ef4444',
               borderColor: '#ef4444',
               color: '#fff',
+              opacity: theftSimRunning ? 0.85 : 1,
             }}
-            onClick={triggerWalkout}
-            title="Simulace útěku bez placení (pos_orders OTEVŘENO)"
+            onClick={() => void triggerTheft()}
+            title="3s sekvence: Kamera 01 bliká → live log → systémový poplach STŮL 3"
           >
-            <Siren size={16} /> Simulovat útěk bez placení
+            <Siren size={16} />{' '}
+            {theftSimRunning ? 'Simulace běží (3s)…' : '🧪 Nasimulovat útěk bez placení'}
           </button>
           <button
             type="button"
@@ -246,11 +255,14 @@ export function CctvSurveillance() {
           <strong style={{ color: '#fff' }}>
             Stoly OTEVŘENO (neuhrazeno): {unpaidTables.length}
           </strong>
+          <span style={{ color: '#64748b', fontSize: '0.75rem', fontWeight: 700 }}>
+            · napojeno na pos_orders / tables
+          </span>
         </div>
         <div style={{ color: '#94a3b8', fontSize: '0.85rem', fontWeight: 600 }}>
           {unpaidTables.length
             ? unpaidTables.map((t) => t.label).join(' · ')
-            : 'Žádné otevřené neuhrazené účty — algoritmus „Útěk bez placení“ se nespustí.'}
+            : 'Žádné otevřené neuhrazené účty — simulace útěku přesto cílí na STŮL 3 (demo).'}
         </div>
         <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'end' }}>
           <div style={{ flex: 1, minWidth: 180 }}>
@@ -419,6 +431,70 @@ export function CctvSurveillance() {
       )}
 
       <div
+        className="panel"
+        style={{ marginBottom: 16, borderColor: '#334155', background: '#0f172a' }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            gap: 8,
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            marginBottom: 10,
+          }}
+        >
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <ScrollText size={16} color={GOLD} />
+            <strong style={{ color: GOLD }}>Živý event log</strong>
+          </div>
+          <button type="button" className="btn btn-ghost" style={{ minHeight: 36 }} onClick={clearEventLog}>
+            Vymazat log
+          </button>
+        </div>
+        <div
+          style={{
+            maxHeight: 180,
+            overflow: 'auto',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 6,
+            fontFamily: 'ui-monospace, monospace',
+            fontSize: '0.78rem',
+          }}
+        >
+          {(eventLog ?? []).length === 0 && (
+            <div style={{ color: '#64748b', fontWeight: 600 }}>
+              Zatím žádné události — spusťte 🧪 Nasimulovat útěk bez placení.
+            </div>
+          )}
+          {(eventLog ?? []).slice(0, 24).map((row) => (
+            <div
+              key={row.id}
+              style={{
+                padding: '0.45rem 0.65rem',
+                borderRadius: 8,
+                border: '1px solid #1e293b',
+                background:
+                  row.level === 'alarm'
+                    ? 'rgba(239,68,68,0.12)'
+                    : row.level === 'warn'
+                      ? 'rgba(245,158,11,0.1)'
+                      : '#020617',
+                color:
+                  row.level === 'alarm' ? '#fecaca' : row.level === 'warn' ? '#fde68a' : '#cbd5e1',
+              }}
+            >
+              <span style={{ color: '#64748b' }}>
+                {new Date(row.createdAt).toLocaleTimeString('cs-CZ')} ·{' '}
+              </span>
+              {row.message}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div
         style={{
           display: 'grid',
           gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
@@ -433,6 +509,17 @@ export function CctvSurveillance() {
             aiToggles={aiToggles}
             enlargeHint
             showConfig
+            isFlashing={flashingCameraId === cam.id}
+            zoneRegistry={zoneRegistry}
+            onAddZone={(zone) => {
+              const ok = addCustomZone(zone)
+              setToast(
+                ok
+                  ? `Zóna „${zone.trim()}“ přidána do registru`
+                  : `Zóna „${zone.trim()}“ už v registru je nebo je prázdná`,
+              )
+              return ok
+            }}
             onOpen={() => setFullscreenCam(cam)}
             onSaveConfig={(patch) => {
               updateCamera(cam.id, patch)
@@ -442,153 +529,22 @@ export function CctvSurveillance() {
         ))}
       </div>
 
-      <div
-        className="panel"
-        style={{ marginBottom: 16, borderColor: '#334155', background: '#0f172a' }}
-      >
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            gap: 12,
-            flexWrap: 'wrap',
-            alignItems: 'center',
-            marginBottom: archiveOpen ? 12 : 0,
-          }}
-        >
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <Archive size={16} color={GOLD} />
-            <strong style={{ color: GOLD }}>Archiv záznamů</strong>
-            <span style={{ color: '#94a3b8', fontSize: '0.8rem', fontWeight: 600 }}>
-              · rotace {CCTV_RETENTION_DAYS} dní (~2 měsíce) · {recordings.length} segmentů
-            </span>
-          </div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button
-              type="button"
-              className="btn btn-ghost"
-              style={{ minHeight: 42 }}
-              onClick={() => setArchiveOpen((v) => !v)}
-            >
-              {archiveOpen ? 'Skrýt archiv' : 'Zobrazit archiv'}
-            </button>
-            <button
-              type="button"
-              className="btn btn-ghost"
-              style={{ minHeight: 42 }}
-              title="Spustit čištění expirovaných nahrávek"
-              onClick={() => {
-                const n = runRetentionPurge()
-                setToast(
-                  n > 0
-                    ? `Trvale smazáno ${n} segmentů starších než ${CCTV_RETENTION_DAYS} dní`
-                    : `Žádné segmenty starší než ${CCTV_RETENTION_DAYS} dní`,
-                )
-              }}
-            >
-              <Trash2 size={14} /> Spustit retenci
-            </button>
-          </div>
-        </div>
+      <CctvArchivePanel />
 
-        <div style={{ color: '#64748b', fontSize: '0.78rem', fontWeight: 600, marginBottom: archiveOpen ? 12 : 0 }}>
-          Poslední čištění:{' '}
-          {lastRetentionPurgeAt
-            ? new Date(lastRetentionPurgeAt).toLocaleString('cs-CZ')
-            : 'ještě neproběhlo'}
-          {lastPurgedCount > 0 ? ` · naposledy smazáno ${lastPurgedCount}` : ''}
-        </div>
-
-        {archiveOpen && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 420, overflow: 'auto' }}>
-            {archiveByDay.length === 0 && (
-              <div style={{ color: '#94a3b8', fontWeight: 600 }}>Archiv je prázdný.</div>
-            )}
-            {archiveByDay.map((day) => (
-              <div
-                key={day.dayKey}
-                style={{
-                  border: '1px solid #334155',
-                  borderRadius: 12,
-                  background: '#020617',
-                  overflow: 'hidden',
-                }}
-              >
-                <div
-                  style={{
-                    padding: '0.65rem 0.85rem',
-                    borderBottom: '1px solid #1e293b',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    gap: 8,
-                    background: '#0b1220',
-                  }}
-                >
-                  <strong style={{ color: '#e2e8f0' }}>
-                    {new Date(day.dayKey + 'T12:00:00').toLocaleDateString('cs-CZ', {
-                      weekday: 'long',
-                      day: 'numeric',
-                      month: 'long',
-                      year: 'numeric',
-                    })}
-                  </strong>
-                  <span style={{ color: '#94a3b8', fontSize: '0.78rem', fontWeight: 700 }}>
-                    {day.items.length} záznamů · ~{day.totalMb} MB
-                  </span>
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column' }}>
-                  {day.items.map((seg) => (
-                    <div
-                      key={seg.id}
-                      style={{
-                        padding: '0.55rem 0.85rem',
-                        borderTop: '1px solid #1e293b',
-                        display: 'grid',
-                        gridTemplateColumns: '1fr auto',
-                        gap: 8,
-                        alignItems: 'center',
-                      }}
-                    >
-                      <div>
-                        <div style={{ color: '#f8fafc', fontWeight: 700, fontSize: '0.85rem' }}>
-                          {seg.cameraLabel}
-                        </div>
-                        <div style={{ color: '#64748b', fontSize: '0.72rem', fontWeight: 600 }}>
-                          {new Date(seg.createdAt).toLocaleTimeString('cs-CZ', {
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })}{' '}
-                          · {Math.round(seg.durationSec / 60)} min · {seg.resolution} {seg.fps}fps ·{' '}
-                          {seg.note}
-                        </div>
-                      </div>
-                      <span style={{ color: GOLD, fontWeight: 800, fontSize: '0.78rem' }}>
-                        {seg.sizeMb} MB
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <div
-        className="panel"
-        style={{ borderColor: '#334155', background: '#0f172a' }}
-      >
+      <div className="panel" style={{ borderColor: '#334155', background: '#0f172a' }}>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
           <AlertTriangle size={16} color={GOLD} />
-          <strong style={{ color: GOLD }}>Logika Vision AI</strong>
+          <strong style={{ color: GOLD }}>Logika Vision AI + infrastruktura</strong>
         </div>
         <p style={{ color: '#94a3b8', fontSize: '0.88rem', lineHeight: 1.6, margin: 0 }}>
-          Útěk bez placení: pokud Vision AI detekuje pohyb od stolu k východu a účet je ve stavu{' '}
-          <strong style={{ color: '#fecaca' }}>OTEVŘENO</strong> (neuhrazené položky / pos_orders
-          mimo ZAPLACENO), spustí se červený poplach na POS. Detekce rvaček / konfliktů v barové zóně
-          vyšle jantarové varování na pokladní obrazovku. Heatmapa zobrazuje hustotu stání pro
-          optimalizaci obsluhy. Archiv automaticky maže metadata starší než {CCTV_RETENTION_DAYS}{' '}
-          dní.
+          Interaktivní simulace útěku spustí 3s sekvenci na kameře 01 (Hlavní vchod), zapíše live
+          event log a vyšle systémový poplach: „🚨 POPLACH: Detekován útěk bez placení ze STOLU
+          3!“ na dashboard, POS terminály a TV wall. Video chunky cílí do Supabase bucketu{' '}
+          <strong style={{ color: GOLD }}>cctv-recordings</strong> ve tvaru{' '}
+          <code style={{ color: '#e2e8f0' }}>
+            /cctv-recordings/&#123;camera_id&#125;/&#123;YYYY-MM-DD&#125;/&#123;hour&#125;.mp4
+          </code>{' '}
+          s automatickou retencí {CCTV_RETENTION_DAYS} dní.
         </p>
       </div>
 

@@ -3,6 +3,7 @@ import { useBlocker, useNavigate } from 'react-router-dom'
 import { Lock, LogOut } from 'lucide-react'
 import { EventPOS } from './EventPOS'
 import { ManagerPinGate } from './ManagerPinGate'
+import { CctvSecurityBanner } from './cctv/CctvSecurityBanner'
 import { useAppStore } from '../store/useAppStore'
 import { useStaffLockStore } from '../store/useStaffLockStore'
 
@@ -95,6 +96,7 @@ export function PosTerminalPage() {
         touchAction: 'manipulation',
       }}
     >
+      <CctvSecurityBanner />
       <div className="gradient-mesh" style={{ opacity: 0.28 }} />
       <div
         style={{

@@ -10,8 +10,9 @@ import {
   Bar,
 } from 'recharts'
 import { motion } from 'framer-motion'
-import { Sparkles, TrendingUp, AlertTriangle, MonitorSmartphone } from 'lucide-react'
+import { Sparkles, TrendingUp, AlertTriangle, MonitorSmartphone, Siren } from 'lucide-react'
 import { useAppStore, computeMetrics } from '../store/useAppStore'
+import { useCctvStore } from '../store/useCctvStore'
 import { formatCurrency, formatPercent } from '../lib/documentIds'
 import type { EventProject } from '../types'
 import { EventCalendarScheduler } from './EventCalendarScheduler'
@@ -41,6 +42,9 @@ export function Dashboard() {
   const setActiveProject = useAppStore((s) => s.setActiveProject)
   const warehouseAlerts = useAppStore((s) => s.warehouseAlerts)
   const acknowledgeAlert = useAppStore((s) => s.acknowledgeAlert)
+  const cctvAlerts = useCctvStore((s) => s.alerts)
+  const acknowledgeCctvAlert = useCctvStore((s) => s.acknowledgeAlert)
+  const globalCctvAlert = useCctvStore((s) => s.globalAlert)
 
   const safeProjects: EventProject[] = useMemo(
     () => (Array.isArray(projects) ? projects.filter(Boolean) : []),
@@ -52,6 +56,11 @@ export function Dashboard() {
   const activeAlerts = useMemo(
     () => (warehouseAlerts ?? []).filter((a) => !a.acknowledged).slice(0, 8),
     [warehouseAlerts]
+  )
+
+  const activeCctvAlerts = useMemo(
+    () => (cctvAlerts ?? []).filter((a) => !a.acknowledged).slice(0, 6),
+    [cctvAlerts],
   )
 
   const recommendations = metrics.aiRecommendations?.length
@@ -122,6 +131,78 @@ export function Dashboard() {
           </button>
         </div>
       </div>
+
+      {(globalCctvAlert || activeCctvAlerts.length > 0) && (
+        <div
+          className="panel"
+          style={{
+            marginBottom: 20,
+            borderColor: '#ef4444',
+            background: 'rgba(239,68,68,0.12)',
+            boxShadow: '0 0 0 1px rgba(212,175,55,0.25)',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+            <Siren size={18} color="#D4AF37" />
+            <h3 style={{ fontSize: '1.1rem', color: '#fecaca' }}>CCTV Security — prioritní poplachy</h3>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              style={{ marginLeft: 'auto', minHeight: 36 }}
+              onClick={() => setView('cctv')}
+            >
+              Otevřít CCTV
+            </button>
+          </div>
+          {globalCctvAlert && (
+            <div
+              style={{
+                padding: '0.85rem 1rem',
+                borderRadius: 10,
+                background: 'rgba(127,29,29,0.55)',
+                border: '1px solid #fca5a5',
+                color: '#fff',
+                fontWeight: 900,
+                marginBottom: 10,
+                animation: 'posSecurityPulse 0.9s ease infinite',
+              }}
+            >
+              {globalCctvAlert.message}
+            </div>
+          )}
+          <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {activeCctvAlerts.map((a) => (
+              <li
+                key={a.id}
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  gap: 12,
+                  alignItems: 'center',
+                  padding: '0.65rem 0.85rem',
+                  background: 'var(--bg-elevated)',
+                  borderRadius: 8,
+                  fontSize: '0.9rem',
+                }}
+              >
+                <span>
+                  <strong style={{ color: '#fca5a5' }}>{a.message}</strong>
+                  {' · '}
+                  {a.cameraLabel}
+                </span>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  style={{ padding: '0.35rem 0.7rem', fontSize: '0.75rem' }}
+                  onClick={() => acknowledgeCctvAlert(a.id)}
+                >
+                  Potvrdit
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {activeAlerts.length > 0 && (
         <div

@@ -12,6 +12,7 @@ import { EventPOS } from './EventPOS'
 import { InventoryHub } from './inventory/InventoryHub'
 import { CloudSyncBadge } from './inventory/CloudSyncBadge'
 import { CctvSurveillance } from './CctvSurveillance'
+import { CctvSecurityBanner } from './cctv/CctvSecurityBanner'
 import { ErrorBoundary } from './ErrorBoundary'
 import { ManagerPinGate } from './ManagerPinGate'
 import { AnimatePresence, motion } from 'framer-motion'
@@ -149,6 +150,8 @@ export function AppShell() {
         </main>
         <LegalFooter />
       </div>
+
+      <CctvSecurityBanner />
 
       <AnimatePresence>
         {toast && (

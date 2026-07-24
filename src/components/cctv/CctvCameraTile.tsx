@@ -1,8 +1,7 @@
 import { useEffect, useId, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Camera, Maximize2, Settings2, X } from 'lucide-react'
+import { Camera, Maximize2, Plus, Settings2, X } from 'lucide-react'
 import {
-  CCTV_ZONE_OPTIONS,
   type CctvAiToggles,
   type CctvCamera,
   type CctvZoneCategory,
@@ -106,15 +105,20 @@ export function CameraConfigForm({
   camera,
   onSave,
   compact,
+  zoneRegistry,
+  onAddZone,
 }: {
   camera: CctvCamera
   onSave: (patch: Partial<CctvCamera>) => void
   compact?: boolean
+  zoneRegistry: string[]
+  onAddZone: (zone: string) => boolean
 }) {
   const [label, setLabel] = useState(camera.label)
   const [zone, setZone] = useState(camera.zone)
   const [zoneCategory, setZoneCategory] = useState<CctvZoneCategory>(camera.zoneCategory)
   const [rtspUrl, setRtspUrl] = useState(camera.rtspUrl)
+  const [newZone, setNewZone] = useState('')
 
   useEffect(() => {
     setLabel(camera.label)
@@ -123,6 +127,12 @@ export function CameraConfigForm({
     setRtspUrl(camera.rtspUrl)
   }, [camera.id, camera.label, camera.zone, camera.zoneCategory, camera.rtspUrl])
 
+  const registry = useMemo(() => {
+    const base = [...zoneRegistry]
+    if (zoneCategory && !base.includes(zoneCategory)) base.unshift(zoneCategory)
+    return base
+  }, [zoneRegistry, zoneCategory])
+
   const save = () => {
     onSave({
       label: label.trim() || camera.label,
@@ -130,6 +140,16 @@ export function CameraConfigForm({
       zoneCategory,
       rtspUrl: rtspUrl.trim(),
     })
+  }
+
+  const addZone = () => {
+    const ok = onAddZone(newZone)
+    if (ok) {
+      const cleaned = newZone.trim()
+      setZoneCategory(cleaned)
+      setZone(cleaned)
+      setNewZone('')
+    }
   }
 
   return (
@@ -161,34 +181,55 @@ export function CameraConfigForm({
       <label className="label" style={{ margin: 0 }}>
         Zóna / Umístění
       </label>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-        <select
-          className="input"
-          value={zoneCategory}
-          onChange={(e) => {
-            const v = e.target.value as CctvZoneCategory
-            setZoneCategory(v)
-            if (!zone.trim() || CCTV_ZONE_OPTIONS.includes(zone as CctvZoneCategory)) {
-              setZone(v)
-            }
-          }}
-          style={{ minHeight: 42, background: '#1e293b', borderColor: '#334155' }}
-          title="Kategorie zóny"
-        >
-          {CCTV_ZONE_OPTIONS.map((z) => (
-            <option key={z} value={z}>
-              {z}
-            </option>
-          ))}
-        </select>
+      <select
+        className="input"
+        value={zoneCategory}
+        onChange={(e) => {
+          const v = e.target.value as CctvZoneCategory
+          setZoneCategory(v)
+          setZone(v)
+        }}
+        style={{ minHeight: 42, background: '#1e293b', borderColor: '#334155' }}
+        title="Registr zón (včetně vlastních)"
+      >
+        {registry.map((z) => (
+          <option key={z} value={z}>
+            {z}
+          </option>
+        ))}
+      </select>
+      <input
+        className="input"
+        value={zone}
+        onChange={(e) => setZone(e.target.value)}
+        placeholder="Detail umístění (volitelné)"
+        style={{ minHeight: 42, background: '#1e293b', borderColor: '#334155' }}
+        title="Volný popis zóny"
+      />
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 8 }}>
         <input
           className="input"
-          value={zone}
-          onChange={(e) => setZone(e.target.value)}
-          placeholder="Detail umístění"
+          value={newZone}
+          onChange={(e) => setNewZone(e.target.value)}
+          placeholder="Nová zóna (např. Zahrádka, Sklep)"
           style={{ minHeight: 42, background: '#1e293b', borderColor: '#334155' }}
-          title="Volný popis zóny"
+          title="Přidat vlastní zónu do registru"
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              addZone()
+            }
+          }}
         />
+        <button
+          type="button"
+          className="btn btn-ghost"
+          style={{ minHeight: 42, borderColor: GOLD, color: GOLD }}
+          onClick={addZone}
+          title="Přidat zónu do výběru"
+        >
+          <Plus size={15} /> Přidat
+        </button>
       </div>
       <label className="label" style={{ margin: 0 }}>
         RTSP / IP Adresa
@@ -243,6 +284,9 @@ export function CctvCameraFeed({
   showConfig,
   onSaveConfig,
   wallMode,
+  isFlashing,
+  zoneRegistry,
+  onAddZone,
 }: {
   camera: CctvCamera
   aiToggles: CctvAiToggles
@@ -251,22 +295,22 @@ export function CctvCameraFeed({
   showConfig?: boolean
   onSaveConfig?: (patch: Partial<CctvCamera>) => void
   wallMode?: boolean
+  isFlashing?: boolean
+  zoneRegistry?: string[]
+  onAddZone?: (zone: string) => boolean
 }) {
   const online = camera.status !== 'offline'
   const [configOpen, setConfigOpen] = useState(false)
+  const alertish = camera.status === 'alert' || Boolean(isFlashing)
 
   return (
     <div
       style={{
         borderRadius: wallMode ? 0 : 14,
         border: wallMode
-          ? `1px solid ${camera.status === 'alert' ? '#f59e0b' : '#1e293b'}`
+          ? `1px solid ${alertish ? '#ef4444' : '#0f172a'}`
           : `2px solid ${
-              camera.status === 'alert'
-                ? '#ef4444'
-                : camera.status === 'offline'
-                  ? '#475569'
-                  : '#334155'
+              alertish ? '#ef4444' : camera.status === 'offline' ? '#475569' : '#334155'
             }`,
         background: '#020617',
         overflow: 'hidden',
@@ -276,6 +320,7 @@ export function CctvCameraFeed({
         height: wallMode ? '100%' : undefined,
         cursor: onOpen ? 'pointer' : 'default',
         touchAction: 'manipulation',
+        boxShadow: isFlashing ? '0 0 0 2px #ef4444, 0 0 24px rgba(239,68,68,0.55)' : undefined,
       }}
       onClick={() => onOpen?.()}
       role={onOpen ? 'button' : undefined}
@@ -294,7 +339,7 @@ export function CctvCameraFeed({
           flex: 1,
           minHeight: wallMode ? 0 : 140,
           background: online
-            ? `linear-gradient(145deg, ${camera.accent}40, #020617 55%, #0f172a)`
+            ? `linear-gradient(145deg, ${alertish ? '#ef4444' : camera.accent}55, #020617 55%, #0f172a)`
             : 'linear-gradient(145deg, #1e293b, #020617)',
           position: 'relative',
           display: 'flex',
@@ -303,7 +348,20 @@ export function CctvCameraFeed({
           aspectRatio: wallMode ? undefined : '16 / 9',
         }}
       >
-        <Camera size={wallMode ? 42 : 34} color={online ? camera.accent : '#64748b'} />
+        {isFlashing && (
+          <motion.div
+            animate={{ opacity: [0.15, 0.7, 0.15] }}
+            transition={{ duration: 0.45, repeat: Infinity }}
+            style={{
+              position: 'absolute',
+              inset: 0,
+              background: 'rgba(239,68,68,0.55)',
+              pointerEvents: 'none',
+              zIndex: 2,
+            }}
+          />
+        )}
+        <Camera size={wallMode ? 42 : 34} color={alertish ? '#fecaca' : online ? camera.accent : '#64748b'} />
         <Scanlines online={online} />
         <HeatmapOverlay active={Boolean(aiToggles.heatmap && online)} />
 
@@ -325,21 +383,16 @@ export function CctvCameraFeed({
               fontWeight: 900,
               padding: '0.2rem 0.5rem',
               borderRadius: 6,
-              background:
-                camera.status === 'alert'
-                  ? '#ef4444'
-                  : camera.status === 'offline'
-                    ? '#475569'
-                    : '#0f172a',
+              background: alertish
+                ? '#ef4444'
+                : camera.status === 'offline'
+                  ? '#475569'
+                  : '#0f172a',
               color: '#fff',
               border: `1px solid ${camera.status === 'offline' ? '#64748b' : GOLD}`,
             }}
           >
-            {camera.status === 'alert'
-              ? 'POPLACH'
-              : camera.status === 'offline'
-                ? 'OFFLINE'
-                : 'LIVE'}
+            {alertish ? 'POPLACH' : camera.status === 'offline' ? 'OFFLINE' : 'LIVE'}
           </span>
           {camera.recording && online && (
             <span
@@ -481,10 +534,12 @@ export function CctvCameraFeed({
         </div>
       )}
 
-      {showConfig && configOpen && onSaveConfig && (
+      {showConfig && configOpen && onSaveConfig && zoneRegistry && onAddZone && (
         <CameraConfigForm
           camera={camera}
           compact
+          zoneRegistry={zoneRegistry}
+          onAddZone={onAddZone}
           onSave={(patch) => {
             onSaveConfig(patch)
             setConfigOpen(false)

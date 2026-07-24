@@ -1,115 +1,143 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
-import { MonitorSmartphone } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 import { useCctvStore } from '../store/useCctvStore'
 import type { CctvCamera } from '../lib/cctvEngine'
 import { CctvCameraFeed, CctvFullscreenModal } from './cctv/CctvCameraTile'
+import { CctvSecurityBanner } from './cctv/CctvSecurityBanner'
 
 const GOLD = '#D4AF37'
 
 /**
- * Standalone multi-monitor / mobile CCTV wall — no ERP chrome.
- * Optimized for 16:9 office TVs; fluid grid for phone/tablet.
+ * Standalone multi-monitor / mobile CCTV wall — 100% clean, no ERP chrome.
+ * Route: /cctv-wall (top-level router entry, outside AppShell).
  */
 export function CctvWallPage() {
+  const navigate = useNavigate()
   const cameras = useCctvStore((s) => s.cameras)
   const aiToggles = useCctvStore((s) => s.aiToggles)
+  const flashingCameraId = useCctvStore((s) => s.flashingCameraId)
   const ensureCameras = useCctvStore((s) => s.ensureCameras)
   const runRetentionPurge = useCctvStore((s) => s.runRetentionPurge)
   const [fullscreenCam, setFullscreenCam] = useState<CctvCamera | null>(null)
-  const [clock, setClock] = useState(() => new Date())
+  const [hudVisible, setHudVisible] = useState(true)
 
   useEffect(() => {
     ensureCameras()
     runRetentionPurge()
+    // Force full-bleed document for TV monitors
+    const html = document.documentElement
+    const body = document.body
+    const prevHtmlOverflow = html.style.overflow
+    const prevBodyOverflow = body.style.overflow
+    const prevBodyMargin = body.style.margin
+    html.style.overflow = 'hidden'
+    body.style.overflow = 'hidden'
+    body.style.margin = '0'
+    document.title = 'EventFlow · CCTV TV režim'
+    return () => {
+      html.style.overflow = prevHtmlOverflow
+      body.style.overflow = prevBodyOverflow
+      body.style.margin = prevBodyMargin
+    }
   }, [ensureCameras, runRetentionPurge])
 
   useEffect(() => {
-    const id = window.setInterval(() => setClock(new Date()), 1000)
-    return () => window.clearInterval(id)
+    const id = window.setTimeout(() => setHudVisible(false), 4000)
+    return () => window.clearTimeout(id)
   }, [])
-
-  const onlineCount = cameras.filter((c) => c.status !== 'offline').length
 
   return (
     <div
+      className="cctv-wall-root"
+      onMouseMove={() => setHudVisible(true)}
+      onTouchStart={() => setHudVisible(true)}
       style={{
-        minHeight: '100dvh',
-        width: '100%',
-        background:
-          'radial-gradient(ellipse at top, #1e293b 0%, #020617 45%, #000 100%)',
+        position: 'fixed',
+        inset: 0,
+        width: '100vw',
+        height: '100dvh',
+        margin: 0,
+        padding: 0,
+        background: '#000',
         color: '#e2e8f0',
-        display: 'flex',
-        flexDirection: 'column',
+        zIndex: 1,
+        overflow: 'hidden',
         touchAction: 'manipulation',
       }}
     >
-      <header
+      <CctvSecurityBanner />
+
+      <div
         style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          right: 0,
+          zIndex: 20,
           display: 'flex',
-          alignItems: 'center',
           justifyContent: 'space-between',
-          gap: 12,
-          flexWrap: 'wrap',
-          padding: '0.55rem 0.85rem',
-          borderBottom: `1px solid ${GOLD}44`,
-          background: 'rgba(2,6,23,0.92)',
+          alignItems: 'center',
+          gap: 10,
+          padding: '0.45rem 0.75rem',
+          background: 'linear-gradient(180deg, rgba(2,6,23,0.85), transparent)',
+          opacity: hudVisible ? 1 : 0,
+          transition: 'opacity 0.4s ease',
+          pointerEvents: hudVisible ? 'auto' : 'none',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <MonitorSmartphone size={18} color={GOLD} />
-          <div>
-            <div style={{ color: GOLD, fontWeight: 900, letterSpacing: '0.04em', fontSize: '0.95rem' }}>
-              EVENTFLOW · CCTV WALL
-            </div>
-            <div style={{ color: '#94a3b8', fontSize: '0.72rem', fontWeight: 700 }}>
-              Samostatný TV režim · {onlineCount}/{cameras.length} online · bez ERP navigace
-            </div>
-          </div>
+        <div style={{ color: GOLD, fontWeight: 900, letterSpacing: '0.06em', fontSize: '0.82rem' }}>
+          EVENTFLOW · CCTV WALL · 16:9
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-          <time
-            dateTime={clock.toISOString()}
-            style={{ color: '#cbd5e1', fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}
-          >
-            {clock.toLocaleString('cs-CZ')}
-          </time>
-          <Link
-            to="/"
-            style={{
-              color: GOLD,
-              fontWeight: 800,
-              fontSize: '0.8rem',
-              textDecoration: 'none',
-              border: `1px solid ${GOLD}66`,
-              borderRadius: 8,
-              padding: '0.4rem 0.7rem',
-            }}
-          >
-            Zpět do ERP
-          </Link>
-        </div>
-      </header>
+        <button
+          type="button"
+          onClick={() => navigate('/')}
+          style={{
+            color: GOLD,
+            fontWeight: 800,
+            fontSize: '0.78rem',
+            background: 'rgba(2,6,23,0.75)',
+            border: `1px solid ${GOLD}66`,
+            borderRadius: 8,
+            padding: '0.35rem 0.7rem',
+            cursor: 'pointer',
+          }}
+        >
+          Zpět do ERP
+        </button>
+      </div>
 
       <main
+        className="cctv-wall-grid"
         style={{
-          flex: 1,
-          padding: 'clamp(4px, 0.6vw, 10px)',
+          position: 'absolute',
+          inset: 0,
           display: 'grid',
           gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',
           gridTemplateRows: 'repeat(2, minmax(0, 1fr))',
-          gap: 'clamp(4px, 0.5vw, 8px)',
-          minHeight: 0,
+          gap: 0,
+          width: '100%',
+          height: '100%',
+          margin: 0,
+          padding: 0,
         }}
-        className="cctv-wall-grid"
       >
         {cameras.map((cam) => (
-          <div key={cam.id} style={{ minHeight: 0, minWidth: 0 }}>
+          <div
+            key={cam.id}
+            style={{
+              minHeight: 0,
+              minWidth: 0,
+              width: '100%',
+              height: '100%',
+              overflow: 'hidden',
+            }}
+          >
             <CctvCameraFeed
               camera={cam}
               aiToggles={aiToggles}
               wallMode
-              enlargeHint
+              enlargeHint={hudVisible}
+              isFlashing={flashingCameraId === cam.id}
               onOpen={() => setFullscreenCam(cam)}
             />
           </div>
@@ -117,23 +145,35 @@ export function CctvWallPage() {
       </main>
 
       <style>{`
+        .cctv-wall-root, .cctv-wall-root * {
+          box-sizing: border-box;
+        }
+        .cctv-wall-grid > div > div {
+          border-radius: 0 !important;
+          height: 100% !important;
+          min-height: 100% !important;
+        }
         @media (max-width: 1100px) {
           .cctv-wall-grid {
             grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
-            grid-template-rows: repeat(4, minmax(140px, 1fr)) !important;
+            grid-template-rows: repeat(4, minmax(0, 1fr)) !important;
           }
         }
         @media (max-width: 700px) {
           .cctv-wall-grid {
             grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-            grid-template-rows: repeat(5, minmax(120px, auto)) !important;
-            overflow: auto;
+            grid-template-rows: repeat(5, minmax(0, 1fr)) !important;
+            overflow: auto !important;
           }
         }
         @media (max-width: 420px) {
           .cctv-wall-grid {
             grid-template-columns: 1fr !important;
-            grid-template-rows: none !important;
+            grid-template-rows: repeat(10, minmax(140px, auto)) !important;
+            overflow: auto !important;
+            position: relative !important;
+            inset: auto !important;
+            height: 100% !important;
           }
         }
       `}</style>

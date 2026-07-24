@@ -1,4 +1,4 @@
-import { createBrowserRouter, RouterProvider, Outlet } from 'react-router-dom'
+import { createBrowserRouter, RouterProvider, Outlet, useLocation } from 'react-router-dom'
 import { useAppStore } from './store/useAppStore'
 import { useStaffLockStore } from './store/useStaffLockStore'
 import { HeroScreen } from './components/HeroScreen'
@@ -15,9 +15,23 @@ function RootLayout() {
   return <Outlet />
 }
 
+/**
+ * Main ERP shell. Explicitly refuses to render when path is /cctv-wall
+ * (belt-and-suspenders — primary wall route is a top-level sibling).
+ */
 function MainAppRoute() {
+  const location = useLocation()
   const showHero = useAppStore((s) => s.showHero)
   const staffTerminalLocked = useStaffLockStore((s) => s.staffTerminalLocked)
+
+  if (location.pathname === '/cctv-wall') {
+    return (
+      <ErrorBoundary fallbackTitle="Chyba CCTV TV režimu">
+        <CctvWallPage />
+      </ErrorBoundary>
+    )
+  }
+
   // Staff RBAC: never show hero while terminal lock is active — force PIN gate via AppShell
   if (showHero && !staffTerminalLocked) return <HeroScreen />
   return (
@@ -28,6 +42,15 @@ function MainAppRoute() {
 }
 
 const router = createBrowserRouter([
+  // Top-level standalone TV wall — zero ERP chrome / sidebar / settings
+  {
+    path: '/cctv-wall',
+    element: (
+      <ErrorBoundary fallbackTitle="Chyba CCTV TV režimu">
+        <CctvWallPage />
+      </ErrorBoundary>
+    ),
+  },
   {
     path: '/',
     element: <RootLayout />,
@@ -80,6 +103,7 @@ const router = createBrowserRouter([
           </ErrorBoundary>
         ),
       },
+      // Nested alias kept for older bookmarks; still renders clean wall (no shell)
       {
         path: 'cctv-wall',
         element: (

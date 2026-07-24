@@ -4,13 +4,8 @@ import { getPosChannel, type PosBroadcastMessage } from './kdsSync'
 
 export const CCTV_RETENTION_DAYS = 60
 
-export type CctvZoneCategory =
-  | 'Exteriér'
-  | 'Interiér'
-  | 'VIP'
-  | 'Kuchyň'
-  | 'Bar'
-  | 'Pokladna'
+/** Zone registry value — presets + user-defined custom zones */
+export type CctvZoneCategory = string
 
 export const CCTV_ZONE_OPTIONS: CctvZoneCategory[] = [
   'Exteriér',
@@ -19,6 +14,15 @@ export const CCTV_ZONE_OPTIONS: CctvZoneCategory[] = [
   'Kuchyň',
   'Bar',
   'Pokladna',
+]
+
+/** Suggested starter custom zones users can add to the registry */
+export const CCTV_SUGGESTED_CUSTOM_ZONES = [
+  'Zahrádka',
+  'VIP salonek',
+  'Sklep',
+  'Šatna personálu',
+  'Parkoviště',
 ]
 
 export interface CctvCamera {
@@ -62,11 +66,37 @@ export interface CctvRecordingSegment {
   createdAt: string
   /** YYYY-MM-DD for archive day grouping */
   dayKey: string
+  /** HH (00–23) for hour timeline grouping */
+  hourKey: string
   durationSec: number
   resolution: string
   fps: number
   sizeMb: number
   note: string
+  /**
+   * Future Supabase Storage object path:
+   * cctv-recordings/{camera_id}/{YYYY-MM-DD}/{hour}.mp4
+   */
+  storagePath: string
+}
+
+export interface CctvEventLogEntry {
+  id: string
+  createdAt: string
+  level: 'info' | 'warn' | 'alarm'
+  message: string
+  cameraId?: string
+  tableLabel?: string
+}
+
+export interface CctvGlobalAlert {
+  id: string
+  message: string
+  tableLabel: string
+  cameraId: string
+  cameraLabel: string
+  createdAt: string
+  kind: 'walkout' | 'fight' | 'queue'
 }
 
 export interface CctvAiToggles {
@@ -260,6 +290,80 @@ export function buildWalkoutAlertMessage(tableLabel: string): string {
   return `🚨 POPLACH: Podezření na útěk bez placení ze STOLU ${tableLabel}!`
 }
 
+/** Exact high-priority copy for interactive theft simulation */
+export function buildForcedTheftAlertMessage(tableNumber = 3): string {
+  return `🚨 POPLACH: Detekován útěk bez placení ze STOLU ${tableNumber}!`
+}
+
+export function hourKeyFromIso(iso: string): string {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return '00'
+  return String(d.getHours()).padStart(2, '0')
+}
+
+export function buildRecordingStoragePath(
+  cameraId: string,
+  dayKey: string,
+  hourKey: string,
+): string {
+  return `cctv-recordings/${cameraId}/${dayKey}/${hourKey}.mp4`
+}
+
+/** Resolve STŮL 3 from live POS tables/orders — falls back to synthetic target */
+export function resolveTheftTargetTable(
+  tables: PosTableTab[],
+  orders: PosOrder[],
+): { tableId: string; tableLabel: string; orderIds: string[] } {
+  const list = tables ?? []
+  const byNumber = list.find((t) => {
+    const m = t.label.match(/(?:st[uů]l|table)\s*#?\s*(\d+)/i)
+    return m?.[1] === '3'
+  })
+  const unpaid = list.filter((t) => isTableUnpaidOpen(t, orders ?? []))
+  const table = byNumber || unpaid[0] || list[0]
+  if (!table) {
+    return { tableId: 'table_sim_3', tableLabel: 'STŮL 3', orderIds: [] }
+  }
+  const orderIds = (orders ?? [])
+    .filter((o) => o.tableId === table.id && o.status !== 'paid')
+    .map((o) => o.id)
+  return {
+    tableId: table.id,
+    tableLabel: table.label,
+    orderIds,
+  }
+}
+
+/** Short dual-tone alarm for system-wide security flash */
+export function playSecurityAlarmSound(): void {
+  try {
+    const Ctx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+    if (!Ctx) return
+    const ctx = new Ctx()
+    const beep = (freq: number, start: number, dur: number) => {
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+      osc.type = 'square'
+      osc.frequency.value = freq
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime + start)
+      gain.gain.exponentialRampToValueAtTime(0.18, ctx.currentTime + start + 0.02)
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + start + dur)
+      osc.connect(gain)
+      gain.connect(ctx.destination)
+      osc.start(ctx.currentTime + start)
+      osc.stop(ctx.currentTime + start + dur + 0.02)
+    }
+    beep(880, 0, 0.18)
+    beep(660, 0.22, 0.18)
+    beep(990, 0.44, 0.28)
+    window.setTimeout(() => void ctx.close(), 1200)
+  } catch {
+    // Audio not available — silent fallback
+  }
+}
+
 export function buildFightAlertMessage(cameraLabel: string, zone: string): string {
   return `⚠️ VAROVÁNÍ: Detekce rvačky / konfliktu — ${cameraLabel} (${zone})!`
 }
@@ -399,24 +503,28 @@ export function seedRecordingArchive(cameras: CctvCamera[]): CctvRecordingSegmen
     const ts = new Date(now - dayOffset * 86400000)
     const dayKey = ts.toISOString().slice(0, 10)
     for (const cam of active.slice(0, 6)) {
+      const hour = 10 + (dayOffset % 8)
       const createdAt = new Date(
         ts.getFullYear(),
         ts.getMonth(),
         ts.getDate(),
-        10 + (dayOffset % 8),
-        (dayOffset * 7) % 60
+        hour,
+        (dayOffset * 7) % 60,
       ).toISOString()
+      const hourKey = String(hour).padStart(2, '0')
       segments.push({
         id: uid('rec'),
         cameraId: cam.id,
         cameraLabel: cam.label,
         createdAt,
         dayKey,
+        hourKey,
         durationSec: 3600 + (dayOffset % 3) * 900,
         resolution: cam.resolution,
         fps: cam.fps,
         sizeMb: 420 + dayOffset * 12,
         note: `Automatický segment · ${cam.zoneCategory}`,
+        storagePath: buildRecordingStoragePath(cam.id, dayKey, hourKey),
       })
     }
   }
@@ -426,22 +534,26 @@ export function seedRecordingArchive(cameras: CctvCamera[]): CctvRecordingSegmen
     const cam = active[i % Math.max(1, active.length)]
     if (!cam) continue
     const old = new Date(now - (65 + i) * 86400000)
+    const dayKey = old.toISOString().slice(0, 10)
+    const hourKey = hourKeyFromIso(old.toISOString())
     segments.push({
       id: uid('rec_old'),
       cameraId: cam.id,
       cameraLabel: cam.label,
       createdAt: old.toISOString(),
-      dayKey: old.toISOString().slice(0, 10),
+      dayKey,
+      hourKey,
       durationSec: 1800,
       resolution: '1080p',
       fps: 25,
       sizeMb: 280,
       note: 'Expirovaný segment (test retenční politiky)',
+      storagePath: buildRecordingStoragePath(cam.id, dayKey, hourKey),
     })
   }
 
   return segments.sort(
-    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
   )
 }
 
@@ -465,38 +577,116 @@ export function purgeExpiredRecordings(
 }
 
 export function groupRecordingsByDay(
-  segments: CctvRecordingSegment[]
+  segments: CctvRecordingSegment[],
 ): Array<{ dayKey: string; items: CctvRecordingSegment[]; totalMb: number }> {
   const map = new Map<string, CctvRecordingSegment[]>()
   for (const seg of segments ?? []) {
-    const list = map.get(seg.dayKey) ?? []
-    list.push(seg)
-    map.set(seg.dayKey, list)
+    const dayKey = seg.dayKey || dayKeyFromIso(seg.createdAt)
+    const list = map.get(dayKey) ?? []
+    list.push(normalizeRecordingSegment(seg))
+    map.set(dayKey, list)
   }
   return Array.from(map.entries())
     .sort((a, b) => b[0].localeCompare(a[0]))
     .map(([dayKey, items]) => ({
       dayKey,
       items: items.sort(
-        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
       ),
       totalMb: Math.round(items.reduce((s, i) => s + i.sizeMb, 0)),
     }))
 }
 
+export type CctvArchiveHourGroup = {
+  hourKey: string
+  label: string
+  items: CctvRecordingSegment[]
+}
+
+export type CctvArchiveDayGroup = {
+  dayKey: string
+  label: string
+  totalMb: number
+  hours: CctvArchiveHourGroup[]
+}
+
+/** Vertical timeline: Days → Hours → clips */
+export function groupRecordingsTimeline(
+  segments: CctvRecordingSegment[],
+): CctvArchiveDayGroup[] {
+  const byDay = groupRecordingsByDay(segments)
+  return byDay.map((day) => {
+    const hourMap = new Map<string, CctvRecordingSegment[]>()
+    for (const item of day.items) {
+      const hk = item.hourKey || hourKeyFromIso(item.createdAt)
+      const list = hourMap.get(hk) ?? []
+      list.push(item)
+      hourMap.set(hk, list)
+    }
+    const hours = Array.from(hourMap.entries())
+      .sort((a, b) => b[0].localeCompare(a[0]))
+      .map(([hourKey, items]) => ({
+        hourKey,
+        label: `${hourKey}:00 – ${hourKey}:59`,
+        items,
+      }))
+    return {
+      dayKey: day.dayKey,
+      label: new Date(day.dayKey + 'T12:00:00').toLocaleDateString('cs-CZ', {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric',
+      }),
+      totalMb: day.totalMb,
+      hours,
+    }
+  })
+}
+
+export function normalizeRecordingSegment(
+  seg: Partial<CctvRecordingSegment> & {
+    id: string
+    cameraId: string
+    createdAt: string
+  },
+): CctvRecordingSegment {
+  const dayKey = seg.dayKey || dayKeyFromIso(seg.createdAt)
+  const hourKey = seg.hourKey || hourKeyFromIso(seg.createdAt)
+  return {
+    id: seg.id,
+    cameraId: seg.cameraId,
+    cameraLabel: seg.cameraLabel || seg.cameraId,
+    createdAt: seg.createdAt,
+    dayKey,
+    hourKey,
+    durationSec: seg.durationSec ?? 300,
+    resolution: seg.resolution || '1080p',
+    fps: seg.fps || 25,
+    sizeMb: seg.sizeMb ?? 35,
+    note: seg.note || 'Záznam',
+    storagePath:
+      seg.storagePath || buildRecordingStoragePath(seg.cameraId, dayKey, hourKey),
+  }
+}
+
 /** Append a live “REC tick” segment for online recording cameras. */
 export function createLiveRecordingTick(camera: CctvCamera): CctvRecordingSegment {
   const createdAt = new Date().toISOString()
+  const dayKey = dayKeyFromIso(createdAt)
+  const hourKey = hourKeyFromIso(createdAt)
   return {
     id: uid('rec_live'),
     cameraId: camera.id,
     cameraLabel: camera.label,
     createdAt,
-    dayKey: dayKeyFromIso(createdAt),
+    dayKey,
+    hourKey,
     durationSec: 300,
     resolution: camera.resolution,
     fps: camera.fps,
     sizeMb: 35,
     note: 'Živý cyklický záznam',
+    storagePath: buildRecordingStoragePath(camera.id, dayKey, hourKey),
   }
 }

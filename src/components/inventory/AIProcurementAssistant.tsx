@@ -5,9 +5,11 @@ import {
   CalendarRange,
   FileText,
   Loader2,
+  Printer,
   ShoppingCart,
   Sparkles,
 } from 'lucide-react'
+import { formatCzechDate } from '../../lib/czechDate'
 import { useInventoryStore } from '../../store/useInventoryStore'
 import { useAppStore, migrateProject, selectActiveProject } from '../../store/useAppStore'
 import {
@@ -28,6 +30,19 @@ export function AIProcurementAssistant() {
   const project = useMemo(() => migrateProject(activeRaw), [activeRaw])
   const [orderDoc, setOrderDoc] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [printReady, setPrintReady] = useState(false)
+
+  const printPurchaseList = () => {
+    if (!analysis.bySupplier.length) {
+      setToast('Nákupní seznam je prázdný')
+      return
+    }
+    setPrintReady(true)
+    window.setTimeout(() => {
+      window.print()
+      setPrintReady(false)
+    }, 80)
+  }
 
   const analysis = useMemo(
     () => buildAiPurchaseList(items, project, recipes ?? []),
@@ -167,43 +182,125 @@ export function AIProcurementAssistant() {
         )}
       </section>
 
-      <button
-        type="button"
-        className="btn btn-gold"
-        style={{ width: '100%', minHeight: 52 }}
-        disabled={busy || loading || !analysis.bySupplier.length}
-        onClick={generateOrder}
-      >
-        {busy ? <Loader2 size={16} className="spin" /> : <FileText size={16} />}
-        📄 Vygenerovat objednávku pro dodavatele
-      </button>
+      <div style={{ display: 'grid', gap: 10, gridTemplateColumns: '1fr 1fr' }}>
+        <button
+          type="button"
+          className="btn btn-gold"
+          style={{ width: '100%', minHeight: 52 }}
+          disabled={busy || loading || !analysis.bySupplier.length}
+          onClick={generateOrder}
+        >
+          {busy ? <Loader2 size={16} className="spin" /> : <FileText size={16} />}
+          📄 Vygenerovat objednávku
+        </button>
+        <button
+          type="button"
+          className="btn btn-ghost"
+          style={{ width: '100%', minHeight: 52, borderColor: '#D4AF37', color: '#D4AF37' }}
+          disabled={!analysis.bySupplier.length}
+          onClick={printPurchaseList}
+          title="Nákupní seznam k vytištění — úsporný černobílý tisk (Makro)"
+        >
+          <Printer size={16} /> Nákupní seznam k vytištění
+        </button>
+      </div>
 
       {orderDoc && (
-        <div className="panel" style={{ marginTop: 14, whiteSpace: 'pre-wrap', fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+        <div className="panel no-print" style={{ marginTop: 14, whiteSpace: 'pre-wrap', fontSize: '0.82rem', color: 'var(--text-muted)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, gap: 8 }}>
             <h3 style={{ color: 'var(--text)', margin: 0 }}>Náhled objednávky</h3>
-            <button
-              type="button"
-              className="btn btn-ghost"
-              onClick={() => {
-                const w = window.open('', '_blank', 'noopener,noreferrer,width=720,height=900')
-                if (!w) return
-                w.document.write(
-                  `<pre style="font-family:ui-monospace,Menlo,monospace;white-space:pre-wrap;padding:24px">${orderDoc
-                    .replace(/&/g, '&amp;')
-                    .replace(/</g, '&lt;')}</pre>`
-                )
-                w.document.close()
-                w.focus()
-                w.print()
-              }}
-            >
-              Tisk
+            <button type="button" className="btn btn-ghost" onClick={printPurchaseList}>
+              <Printer size={14} /> Tisk
             </button>
           </div>
           {orderDoc}
         </div>
       )}
+
+      {/* Ink-saving B&W print sheet */}
+      <div
+        className="ai-purchase-print"
+        style={{
+          display: printReady ? 'block' : 'none',
+          background: '#fff',
+          color: '#000',
+          padding: 20,
+          fontFamily: 'Georgia, "Times New Roman", serif',
+        }}
+      >
+        <h1 style={{ margin: '0 0 6px', fontSize: '1.4rem', fontWeight: 900 }}>
+          Nákupní seznam k vytištění
+        </h1>
+        <div style={{ fontSize: '0.9rem', marginBottom: 14 }}>
+          EventFlow · {profile.companyName || 'Agentura'} · {formatCzechDate(new Date())}
+          {project ? ` · akce: ${project.name}` : ''}
+        </div>
+        <hr style={{ border: 'none', borderTop: '2px solid #000', margin: '0 0 12px' }} />
+        {analysis.bySupplier.map((g) => (
+          <div key={g.supplier} style={{ marginBottom: 16 }}>
+            <h2 style={{ fontSize: '1.05rem', margin: '0 0 8px', fontWeight: 800 }}>
+              Dodavatel: {g.supplier}
+            </h2>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.88rem' }}>
+              <thead>
+                <tr>
+                  <th style={{ textAlign: 'left', borderBottom: '1px solid #000', padding: '4px 0' }}>
+                    Položka
+                  </th>
+                  <th style={{ textAlign: 'right', borderBottom: '1px solid #000', padding: '4px 0' }}>
+                    Objednat
+                  </th>
+                  <th style={{ textAlign: 'right', borderBottom: '1px solid #000', padding: '4px 0' }}>
+                    Sklad
+                  </th>
+                  <th style={{ textAlign: 'left', borderBottom: '1px solid #000', padding: '4px 0' }}>
+                    Důvod
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {g.lines.map((l) => (
+                  <tr key={`${g.supplier}-${l.name}-${l.unit}`}>
+                    <td style={{ padding: '5px 0', borderBottom: '1px solid #ccc' }}>{l.name}</td>
+                    <td
+                      style={{
+                        padding: '5px 0',
+                        borderBottom: '1px solid #ccc',
+                        textAlign: 'right',
+                        fontWeight: 700,
+                      }}
+                    >
+                      {l.deficit} {l.unit}
+                    </td>
+                    <td
+                      style={{
+                        padding: '5px 0',
+                        borderBottom: '1px solid #ccc',
+                        textAlign: 'right',
+                      }}
+                    >
+                      {l.on_hand} {l.unit}
+                    </td>
+                    <td style={{ padding: '5px 0', borderBottom: '1px solid #ccc' }}>
+                      {l.reason === 'critical_low' ? 'kritický stav' : 'pokrytí akce'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div style={{ textAlign: 'right', marginTop: 6, fontWeight: 700 }}>
+              Mezisoučet odhad: {formatCurrency(g.total_czk)}
+            </div>
+          </div>
+        ))}
+        <hr style={{ border: 'none', borderTop: '2px solid #000', margin: '12px 0' }} />
+        <div style={{ fontWeight: 900, fontSize: '1.05rem' }}>
+          Celkem odhad: {formatCurrency(analysis.totalEstimate)}
+        </div>
+        <p style={{ fontSize: '0.75rem', marginTop: 16, color: '#333' }}>
+          Černobílý tisk pro velkoobchod (Makro aj.). Zaškrtněte položky při nákupu.
+        </p>
+      </div>
     </div>
   )
 }

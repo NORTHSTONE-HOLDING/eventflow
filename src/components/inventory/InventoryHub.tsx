@@ -10,7 +10,6 @@ import {
   ShoppingCart,
   Warehouse,
 } from 'lucide-react'
-import { formatCzechDateTime } from '../../lib/czechDate'
 import { useInventoryStore } from '../../store/useInventoryStore'
 import { useAppStore } from '../../store/useAppStore'
 import { hasFeature } from '../../lib/subscriptions'
@@ -18,6 +17,7 @@ import { formatCurrency } from '../../lib/documentIds'
 import { MobileInvoiceRestock } from './MobileInvoiceRestock'
 import { MobileInventura } from './MobileInventura'
 import { AIProcurementAssistant } from './AIProcurementAssistant'
+import { InventoryCatalogPanel } from './InventoryCatalogPanel'
 import { CloudSyncBadge } from './CloudSyncBadge'
 
 type InvTab = 'overview' | 'restock' | 'audit' | 'procurement'
@@ -190,7 +190,7 @@ export function InventoryHub() {
       </div>
 
       <AnimateTab id={tab}>
-        {tab === 'overview' && <InventoryOverview />}
+        {tab === 'overview' && <InventoryCatalogPanel />}
         {tab === 'restock' && <MobileInvoiceRestock />}
         {tab === 'audit' && <MobileInventura />}
         {tab === 'procurement' && <AIProcurementAssistant />}
@@ -243,132 +243,6 @@ function StatCard({
         }}
       >
         {value}
-      </div>
-    </div>
-  )
-}
-
-function InventoryOverview() {
-  const items = useInventoryStore((s) => s.items)
-  const logs = useInventoryStore((s) => s.logs)
-  const recipes = useInventoryStore((s) => s.recipes)
-  const loading = useInventoryStore((s) => s.loading)
-
-  if (loading && !items.length) {
-    return (
-      <div className="panel" style={{ textAlign: 'center', padding: '2rem' }}>
-        <Loader2 className="spin" size={22} color="var(--gold)" />
-        <div style={{ marginTop: 8, color: 'var(--text-muted)' }}>Načítám sklad…</div>
-      </div>
-    )
-  }
-
-  return (
-    <div style={{ display: 'grid', gap: 14 }}>
-      <div className="panel" style={{ overflowX: 'auto' }}>
-        <h3 style={{ marginBottom: 10, fontSize: '1.1rem' }}>
-          Katalog skladu · receptury: {(recipes ?? []).length}
-        </h3>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-          <thead>
-            <tr style={{ color: 'var(--text-muted)', textAlign: 'left' }}>
-              <th style={{ padding: '0.5rem' }}>Název</th>
-              <th style={{ padding: '0.5rem' }}>Sekce</th>
-              <th style={{ padding: '0.5rem' }}>Stav</th>
-              <th style={{ padding: '0.5rem' }}>Min.</th>
-              <th style={{ padding: '0.5rem' }}>Ø cena</th>
-              <th style={{ padding: '0.5rem' }}>Dodavatel</th>
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((i) => {
-              const low = i.current_quantity <= i.minimum_quantity
-              return (
-                <tr key={i.id} style={{ borderTop: '1px solid var(--border)' }}>
-                  <td style={{ padding: '0.55rem' }}>
-                    <div style={{ fontWeight: 600 }}>{i.name}</div>
-                    <div style={{ fontSize: '0.72rem', color: 'var(--text-dim)' }}>
-                      {i.barcode || 'bez EAN'} · DPH {i.vat_rate}%
-                    </div>
-                  </td>
-                  <td style={{ padding: '0.55rem', color: 'var(--text-muted)' }}>
-                    {i.warehouse_section}
-                  </td>
-                  <td
-                    style={{
-                      padding: '0.55rem',
-                      color: low ? '#fca5a5' : 'var(--success)',
-                      fontWeight: 600,
-                    }}
-                  >
-                    {i.current_quantity} {i.unit}
-                  </td>
-                  <td style={{ padding: '0.55rem' }}>
-                    {i.minimum_quantity} {i.unit}
-                  </td>
-                  <td style={{ padding: '0.55rem', color: 'var(--gold)' }}>
-                    {formatCurrency(i.average_price)}
-                  </td>
-                  <td style={{ padding: '0.55rem', color: 'var(--text-muted)' }}>{i.supplier}</td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="panel">
-        <h3 style={{ marginBottom: 10, fontSize: '1.1rem' }}>Poslední pohyby (inventory_logs)</h3>
-        <div
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 8,
-            maxHeight: 280,
-            overflowY: 'auto',
-          }}
-        >
-          {(logs ?? []).slice(0, 30).map((log) => {
-            const item = items.find((i) => i.id === log.item_id)
-            return (
-              <div
-                key={log.id}
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  gap: 8,
-                  padding: '0.45rem 0',
-                  borderBottom: '1px solid var(--border)',
-                  fontSize: '0.82rem',
-                }}
-              >
-                <div>
-                  <div style={{ fontWeight: 500 }}>
-                    {log.type} · {item?.name || log.item_id}
-                  </div>
-                  <div style={{ color: 'var(--text-dim)' }}>
-                    {formatCzechDateTime(log.timestamp)}
-                    {log.note ? ` · ${log.note}` : ''}
-                  </div>
-                </div>
-                <div
-                  style={{
-                    fontWeight: 700,
-                    color: log.quantity_changed < 0 ? '#fca5a5' : 'var(--success)',
-                  }}
-                >
-                  {log.quantity_changed > 0 ? '+' : ''}
-                  {log.quantity_changed}
-                </div>
-              </div>
-            )
-          })}
-          {!logs.length && (
-            <div style={{ color: 'var(--text-dim)' }}>
-              Zatím bez pohybů — proveďte naskladnění nebo POS prodej (např. Mojito).
-            </div>
-          )}
-        </div>
       </div>
     </div>
   )

@@ -42,13 +42,66 @@ export function parseInventoryLine(line: string): {
   return { name: trimmed, qty: 1, unit: 'ks' }
 }
 
+/** Heuristic BOM for common POS gastro items when recipe lines are missing */
+function inferDefaultGastroBom(item: CateringItem): RecipeIngredient[] {
+  const name = String(item.name || '')
+  const n = name.toLowerCase()
+
+  // Spirits shot → 0.04 l from bottle stock
+  if (/pan[aá]k|shot|whisky|whiskey|vodka|gin|rum(?!\s*cola)|tequila|slivov/.test(n)) {
+    const spirit = /rum/.test(n)
+      ? 'Rum Cubano 0.7l'
+      : /vodka/.test(n)
+        ? 'Vodka'
+        : /gin/.test(n)
+          ? 'Gin'
+          : /whisky|whiskey/.test(n)
+            ? 'Whisky'
+            : 'Rum Cubano 0.7l'
+    return [{ name: spirit, qtyPerPortion: 0.04, unit: 'l' }]
+  }
+
+  // Draught beer pours
+  if (/pivo/.test(n)) {
+    const liters = /0[.,]3|0\.3/.test(n) ? 0.3 : /0[.,]4|0\.4/.test(n) ? 0.4 : 0.5
+    return [{ name: 'Sud piva ležák 12° 50l', qtyPerPortion: liters, unit: 'l' }]
+  }
+
+  // Steak / meat by grams
+  const grams = name.match(/(\d+)\s*g\b/i)
+  if (grams && (/steak|hověz|svíčk|mas[oa]|burger|kotlet/.test(n))) {
+    return [
+      {
+        name: /svíčk|steak|hověz/.test(n) ? 'Hovězí svíčková' : 'Hovězí svíčková',
+        qtyPerPortion: Number(grams[1]),
+        unit: 'g',
+      },
+    ]
+  }
+  if (/steak|svíčková|svickova/.test(n)) {
+    return [{ name: 'Hovězí svíčková', qtyPerPortion: 180, unit: 'g' }]
+  }
+
+  if (/mojito/.test(n)) {
+    return [
+      { name: 'Rum Cubano 0.7l', qtyPerPortion: 0.04, unit: 'l' },
+      { name: 'Limetky', qtyPerPortion: 0.03, unit: 'kg' },
+      { name: 'Máta čerstvá', qtyPerPortion: 1, unit: 'ks' },
+      { name: 'Cukr třtinový', qtyPerPortion: 0.01, unit: 'kg' },
+      { name: 'Sodovka', qtyPerPortion: 0.1, unit: 'l' },
+    ]
+  }
+
+  return []
+}
+
 export function inferIngredientsFromCatering(item: CateringItem): RecipeIngredient[] {
   if (item.ingredients?.length) return item.ingredients
 
   const lines = item.inventory ?? []
   const planned = Math.max(1, item.plannedPortions || item.portion || 1)
 
-  return lines
+  const fromLines = lines
     .map((line) => {
       const parsed = parseInventoryLine(line)
       if (!parsed) return null
@@ -59,6 +112,9 @@ export function inferIngredientsFromCatering(item: CateringItem): RecipeIngredie
       } satisfies RecipeIngredient
     })
     .filter((x): x is RecipeIngredient => x !== null)
+
+  if (fromLines.length) return fromLines
+  return inferDefaultGastroBom(item)
 }
 
 export function buildWarehouseFromCatering(

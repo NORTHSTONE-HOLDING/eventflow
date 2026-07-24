@@ -247,12 +247,18 @@ export function CctvArchivePanel() {
       {playing && <MockVideoPlayer segment={playing} onClose={() => setPlaying(null)} />}
 
       <div
+        className="cctv-archive-scroll"
         style={{
           display: 'flex',
           flexDirection: 'column',
           gap: 10,
           width: '100%',
+          border: '1px solid #334155',
+          borderRadius: 12,
+          padding: '0.65rem 0.55rem',
+          background: 'rgba(2,6,23,0.65)',
         }}
+        title="Rolovací archiv — max. výška 500px"
       >
         {timeline.length === 0 && (
           <div style={{ color: '#94a3b8', fontWeight: 600, padding: '1rem 0' }}>

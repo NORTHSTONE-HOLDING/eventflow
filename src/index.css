@@ -92,6 +92,51 @@ a:hover {
   border-radius: 4px;
 }
 
+/* CCTV archive — fixed-height gold scroll (Tailwind-equivalent utility) */
+.cctv-archive-scroll {
+  max-height: 500px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 6px;
+  scrollbar-width: thin;
+  scrollbar-color: #d4af37 #0b1220;
+}
+.cctv-archive-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+.cctv-archive-scroll::-webkit-scrollbar-track {
+  background: #0b1220;
+  border-radius: 8px;
+}
+.cctv-archive-scroll::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #f5e6a3, #d4af37 55%, #b8860b);
+  border-radius: 8px;
+  border: 1px solid rgba(212, 175, 55, 0.35);
+}
+
+/* AI procurement print — ink-saving B&W */
+@media print {
+  body * {
+    visibility: hidden !important;
+  }
+  .ai-purchase-print,
+  .ai-purchase-print * {
+    visibility: visible !important;
+  }
+  .ai-purchase-print {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    background: #fff !important;
+    color: #000 !important;
+    padding: 16px !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+}
+
 /* Animated gradient mesh background */
 .gradient-mesh {
   position: absolute;

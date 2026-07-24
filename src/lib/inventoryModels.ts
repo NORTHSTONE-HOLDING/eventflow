@@ -73,6 +73,9 @@ export function createEmptyInventoryItem(
 ): InventoryItem {
   const now = new Date().toISOString()
   const purchase = Number(partial.purchase_price) || 0
+  const sale =
+    Number(partial.sale_price) ||
+    (purchase > 0 ? Math.round(purchase * 1.8 * 100) / 100 : 0)
   return {
     id: partial.id || uid('inv'),
     user_id: partial.user_id || DEFAULT_USER_ID,
@@ -83,10 +86,23 @@ export function createEmptyInventoryItem(
     supplier: partial.supplier || '',
     purchase_price: purchase,
     average_price: Number(partial.average_price) || purchase,
+    sale_price: sale,
     vat_rate: Number(partial.vat_rate) || 12,
     unit: normalizeUnit(partial.unit),
     current_quantity: Number(partial.current_quantity) || 0,
     minimum_quantity: Number(partial.minimum_quantity) || 0,
+    pack_volume:
+      partial.pack_volume === undefined
+        ? null
+        : partial.pack_volume == null
+          ? null
+          : Number(partial.pack_volume) || null,
+    open_pack_remaining:
+      partial.open_pack_remaining === undefined
+        ? null
+        : partial.open_pack_remaining == null
+          ? null
+          : Number(partial.open_pack_remaining),
     shelf_life: partial.shelf_life ?? null,
     warehouse_section: partial.warehouse_section || 'Hlavní sklad',
     created_at: partial.created_at || now,
@@ -117,43 +133,51 @@ export function createInventoryLog(opts: {
 export function seedDefaultInventory(userId = DEFAULT_USER_ID): InventoryItem[] {
   const rows: Array<Partial<InventoryItem> & { name: string }> = [
     {
-      name: 'Prosecco Extra Dry',
+      name: 'Prosecco Extra Dry 0.7l',
       barcode: '8594001100011',
       category: 'beverage',
       subcategory: 'vino',
       supplier: 'Vinotéka Praha',
       purchase_price: 185,
+      sale_price: 420,
       vat_rate: 21,
       unit: 'ks',
+      pack_volume: 0.7,
       current_quantity: 48,
       minimum_quantity: 12,
       warehouse_section: 'Bar A',
       shelf_life: '2027-06',
     },
     {
-      name: 'Pivo ležák 12°',
+      name: 'Sud piva ležák 12° 50l',
       barcode: '8594001100028',
       category: 'beverage',
       subcategory: 'pivo',
       supplier: 'Pivovar Region',
-      purchase_price: 22,
+      purchase_price: 2200,
+      sale_price: 0,
       vat_rate: 21,
-      unit: 'l',
-      current_quantity: 80,
-      minimum_quantity: 20,
+      unit: 'ks',
+      pack_volume: 50,
+      current_quantity: 2,
+      open_pack_remaining: 50,
+      minimum_quantity: 1,
       warehouse_section: 'Bar B',
     },
     {
-      name: 'Rum Cubano',
+      name: 'Rum Cubano 0.7l',
       barcode: '8594001100097',
       category: 'beverage',
       subcategory: 'destilaty',
       supplier: 'Destiláty Import',
       purchase_price: 520,
+      sale_price: 1450,
       vat_rate: 21,
-      unit: 'l',
-      current_quantity: 4.5,
-      minimum_quantity: 1,
+      unit: 'ks',
+      pack_volume: 0.7,
+      current_quantity: 8,
+      open_pack_remaining: 0.7,
+      minimum_quantity: 2,
       warehouse_section: 'Bar VIP',
     },
     {

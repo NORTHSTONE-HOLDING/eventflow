@@ -423,10 +423,22 @@ export interface InventoryItem {
   supplier: string
   purchase_price: number
   average_price: number
+  /** Prodejní cena (POS / ceník) */
+  sale_price: number
   vat_rate: number
   unit: InventoryUnit | string
   current_quantity: number
   minimum_quantity: number
+  /**
+   * Objem / hmotnost jednoho balení při unit = „ks“
+   * (např. láhev 0.7 l, sud 50 l). Jednotka: litry pro tekutiny, kg pro pevné balení.
+   */
+  pack_volume: number | null
+  /**
+   * Zbývající obsah aktuálně otevřeného balení (stejná dimenze jako pack_volume).
+   * Null = začít nové balení při prvním odpisu.
+   */
+  open_pack_remaining: number | null
   shelf_life: string | null
   warehouse_section: string
   updated_at: string

@@ -40,7 +40,23 @@ import {
   buildRecipeRecordsFromCatering,
   resolveRecipeForCatering,
 } from '../lib/recipeEngine'
+import { applyFractionalDeduction } from '../lib/unitConversion'
+import {
+  draftsToInventoryItems,
+  type GastroImportDraft,
+} from '../lib/gastroImporter'
+import { runInventoryAiCommand } from '../lib/inventoryAiCopilot'
 import { uid } from '../lib/documentIds'
+
+function normalizeStoredItem(item: InventoryItem): InventoryItem {
+  return createEmptyInventoryItem({
+    ...item,
+    name: item.name || 'Položka',
+    sale_price: item.sale_price ?? 0,
+    pack_volume: item.pack_volume ?? null,
+    open_pack_remaining: item.open_pack_remaining ?? null,
+  })
+}
 
 interface InventoryState {
   items: InventoryItem[]
@@ -71,6 +87,18 @@ interface InventoryState {
     qty: number,
     note?: string
   ) => Promise<{ ok: boolean; depleted: string[] }>
+
+  upsertInventoryItem: (
+    patch: Partial<InventoryItem> & { name: string; id?: string },
+  ) => Promise<{ ok: boolean; item?: InventoryItem; error?: string }>
+
+  importGastroDrafts: (
+    drafts: GastroImportDraft[],
+  ) => Promise<{ ok: boolean; created: number; updated: number; error?: string }>
+
+  applyAiCopilotCommand: (
+    command: string,
+  ) => Promise<{ ok: boolean; changedCount: number; message: string }>
 
   startInventura: (warehouseName?: string) => void
   setInventuraCount: (itemId: string, actual: number | null) => void
@@ -153,7 +181,7 @@ export const useInventoryStore = create<InventoryState>()(
               if (remote.ok && remote.items.length) {
                 const logsRes = await fetchInventoryLogsRemote()
                 set({
-                  items: remote.items,
+                  items: remote.items.map(normalizeStoredItem),
                   logs: logsRes.ok ? logsRes.logs : get().logs,
                   recipes: recipesRes.ok ? recipesRes.recipes : get().recipes,
                   lastSyncedAt: new Date().toISOString(),
@@ -363,7 +391,7 @@ export const useInventoryStore = create<InventoryState>()(
 
       applyPosSaleDeduction: async (catering, qty, note) => {
         if (!catering || qty <= 0) return { ok: true, depleted: [] }
-        let items = [...get().items]
+        let items = [...get().items].map(normalizeStoredItem)
         const recipes = get().recipes ?? []
         const newLogs: InventoryLog[] = []
         const depleted: string[] = []
@@ -374,7 +402,7 @@ export const useInventoryStore = create<InventoryState>()(
           itemId: string | null | undefined,
           amount: number,
           fallbackName: string,
-          unit: string
+          unit: string,
         ) => {
           if (amount <= 0) return
           const target =
@@ -382,29 +410,35 @@ export const useInventoryStore = create<InventoryState>()(
             matchInventoryItem(items, { name: fallbackName, unit })
           if (!target) return
 
-          const deduct = Math.round(amount * 1000) / 1000
-          const nextQty = Math.max(
-            0,
-            Math.round((target.current_quantity - deduct) * 1000) / 1000
+          const result = applyFractionalDeduction(
+            target,
+            amount,
+            unit,
+            note || `POS odepis · ${catering.name} · ${fallbackName}`,
           )
-          if (nextQty <= target.minimum_quantity) depleted.push(target.name)
-          const updatedItem: InventoryItem = {
-            ...target,
-            current_quantity: nextQty,
-            updated_at: new Date().toISOString(),
-          }
-          items = items.map((i) => (i.id === target.id ? updatedItem : i))
+          if (result.depleted) depleted.push(result.item.name)
+          items = items.map((i) => (i.id === target.id ? result.item : i))
+
           const log = createInventoryLog({
             item_id: target.id,
             type: 'odpis_pos',
-            quantity_changed: -deduct,
-            note:
-              note ||
-              `POS odepis · ${catering.name} · ${fallbackName} ${deduct} ${unit}`,
+            quantity_changed: result.quantityChanged,
+            note: result.note,
             unit_price: target.average_price,
           })
           newLogs.push(log)
-          await persistItem(updatedItem)
+          if (result.packsEmptied > 0) {
+            const emptyLog = createInventoryLog({
+              item_id: target.id,
+              type: 'odpis_pos',
+              quantity_changed: -result.packsEmptied,
+              note: `Prázdné balení · ${result.packsEmptied}× ${target.name} (pack ${result.item.pack_volume ?? '—'} l)`,
+              unit_price: target.average_price,
+            })
+            newLogs.push(emptyLog)
+            await persistLog(emptyLog)
+          }
+          await persistItem(result.item)
           await persistLog(log)
         }
 
@@ -414,7 +448,7 @@ export const useInventoryStore = create<InventoryState>()(
               line.inventory_item_id,
               line.qty_per_portion * qty,
               line.ingredient_name,
-              line.unit
+              line.unit,
             )
           }
         } else {
@@ -437,6 +471,183 @@ export const useInventoryStore = create<InventoryState>()(
         }
         await get().refreshSyncStatus()
         return { ok: true, depleted }
+      },
+
+      upsertInventoryItem: async (patch) => {
+        try {
+          const items = get().items.map(normalizeStoredItem)
+          const existing = patch.id
+            ? items.find((i) => i.id === patch.id)
+            : matchInventoryItem(items, {
+                name: patch.name,
+                barcode: patch.barcode,
+                unit: patch.unit,
+              })
+
+          if (existing) {
+            const updated = normalizeStoredItem({
+              ...existing,
+              ...patch,
+              id: existing.id,
+              name: patch.name.trim(),
+              updated_at: new Date().toISOString(),
+            })
+            const next = items.map((i) => (i.id === existing.id ? updated : i))
+            const delta =
+              Math.round((updated.current_quantity - existing.current_quantity) * 1000) /
+              1000
+            set({ items: next })
+            await persistItem(updated)
+            if (delta !== 0) {
+              const log = createInventoryLog({
+                item_id: updated.id,
+                type: 'naskladneni',
+                quantity_changed: delta,
+                note: delta > 0 ? 'Ruční naskladnění / úprava' : 'Ruční korekce stavu',
+                unit_price: updated.purchase_price,
+              })
+              set({ logs: [log, ...get().logs].slice(0, 300) })
+              await persistLog(log)
+            }
+            await get().refreshSyncStatus()
+            return { ok: true, item: updated }
+          }
+
+          const neu = createEmptyInventoryItem({
+            ...patch,
+            id: patch.id || uid('inv'),
+            name: patch.name.trim(),
+          })
+          set({ items: [...items, neu] })
+          await persistItem(neu)
+          if (neu.current_quantity > 0) {
+            const log = createInventoryLog({
+              item_id: neu.id,
+              type: 'naskladneni',
+              quantity_changed: neu.current_quantity,
+              note: 'Rychlé ruční naskladnění',
+              unit_price: neu.purchase_price,
+            })
+            set({ logs: [log, ...get().logs].slice(0, 300) })
+            await persistLog(log)
+          }
+          await get().refreshSyncStatus()
+          return { ok: true, item: neu }
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : 'Uložení položky selhalo'
+          return { ok: false, error: msg }
+        }
+      },
+
+      importGastroDrafts: async (drafts) => {
+        set({ loading: true, error: null })
+        try {
+          let items = get().items.map(normalizeStoredItem)
+          let created = 0
+          let updated = 0
+          const newLogs: InventoryLog[] = []
+          const imported = draftsToInventoryItems(drafts)
+
+          for (const neu of imported) {
+            const existing = matchInventoryItem(items, {
+              name: neu.name,
+              barcode: neu.barcode,
+              unit: neu.unit,
+            })
+            if (existing) {
+              const nextQty = existing.current_quantity + neu.current_quantity
+              const avg = weightedAveragePrice(
+                existing.current_quantity,
+                existing.average_price,
+                neu.current_quantity,
+                neu.purchase_price,
+              )
+              const updatedItem = normalizeStoredItem({
+                ...existing,
+                current_quantity: Math.round(nextQty * 1000) / 1000,
+                purchase_price: neu.purchase_price || existing.purchase_price,
+                average_price: avg,
+                sale_price: neu.sale_price || existing.sale_price,
+                vat_rate: neu.vat_rate || existing.vat_rate,
+                barcode: neu.barcode || existing.barcode,
+                pack_volume: neu.pack_volume ?? existing.pack_volume,
+                supplier: neu.supplier || existing.supplier,
+                category: neu.category || existing.category,
+                updated_at: new Date().toISOString(),
+              })
+              items = items.map((i) => (i.id === existing.id ? updatedItem : i))
+              const log = createInventoryLog({
+                item_id: existing.id,
+                type: 'naskladneni',
+                quantity_changed: neu.current_quantity,
+                note: 'Import ze starého systému',
+                unit_price: neu.purchase_price,
+              })
+              newLogs.push(log)
+              await persistItem(updatedItem)
+              await persistLog(log)
+              updated += 1
+            } else {
+              items = [...items, neu]
+              const log = createInventoryLog({
+                item_id: neu.id,
+                type: 'naskladneni',
+                quantity_changed: neu.current_quantity,
+                note: 'Import ze starého systému · nová položka',
+                unit_price: neu.purchase_price,
+              })
+              newLogs.push(log)
+              await persistItem(neu)
+              await persistLog(log)
+              created += 1
+            }
+          }
+
+          set({
+            items,
+            logs: [...newLogs, ...get().logs].slice(0, 300),
+            loading: false,
+            lastSyncedAt: new Date().toISOString(),
+          })
+          await get().refreshSyncStatus()
+          return { ok: true, created, updated }
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : 'Import selhal'
+          set({ loading: false, error: msg })
+          return { ok: false, created: 0, updated: 0, error: msg }
+        }
+      },
+
+      applyAiCopilotCommand: async (command) => {
+        const items = get().items.map(normalizeStoredItem)
+        const result = await runInventoryAiCommand(items, command)
+        if (!result.ok) {
+          return {
+            ok: false,
+            changedCount: 0,
+            message: result.message,
+          }
+        }
+        set({ items: result.updated })
+        for (const item of result.updated) {
+          const prev = items.find((i) => i.id === item.id)
+          if (!prev) continue
+          if (
+            prev.name !== item.name ||
+            prev.sale_price !== item.sale_price ||
+            prev.purchase_price !== item.purchase_price ||
+            prev.minimum_quantity !== item.minimum_quantity ||
+            prev.vat_rate !== item.vat_rate
+          ) {
+            await persistItem(item)
+          }
+        }
+        await get().refreshSyncStatus()
+        return {
+          ok: true,
+          changedCount: result.changedCount,
+          message: result.message,
+        }
       },
 
       startInventura: (warehouseName = 'Hlavní sklad EventFlow') => {
@@ -590,6 +801,16 @@ export const useInventoryStore = create<InventoryState>()(
               : 'local'
           if (!state.items?.length) {
             state.items = seedDefaultInventory()
+          } else {
+            state.items = state.items.map((i) =>
+              createEmptyInventoryItem({
+                ...i,
+                name: i.name || 'Položka',
+                sale_price: i.sale_price ?? 0,
+                pack_volume: i.pack_volume ?? null,
+                open_pack_remaining: i.open_pack_remaining ?? null,
+              }),
+            )
           }
           if (!Array.isArray(state.recipes)) state.recipes = []
         }

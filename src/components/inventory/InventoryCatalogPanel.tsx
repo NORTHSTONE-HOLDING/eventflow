@@ -18,6 +18,16 @@ import {
   productNameKey,
   useProductImageStore,
 } from '../../store/useProductImageStore'
+import { useCategoryRegistryStore } from '../../store/useCategoryRegistryStore'
+import {
+  ALL_CATEGORY_ID,
+  ALL_SUBCATEGORY_ID,
+  categoryLabel,
+  inferInventorySubcategory,
+  itemMatchesInventoryFilter,
+  subcategoryLabel,
+  type InventoryCategoryDef,
+} from '../../lib/inventoryCategories'
 import { formatCurrency } from '../../lib/documentIds'
 import { formatCzechDateTime } from '../../lib/czechDate'
 import { formatStockWithPack } from '../../lib/unitConversion'
@@ -29,17 +39,13 @@ import type { InventoryItem, InventoryUnit } from '../../types'
 
 const GOLD = '#D4AF37'
 const UNITS: Array<InventoryUnit | string> = ['ks', 'kg', 'l', 'ml', 'g', 'porce']
-const CATEGORIES = [
-  { value: 'raw', label: 'Jídlo' },
-  { value: 'beverage', label: 'Pití' },
-  { value: 'package', label: 'Inventář' },
-]
 
 type EditForm = {
   id?: string
   name: string
   barcode: string
   category: string
+  subcategory: string
   unit: string
   current_quantity: string
   minimum_quantity: string
@@ -55,6 +61,7 @@ function emptyQuickForm(): EditForm {
     name: '',
     barcode: '',
     category: 'raw',
+    subcategory: 'hlavni',
     unit: 'ks',
     current_quantity: '0',
     minimum_quantity: '1',
@@ -72,6 +79,7 @@ function itemToForm(item: InventoryItem): EditForm {
     name: item.name,
     barcode: item.barcode || '',
     category: item.category || 'raw',
+    subcategory: item.subcategory || 'ostatni',
     unit: String(item.unit || 'ks'),
     current_quantity: String(item.current_quantity ?? 0),
     minimum_quantity: String(item.minimum_quantity ?? 0),
@@ -97,6 +105,9 @@ export function InventoryCatalogPanel() {
   const imageFetching = useProductImageStore((s) => s.fetching)
   const saveManualImage = useProductImageStore((s) => s.saveManualImage)
   const ensureAiImage = useProductImageStore((s) => s.ensureAiImage)
+  const customCategories = useCategoryRegistryStore((s) => s.customCategories)
+  const addCustomCategory = useCategoryRegistryStore((s) => s.addCustomCategory)
+  const getAllCategories = useCategoryRegistryStore((s) => s.getAllCategories)
 
   const [edit, setEdit] = useState<EditForm | null>(null)
   const [quick, setQuick] = useState<EditForm>(() => emptyQuickForm())
@@ -108,8 +119,28 @@ export function InventoryCatalogPanel() {
   const [importPreview, setImportPreview] = useState<GastroImportDraft[]>([])
   const [importMsg, setImportMsg] = useState('')
   const [photoBusy, setPhotoBusy] = useState(false)
+  const [filterCat, setFilterCat] = useState<string>(ALL_CATEGORY_ID)
+  const [filterSub, setFilterSub] = useState<string>(ALL_SUBCATEGORY_ID)
+  const [newCatOpen, setNewCatOpen] = useState(false)
+  const [newCatLabel, setNewCatLabel] = useState('')
+  const [newCatTarget, setNewCatTarget] = useState<'quick' | 'edit' | 'filter'>('quick')
   const fileRef = useRef<HTMLInputElement>(null)
   const cameraRef = useRef<HTMLInputElement>(null)
+
+  const categories = useMemo(
+    () => getAllCategories(),
+    [getAllCategories, customCategories],
+  )
+
+  const categoryOptions = useMemo(
+    () => categories.map((c) => ({ value: c.id, label: c.label })),
+    [categories],
+  )
+
+  const activeCategoryDef: InventoryCategoryDef | undefined = useMemo(
+    () => categories.find((c) => c.id === filterCat),
+    [categories, filterCat],
+  )
 
   const sorted = useMemo(
     () =>
@@ -117,6 +148,14 @@ export function InventoryCatalogPanel() {
         a.name.localeCompare(b.name, 'cs', { sensitivity: 'base' }),
       ),
     [items],
+  )
+
+  const filtered = useMemo(
+    () =>
+      sorted.filter((item) =>
+        itemMatchesInventoryFilter(item, filterCat, filterSub, categories),
+      ),
+    [sorted, filterCat, filterSub, categories],
   )
 
   const resolveItemImage = (item: InventoryItem): string | null => {
@@ -141,16 +180,52 @@ export function InventoryCatalogPanel() {
     })
   }, [edit?.id, items, ensureAiImage, setItemImageUrl, imageByKey])
 
+  const openNewCategory = (target: 'quick' | 'edit' | 'filter') => {
+    setNewCatTarget(target)
+    setNewCatLabel('')
+    setNewCatOpen(true)
+  }
+
+  const commitNewCategory = () => {
+    const res = addCustomCategory(newCatLabel)
+    if (!res.ok || !res.category) {
+      setToast(res.error || 'Registrace kategorie selhala')
+      return
+    }
+    setToast(`Kategorie „${res.category.label}“ přidána`)
+    setNewCatOpen(false)
+    if (newCatTarget === 'quick') {
+      setQuick((q) => ({
+        ...q,
+        category: res.category!.id,
+        subcategory: res.category!.subs[0]?.id || 'ostatni',
+      }))
+    } else if (newCatTarget === 'edit' && edit) {
+      setEdit({
+        ...edit,
+        category: res.category.id,
+        subcategory: res.category.subs[0]?.id || 'ostatni',
+      })
+    } else {
+      setFilterCat(res.category.id)
+      setFilterSub(ALL_SUBCATEGORY_ID)
+    }
+  }
+
   const saveForm = async (form: EditForm, closeAfter: boolean) => {
     if (!form.name.trim()) {
       setToast('Zadejte název položky')
       return
     }
+    const category = form.category || 'raw'
+    const subcategory =
+      form.subcategory || inferInventorySubcategory(form.name, category)
     const res = await upsertInventoryItem({
       id: form.id,
       name: form.name.trim(),
       barcode: form.barcode.trim() || null,
-      category: form.category,
+      category,
+      subcategory,
       unit: form.unit,
       current_quantity: Number(form.current_quantity) || 0,
       minimum_quantity: Number(form.minimum_quantity) || 0,
@@ -246,6 +321,14 @@ export function InventoryCatalogPanel() {
     }
   }
 
+  const subsForForm = (categoryId: string) => {
+    const def = categories.find((c) => c.id === categoryId)
+    return (def?.subs || [{ id: 'ostatni', label: 'Ostatní' }]).map((s) => ({
+      value: s.id,
+      label: s.label,
+    }))
+  }
+
   if (loading && !items.length) {
     return (
       <div className="panel" style={{ textAlign: 'center', padding: '2rem' }}>
@@ -268,9 +351,17 @@ export function InventoryCatalogPanel() {
           background: 'linear-gradient(135deg, rgba(212,175,55,0.08), #0f172a 55%)',
         }}
       >
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 10 }}>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 10, flexWrap: 'wrap' }}>
           <Sparkles size={18} color={GOLD} />
           <strong style={{ color: GOLD, fontSize: '1.05rem' }}>🤖 AI Skladový Asistent</strong>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            style={{ minHeight: 40, borderColor: GOLD, color: GOLD, marginLeft: 'auto' }}
+            onClick={() => openNewCategory('filter')}
+          >
+            <Plus size={14} /> ➕ Přidat novou kategorii
+          </button>
         </div>
         <div
           style={{
@@ -284,7 +375,7 @@ export function InventoryCatalogPanel() {
             className="input"
             value={aiCommand}
             onChange={(e) => setAiCommand(e.target.value)}
-            placeholder="Příkaz pro AI: Např. 'Zvedni cenu vína o 15%' nebo 'Přepiš názvy jídel do luxusního stylu'..."
+            placeholder="Příkaz: 'Zvedni cenu u kategorie Pití o 15%' · 'Přidej kategorii Tabákové výrobky' · 'Přepiš názvy jídel…'"
             style={{ minHeight: 52, background: '#020617', borderColor: '#334155' }}
             onKeyDown={(e) => {
               if (e.key === 'Enter') void runAi()
@@ -350,12 +441,35 @@ export function InventoryCatalogPanel() {
           }}
         >
           <Field label="Název" value={quick.name} onChange={(v) => setQuick({ ...quick, name: v })} />
+          <div style={{ display: 'grid', gap: 6 }}>
+            <Field
+              label="Kategorie"
+              as="select"
+              value={quick.category}
+              onChange={(v) =>
+                setQuick({
+                  ...quick,
+                  category: v,
+                  subcategory: subsForForm(v)[0]?.value || 'ostatni',
+                })
+              }
+              options={categoryOptions}
+            />
+            <button
+              type="button"
+              className="btn btn-ghost"
+              style={{ minHeight: 40, borderColor: `${GOLD}88`, color: GOLD, fontWeight: 800 }}
+              onClick={() => openNewCategory('quick')}
+            >
+              <Plus size={14} /> ➕ Přidat novou kategorii
+            </button>
+          </div>
           <Field
-            label="Kategorie"
+            label="Podkategorie"
             as="select"
-            value={quick.category}
-            onChange={(v) => setQuick({ ...quick, category: v })}
-            options={CATEGORIES.map((c) => ({ value: c.value, label: c.label }))}
+            value={quick.subcategory}
+            onChange={(v) => setQuick({ ...quick, subcategory: v })}
+            options={subsForForm(quick.category)}
           />
           <Field
             label="Jednotka"
@@ -401,8 +515,8 @@ export function InventoryCatalogPanel() {
           >
             <strong style={{ color: GOLD }}>Universal Gastro Migrace</strong>
             <p style={{ color: '#94a3b8', fontSize: '0.85rem', margin: '8px 0 12px' }}>
-              Nahrajte CSV/Excel ze starého systému. AI (nebo lokální parser) zařadí položky do
-              Jídlo / Pití / Inventář, doplní EAN, ceny a automaticky dohledá produktové fotky.
+              Nahrajte CSV/Excel ze starého systému. AI mapuje Jídlo / Pití / Inventář / Technika i
+              vlastní kategorie (např. Tabákové výrobky), doplní EAN, ceny a produktové fotky.
             </p>
             <div
               onDragOver={(e) => e.preventDefault()}
@@ -493,131 +607,256 @@ export function InventoryCatalogPanel() {
         )}
       </AnimatePresence>
 
-      <div className="panel" style={{ overflowX: 'auto' }}>
-        <h3 style={{ marginBottom: 10, fontSize: '1.1rem' }}>
-          Katalog skladu · receptury: {(recipes ?? []).length} · klepněte na ✏️ nebo dvojklik řádku
-        </h3>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-          <thead>
-            <tr style={{ color: 'var(--text-muted)', textAlign: 'left' }}>
-              <th style={{ padding: '0.5rem' }}>Foto</th>
-              <th style={{ padding: '0.5rem' }}>Název</th>
-              <th style={{ padding: '0.5rem' }}>EAN</th>
-              <th style={{ padding: '0.5rem' }}>Stav</th>
-              <th style={{ padding: '0.5rem' }}>Min.</th>
-              <th style={{ padding: '0.5rem' }}>Nákup</th>
-              <th style={{ padding: '0.5rem' }}>Prodej</th>
-              <th style={{ padding: '0.5rem' }}>DPH</th>
-              <th style={{ padding: '0.5rem' }} />
-            </tr>
-          </thead>
-          <tbody>
-            {sorted.map((i) => {
-              const low = i.current_quantity <= i.minimum_quantity
-              const img = resolveItemImage(i)
-              const fetching = isItemFetching(i)
-              return (
-                <tr
-                  key={i.id}
-                  style={{ borderTop: '1px solid var(--border)', cursor: 'pointer' }}
-                  onDoubleClick={() => setEdit(itemToForm(i))}
-                >
-                  <td style={{ padding: '0.55rem' }}>
-                    <div
+      <div className="panel">
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            gap: 10,
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            marginBottom: 12,
+          }}
+        >
+          <h3 style={{ margin: 0, fontSize: '1.1rem' }}>
+            Katalog skladu · receptury: {(recipes ?? []).length}
+          </h3>
+          <div style={{ color: '#94a3b8', fontSize: '0.82rem', fontWeight: 700 }}>
+            Zobrazeno {filtered.length} / {sorted.length} položek
+            {filterCat !== ALL_CATEGORY_ID
+              ? ` · ${categoryLabel(filterCat, categories)}`
+              : ' · Vše'}
+          </div>
+        </div>
+
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 8,
+            marginBottom: 10,
+            alignItems: 'center',
+          }}
+        >
+          <button
+            type="button"
+            className={`inventory-filter-tab${filterCat === ALL_CATEGORY_ID ? ' is-active' : ''}`}
+            onClick={() => {
+              setFilterCat(ALL_CATEGORY_ID)
+              setFilterSub(ALL_SUBCATEGORY_ID)
+            }}
+          >
+            Vše
+          </button>
+          {categories.map((cat) => (
+            <button
+              key={cat.id}
+              type="button"
+              className={`inventory-filter-tab${filterCat === cat.id ? ' is-active' : ''}`}
+              onClick={() => {
+                setFilterCat(cat.id)
+                setFilterSub(ALL_SUBCATEGORY_ID)
+              }}
+            >
+              {cat.label}
+              {!cat.builtin ? ' ★' : ''}
+            </button>
+          ))}
+        </div>
+
+        {filterCat !== ALL_CATEGORY_ID && activeCategoryDef && (
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 8,
+              marginBottom: 12,
+              padding: '0.65rem 0.75rem',
+              borderRadius: 12,
+              border: `1px solid ${GOLD}44`,
+              background: 'rgba(15, 23, 42, 0.85)',
+            }}
+          >
+            <span
+              style={{
+                color: GOLD,
+                fontWeight: 800,
+                fontSize: '0.78rem',
+                alignSelf: 'center',
+                marginRight: 4,
+              }}
+            >
+              Podkategorie
+            </span>
+            <button
+              type="button"
+              className={`inventory-filter-tab${filterSub === ALL_SUBCATEGORY_ID ? ' is-active' : ''}`}
+              style={{ minHeight: 40, padding: '0.4rem 0.85rem', fontSize: '0.85rem' }}
+              onClick={() => setFilterSub(ALL_SUBCATEGORY_ID)}
+            >
+              Vše
+            </button>
+            {activeCategoryDef.subs.map((sub) => (
+              <button
+                key={sub.id}
+                type="button"
+                className={`inventory-filter-tab${filterSub === sub.id ? ' is-active' : ''}`}
+                style={{ minHeight: 40, padding: '0.4rem 0.85rem', fontSize: '0.85rem' }}
+                onClick={() => setFilterSub(sub.id)}
+              >
+                {sub.label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <div className="inventory-catalog-scroll">
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+            <thead
+              style={{
+                position: 'sticky',
+                top: 0,
+                zIndex: 2,
+                background: '#0b1220',
+              }}
+            >
+              <tr style={{ color: 'var(--text-muted)', textAlign: 'left' }}>
+                <th style={{ padding: '0.65rem 0.5rem' }}>Foto</th>
+                <th style={{ padding: '0.65rem 0.5rem' }}>Název</th>
+                <th style={{ padding: '0.65rem 0.5rem' }}>EAN</th>
+                <th style={{ padding: '0.65rem 0.5rem' }}>Stav</th>
+                <th style={{ padding: '0.65rem 0.5rem' }}>Min.</th>
+                <th style={{ padding: '0.65rem 0.5rem' }}>Nákup</th>
+                <th style={{ padding: '0.65rem 0.5rem' }}>Prodej</th>
+                <th style={{ padding: '0.65rem 0.5rem' }}>DPH</th>
+                <th style={{ padding: '0.65rem 0.5rem' }} />
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((i) => {
+                const low = i.current_quantity <= i.minimum_quantity
+                const img = resolveItemImage(i)
+                const fetching = isItemFetching(i)
+                return (
+                  <tr
+                    key={i.id}
+                    style={{ borderTop: '1px solid var(--border)', cursor: 'pointer' }}
+                    onDoubleClick={() => setEdit(itemToForm(i))}
+                  >
+                    <td style={{ padding: '0.55rem' }}>
+                      <div
+                        style={{
+                          width: 48,
+                          height: 48,
+                          borderRadius: 10,
+                          overflow: 'hidden',
+                          border: `1px solid ${GOLD}55`,
+                          background: '#020617',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          position: 'relative',
+                        }}
+                      >
+                        {img ? (
+                          <img
+                            src={img}
+                            alt={i.name}
+                            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                          />
+                        ) : (
+                          <ImagePlus size={18} color={GOLD} />
+                        )}
+                        {fetching && (
+                          <div
+                            style={{
+                              position: 'absolute',
+                              inset: 0,
+                              background: 'rgba(2,6,23,0.55)',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                            }}
+                          >
+                            <Loader2 className="spin" size={14} color={GOLD} />
+                          </div>
+                        )}
+                      </div>
+                    </td>
+                    <td style={{ padding: '0.55rem' }}>
+                      <div style={{ fontWeight: 700 }}>{i.name}</div>
+                      <div style={{ fontSize: '0.72rem', color: 'var(--text-dim)' }}>
+                        {categoryLabel(i.category, categories)}
+                        {' · '}
+                        {subcategoryLabel(i.category, i.subcategory, categories)}
+                        {' · '}
+                        {i.warehouse_section}
+                        {fetching ? ' · AI vyhledává produktové foto...' : ''}
+                      </div>
+                    </td>
+                    <td style={{ padding: '0.55rem', color: '#94a3b8' }}>{i.barcode || '—'}</td>
+                    <td
                       style={{
-                        width: 48,
-                        height: 48,
-                        borderRadius: 10,
-                        overflow: 'hidden',
-                        border: `1px solid ${GOLD}55`,
-                        background: '#020617',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        position: 'relative',
+                        padding: '0.55rem',
+                        color: low ? '#fca5a5' : 'var(--success)',
+                        fontWeight: 700,
                       }}
                     >
-                      {img ? (
-                        <img
-                          src={img}
-                          alt={i.name}
-                          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                        />
-                      ) : (
-                        <ImagePlus size={18} color={GOLD} />
-                      )}
-                      {fetching && (
-                        <div
-                          style={{
-                            position: 'absolute',
-                            inset: 0,
-                            background: 'rgba(2,6,23,0.55)',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                          }}
-                        >
-                          <Loader2 className="spin" size={14} color={GOLD} />
-                        </div>
-                      )}
-                    </div>
-                  </td>
-                  <td style={{ padding: '0.55rem' }}>
-                    <div style={{ fontWeight: 700 }}>{i.name}</div>
-                    <div style={{ fontSize: '0.72rem', color: 'var(--text-dim)' }}>
-                      {CATEGORIES.find((c) => c.value === i.category)?.label || i.category} ·{' '}
-                      {i.warehouse_section}
-                      {fetching ? ' · AI vyhledává produktové foto...' : ''}
-                    </div>
-                  </td>
-                  <td style={{ padding: '0.55rem', color: '#94a3b8' }}>{i.barcode || '—'}</td>
+                      {formatStockWithPack(i)}
+                    </td>
+                    <td style={{ padding: '0.55rem' }}>
+                      {i.minimum_quantity} {i.unit}
+                    </td>
+                    <td style={{ padding: '0.55rem', color: GOLD }}>
+                      {formatCurrency(i.purchase_price)}
+                    </td>
+                    <td style={{ padding: '0.55rem', color: '#e2e8f0' }}>
+                      {formatCurrency(i.sale_price || 0)}
+                    </td>
+                    <td style={{ padding: '0.55rem' }}>{i.vat_rate}%</td>
+                    <td style={{ padding: '0.55rem' }}>
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        style={{ minHeight: 40, minWidth: 40, padding: 8, borderColor: GOLD }}
+                        title="Upravit položku"
+                        onClick={() => setEdit(itemToForm(i))}
+                      >
+                        <Pencil size={14} color={GOLD} />
+                      </button>
+                    </td>
+                  </tr>
+                )
+              })}
+              {!filtered.length && (
+                <tr>
                   <td
+                    colSpan={9}
                     style={{
-                      padding: '0.55rem',
-                      color: low ? '#fca5a5' : 'var(--success)',
-                      fontWeight: 700,
+                      padding: '2rem 1rem',
+                      textAlign: 'center',
+                      color: '#94a3b8',
+                      fontWeight: 600,
                     }}
                   >
-                    {formatStockWithPack(i)}
-                  </td>
-                  <td style={{ padding: '0.55rem' }}>
-                    {i.minimum_quantity} {i.unit}
-                  </td>
-                  <td style={{ padding: '0.55rem', color: GOLD }}>
-                    {formatCurrency(i.purchase_price)}
-                  </td>
-                  <td style={{ padding: '0.55rem', color: '#e2e8f0' }}>
-                    {formatCurrency(i.sale_price || 0)}
-                  </td>
-                  <td style={{ padding: '0.55rem' }}>{i.vat_rate}%</td>
-                  <td style={{ padding: '0.55rem' }}>
-                    <button
-                      type="button"
-                      className="btn btn-ghost"
-                      style={{ minHeight: 40, minWidth: 40, padding: 8, borderColor: GOLD }}
-                      title="Upravit položku"
-                      onClick={() => setEdit(itemToForm(i))}
-                    >
-                      <Pencil size={14} color={GOLD} />
-                    </button>
+                    V tomto filtru nejsou žádné položky. Zvolte „Vše“ nebo přidejte zboží do
+                    kategorie.
                   </td>
                 </tr>
-              )
-            })}
-          </tbody>
-        </table>
+              )}
+            </tbody>
+          </table>
+        </div>
+        <div style={{ marginTop: 8, color: '#64748b', fontSize: '0.75rem' }}>
+          Kompaktní rolovací tabulka (max. 600 px) · klepněte na ✏️ nebo dvojklik řádku
+        </div>
       </div>
 
       <div className="panel">
         <h3 style={{ marginBottom: 10, fontSize: '1.1rem' }}>Poslední pohyby (inventory_logs)</h3>
         <div
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 8,
-            maxHeight: 280,
-            overflowY: 'auto',
-          }}
+          className="inventory-catalog-scroll"
+          style={{ maxHeight: 280 }}
         >
           {(logs ?? []).slice(0, 40).map((log) => {
             const item = items.find((i) => i.id === log.item_id)
@@ -628,7 +867,7 @@ export function InventoryCatalogPanel() {
                   display: 'flex',
                   justifyContent: 'space-between',
                   gap: 8,
-                  padding: '0.45rem 0',
+                  padding: '0.45rem 0.55rem',
                   borderBottom: '1px solid var(--border)',
                   fontSize: '0.82rem',
                 }}
@@ -655,7 +894,7 @@ export function InventoryCatalogPanel() {
             )
           })}
           {!logs.length && (
-            <div style={{ color: 'var(--text-dim)' }}>
+            <div style={{ color: 'var(--text-dim)', padding: '0.75rem' }}>
               Zatím bez pohybů — proveďte naskladnění nebo POS prodej (např. Mojito / Panák).
             </div>
           )}
@@ -839,12 +1078,35 @@ export function InventoryCatalogPanel() {
                   value={edit.barcode}
                   onChange={(v) => setEdit({ ...edit, barcode: v })}
                 />
+                <div style={{ display: 'grid', gap: 6 }}>
+                  <Field
+                    label="Kategorie"
+                    as="select"
+                    value={edit.category}
+                    onChange={(v) =>
+                      setEdit({
+                        ...edit,
+                        category: v,
+                        subcategory: subsForForm(v)[0]?.value || 'ostatni',
+                      })
+                    }
+                    options={categoryOptions}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    style={{ minHeight: 40, borderColor: `${GOLD}88`, color: GOLD, fontWeight: 800 }}
+                    onClick={() => openNewCategory('edit')}
+                  >
+                    <Plus size={14} /> ➕ Přidat novou kategorii
+                  </button>
+                </div>
                 <Field
-                  label="Kategorie"
+                  label="Podkategorie"
                   as="select"
-                  value={edit.category}
-                  onChange={(v) => setEdit({ ...edit, category: v })}
-                  options={CATEGORIES.map((c) => ({ value: c.value, label: c.label }))}
+                  value={edit.subcategory}
+                  onChange={(v) => setEdit({ ...edit, subcategory: v })}
+                  options={subsForForm(edit.category)}
                 />
                 <Field
                   label="Jednotka"
@@ -897,6 +1159,80 @@ export function InventoryCatalogPanel() {
               >
                 <Save size={16} /> Uložit změny
               </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {newCatOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            style={{
+              position: 'fixed',
+              inset: 0,
+              zIndex: 8100,
+              background: 'rgba(2,6,23,0.8)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: 16,
+            }}
+            onClick={() => setNewCatOpen(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.96, y: 8 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.98, opacity: 0 }}
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                width: 'min(96vw, 420px)',
+                background: '#0f172a',
+                border: `2px solid ${GOLD}`,
+                borderRadius: 16,
+                padding: '1.2rem 1.25rem',
+                boxShadow: '0 0 28px rgba(212,175,55,0.2)',
+              }}
+            >
+              <strong style={{ color: GOLD, fontSize: '1.05rem' }}>
+                ➕ Přidat novou kategorii
+              </strong>
+              <p style={{ color: '#94a3b8', fontSize: '0.82rem', margin: '8px 0 12px' }}>
+                Zadejte vlastní kategorii (např. Tabákové výrobky, VIP Merch). Bude dostupná ve
+                filtrech skladu, ručním zápisu i AI importu.
+              </p>
+              <input
+                className="input"
+                autoFocus
+                value={newCatLabel}
+                onChange={(e) => setNewCatLabel(e.target.value)}
+                placeholder="Název nové kategorie…"
+                style={{ minHeight: 48, background: '#020617', borderColor: GOLD }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') commitNewCategory()
+                }}
+              />
+              <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  style={{ minHeight: 48, flex: 1 }}
+                  onClick={() => setNewCatOpen(false)}
+                >
+                  Zrušit
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-gold"
+                  style={{ minHeight: 48, flex: 1, fontWeight: 900 }}
+                  disabled={!newCatLabel.trim()}
+                  onClick={commitNewCategory}
+                >
+                  <Save size={15} /> Registrovat
+                </button>
+              </div>
             </motion.div>
           </motion.div>
         )}

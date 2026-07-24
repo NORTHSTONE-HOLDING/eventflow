@@ -5,6 +5,11 @@
 
 import type { InventoryItem } from '../types'
 import { normalizeName } from './inventoryModels'
+import {
+  getRegistryCategories,
+  matchItemToCategoryToken,
+  useCategoryRegistryStore,
+} from '../store/useCategoryRegistryStore'
 
 export type AiCopilotResult = {
   ok: boolean
@@ -12,6 +17,8 @@ export type AiCopilotResult = {
   changedCount: number
   message: string
   source: 'openai' | 'simulated'
+  /** Optional side-effect: newly registered custom category label */
+  registeredCategory?: string
 }
 
 function round2(n: number): number {
@@ -19,19 +26,7 @@ function round2(n: number): number {
 }
 
 function matchCategoryFilter(item: InventoryItem, token: string): boolean {
-  const t = normalizeName(token)
-  const blob = normalizeName(`${item.category} ${item.subcategory} ${item.name} ${item.warehouse_section}`)
-  if (t.includes('piti') || t.includes('napoj') || t.includes('bar') || t.includes('drink')) {
-    return item.category === 'beverage' || /pivo|vino|rum|vodka|cola|prosecco|gin|whisky/.test(blob)
-  }
-  if (t.includes('jidlo') || t.includes('food') || t.includes('kuchy')) {
-    return item.category === 'raw' || item.category === 'food'
-  }
-  if (t.includes('inventar')) return item.category === 'package'
-  if (t.includes('vino')) return /vino|víno|prosecco|sekt/.test(blob)
-  if (t.includes('koktejl') || t.includes('cocktail')) return /rum|gin|vodka|whisky|limet|mata|mint|prosecco/.test(blob)
-  if (t.length >= 3) return blob.includes(t)
-  return true
+  return matchItemToCategoryToken(item, token)
 }
 
 function luxuryRename(name: string): string {
@@ -75,6 +70,32 @@ export function applyInventoryCommandLocal(
   const lower = cmd.toLowerCase()
   let next = items.map((i) => ({ ...i }))
   let changed = 0
+
+  // Register custom category: „Přidej kategorii Tabákové výrobky“
+  const catCreate = cmd.match(
+    /(?:pridej|přidej|vytvor|vytvoř|nova|nová|registruj)\s+(?:novou\s+)?kategorii\s+(.+)$/i,
+  )
+  if (catCreate) {
+    const label = catCreate[1].trim().replace(/^["„]|["“]$/g, '')
+    const res = useCategoryRegistryStore.getState().addCustomCategory(label)
+    if (!res.ok || !res.category) {
+      return {
+        ok: false,
+        updated: items,
+        changedCount: 0,
+        message: res.error || 'Registrace kategorie selhala',
+        source: 'simulated',
+      }
+    }
+    return {
+      ok: true,
+      updated: items,
+      changedCount: 0,
+      message: `✨ Kategorie „${res.category.label}“ je připravena pro ruční i AI zápis.`,
+      source: 'simulated',
+      registeredCategory: res.category.label,
+    }
+  }
 
   // Financial: raise/lower sale or purchase price
   const priceMatch = lower.match(
@@ -241,11 +262,13 @@ async function openaiInventoryCommand(
           {
             role: 'system',
             content:
-              'Jsi AI skladový asistent EventFlow. Uprav položky dle českého příkazu. Vrať JSON { "updates": [ { "id", "name?", "sale_price?", "purchase_price?", "minimum_quantity?", "vat_rate?" } ], "summary": "..." }. Měň jen relevantní řádky.',
+              'Jsi AI skladový asistent EventFlow. Uprav položky dle českého příkazu. Vrať JSON { "updates": [ { "id", "name?", "sale_price?", "purchase_price?", "minimum_quantity?", "vat_rate?", "category?" } ], "summary": "...", "new_category"?: "název" }. Měň jen relevantní řádky. Kategorie mohou být Jídlo/Pití/Inventář/Technika nebo vlastní (např. Tabákové výrobky).',
           },
           {
             role: 'user',
-            content: `Příkaz: ${command}\n\nPoložky:\n${JSON.stringify(slim)}`,
+            content: `Příkaz: ${command}\nDostupné kategorie: ${getRegistryCategories()
+              .map((c) => c.label)
+              .join(', ')}\n\nPoložky:\n${JSON.stringify(slim)}`,
           },
         ],
       }),
@@ -259,17 +282,30 @@ async function openaiInventoryCommand(
     const parsed = JSON.parse(content) as {
       updates?: Array<Partial<InventoryItem> & { id: string }>
       summary?: string
+      new_category?: string
     }
-    if (!Array.isArray(parsed.updates)) return null
-    const map = new Map(parsed.updates.map((u) => [u.id, u]))
+    if (!Array.isArray(parsed.updates) && !parsed.new_category) return null
+    let registeredCategory: string | undefined
+    if (parsed.new_category?.trim()) {
+      const reg = useCategoryRegistryStore
+        .getState()
+        .addCustomCategory(parsed.new_category.trim())
+      if (reg.ok && reg.category) registeredCategory = reg.category.label
+    }
+    const map = new Map((parsed.updates || []).map((u) => [u.id, u]))
     let changedCount = 0
     const updated = items.map((item) => {
       const patch = map.get(item.id)
       if (!patch) return item
       changedCount += 1
+      const category =
+        patch.category != null
+          ? useCategoryRegistryStore.getState().resolveCategoryId(String(patch.category))
+          : item.category
       return {
         ...item,
         name: patch.name ?? item.name,
+        category,
         sale_price:
           patch.sale_price != null ? Number(patch.sale_price) : item.sale_price,
         purchase_price:
@@ -292,6 +328,7 @@ async function openaiInventoryCommand(
         parsed.summary ||
         `✨ AI úspěšně upravila ${changedCount} položek na základě vašeho příkazu.`,
       source: 'openai',
+      registeredCategory,
     }
   } catch {
     return null

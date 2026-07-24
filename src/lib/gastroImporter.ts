@@ -7,8 +7,17 @@ import type { InventoryItem, InventoryUnit } from '../types'
 import { createEmptyInventoryItem, normalizeName, normalizeUnit } from './inventoryModels'
 import { inferPackVolumeLiters } from './unitConversion'
 import { uid } from './documentIds'
+import {
+  findCategoryDef,
+  inferInventorySubcategory,
+} from './inventoryCategories'
+import {
+  getRegistryCategories,
+  registerCategoryFromImportLabel,
+} from '../store/useCategoryRegistryStore'
 
-export type GastroImportCategory = 'Jídlo' | 'Pití' | 'Inventář'
+/** Czech display label or custom category name from importer / AI. */
+export type GastroImportCategory = string
 
 export interface GastroImportDraft {
   name: string
@@ -31,35 +40,51 @@ export interface GastroImportResult {
   message: string
 }
 
-const CATEGORY_MAP: Record<string, GastroImportCategory> = {
+const BUILTIN_LABEL_MAP: Record<string, string> = {
   jidlo: 'Jídlo',
-  jídlo: 'Jídlo',
   food: 'Jídlo',
   raw: 'Jídlo',
   kitchen: 'Jídlo',
   piti: 'Pití',
-  pití: 'Pití',
   drink: 'Pití',
   beverage: 'Pití',
   bar: 'Pití',
   napoj: 'Pití',
   inventar: 'Inventář',
-  inventář: 'Inventář',
   package: 'Inventář',
   equipment: 'Inventář',
   other: 'Inventář',
+  technika: 'Technika',
+  tech: 'Technika',
+  av: 'Technika',
 }
 
 function toAppCategory(label: GastroImportCategory): string {
-  if (label === 'Jídlo') return 'raw'
-  if (label === 'Pití') return 'beverage'
-  return 'package'
+  const categories = getRegistryCategories()
+  const found = findCategoryDef(categories, label)
+  if (found) return found.id
+  // Register unknown custom labels so POS/Sklad filters stay in sync
+  return registerCategoryFromImportLabel(label)
 }
 
 function classifyCategory(name: string, rawCat: string): GastroImportCategory {
   const blob = `${name} ${rawCat}`.toLowerCase()
   const key = normalizeName(rawCat)
-  if (CATEGORY_MAP[key]) return CATEGORY_MAP[key]
+  const categories = getRegistryCategories()
+
+  if (key) {
+    if (BUILTIN_LABEL_MAP[key]) return BUILTIN_LABEL_MAP[key]
+    const found = findCategoryDef(categories, rawCat)
+    if (found) return found.label
+    // Preserve non-empty custom category strings from the sheet
+    if (rawCat.trim().length >= 2 && !/^\d+$/.test(rawCat.trim())) {
+      return rawCat.trim()
+    }
+  }
+
+  if (/mikrofon|repro|projektor|ozvuc|osvetl|technika|kabel|av\b/.test(blob)) {
+    return 'Technika'
+  }
   if (/pivo|vino|víno|rum|vodka|gin|whisky|cola|limonad|kava|káva|prosecco|destil|sirup|nealko/.test(blob)) {
     return 'Pití'
   }
@@ -185,7 +210,9 @@ function simulateParseRows(rows: string[][]): GastroImportDraft[] {
       const sale =
         parseNumber(map.sale != null ? cells[map.sale] : undefined) ||
         (purchase > 0 ? Math.round(purchase * 1.8) : 0)
-      const vat = parseNumber(map.vat != null ? cells[map.vat] : undefined) || (category === 'Pití' ? 21 : 12)
+      const vat =
+        parseNumber(map.vat != null ? cells[map.vat] : undefined) ||
+        (normalizeName(category) === 'piti' || normalizeName(category) === 'technika' ? 21 : 12)
       const barcodeRaw = map.barcode != null ? (cells[map.barcode] || '').trim() : ''
       const barcode = barcodeRaw || genBarcode(name, index)
       const supplier = (map.supplier != null ? cells[map.supplier] : '') || 'Import migrace'
@@ -228,11 +255,13 @@ async function openaiParseSheet(text: string): Promise<GastroImportDraft[] | nul
           {
             role: 'system',
             content:
-              'Jsi gastro migrátor EventFlow. Z tabulky dodavatele/konkurence vytěž čisté položky skladu. Vrať JSON { "items": [ { "name", "category": "Jídlo"|"Pití"|"Inventář", "unit": "ks"|"kg"|"l"|"ml"|"g", "quantity", "minimum", "purchase_price", "sale_price", "vat_rate", "barcode", "supplier", "pack_volume" } ] }. pack_volume je litry u lahví/sudů (0.7, 50) nebo null. Doplň chybějící EAN.',
+              'Jsi gastro migrátor EventFlow. Z tabulky dodavatele/konkurence vytěž čisté položky skladu. Vrať JSON { "items": [ { "name", "category": "Jídlo"|"Pití"|"Inventář"|"Technika"|vlastní_název_kategorie, "unit": "ks"|"kg"|"l"|"ml"|"g", "quantity", "minimum", "purchase_price", "sale_price", "vat_rate", "barcode", "supplier", "pack_volume" } ] }. pack_volume je litry u lahví/sudů (0.7, 50) nebo null. Preferuj systémové kategorie; vlastní kategorie (např. Tabákové výrobky, VIP Merch) zachovej přesně. Doplň chybějící EAN.',
           },
           {
             role: 'user',
-            content: `Migruj tento sheet do EventFlow skladu:\n\n${text.slice(0, 12000)}`,
+            content: `Migruj tento sheet do EventFlow skladu. Dostupné kategorie: ${getRegistryCategories()
+              .map((c) => c.label)
+              .join(', ')}.\n\n${text.slice(0, 12000)}`,
           },
         ],
       }),
@@ -245,24 +274,28 @@ async function openaiParseSheet(text: string): Promise<GastroImportDraft[] | nul
     if (!content) return null
     const parsed = JSON.parse(content) as { items?: GastroImportDraft[] }
     if (!Array.isArray(parsed.items)) return null
-    return parsed.items.map((it, index) => ({
-      name: String(it.name || '').trim(),
-      category: (['Jídlo', 'Pití', 'Inventář'] as const).includes(it.category as GastroImportCategory)
-        ? (it.category as GastroImportCategory)
-        : classifyCategory(String(it.name), String(it.category || '')),
-      unit: detectUnit(String(it.name), String(it.unit || 'ks')),
-      quantity: Number(it.quantity) || 0,
-      minimum: Number(it.minimum) || 1,
-      purchase_price: Number(it.purchase_price) || 0,
-      sale_price: Number(it.sale_price) || 0,
-      vat_rate: Number(it.vat_rate) || 12,
-      barcode: String(it.barcode || '').trim() || genBarcode(String(it.name), index),
-      supplier: String(it.supplier || 'Import migrace'),
-      pack_volume:
-        it.pack_volume != null
-          ? Number(it.pack_volume)
-          : inferPackVolumeLiters(String(it.name), String(it.unit || 'ks')),
-    }))
+    return parsed.items.map((it, index) => {
+      const rawCategory = String(it.category || '').trim()
+      const category = rawCategory
+        ? classifyCategory(String(it.name), rawCategory)
+        : classifyCategory(String(it.name), '')
+      return {
+        name: String(it.name || '').trim(),
+        category,
+        unit: detectUnit(String(it.name), String(it.unit || 'ks')),
+        quantity: Number(it.quantity) || 0,
+        minimum: Number(it.minimum) || 1,
+        purchase_price: Number(it.purchase_price) || 0,
+        sale_price: Number(it.sale_price) || 0,
+        vat_rate: Number(it.vat_rate) || 12,
+        barcode: String(it.barcode || '').trim() || genBarcode(String(it.name), index),
+        supplier: String(it.supplier || 'Import migrace'),
+        pack_volume:
+          it.pack_volume != null
+            ? Number(it.pack_volume)
+            : inferPackVolumeLiters(String(it.name), String(it.unit || 'ks')),
+      }
+    })
   } catch {
     return null
   }
@@ -313,13 +346,25 @@ export async function importGastroSpreadsheet(file: File): Promise<GastroImportR
 }
 
 export function draftsToInventoryItems(drafts: GastroImportDraft[]): InventoryItem[] {
-  return drafts.map((d) =>
-    createEmptyInventoryItem({
+  return drafts.map((d) => {
+    const categoryId = toAppCategory(d.category)
+    const subcategory = inferInventorySubcategory(d.name, categoryId)
+    const warehouse =
+      categoryId === 'beverage'
+        ? 'Bar import'
+        : categoryId === 'raw'
+          ? 'Kuchyň import'
+          : categoryId === 'tech'
+            ? 'Technika import'
+            : categoryId === 'package'
+              ? 'Inventář import'
+              : `${d.category} import`
+    return createEmptyInventoryItem({
       id: uid('inv'),
       name: d.name,
       barcode: d.barcode,
-      category: toAppCategory(d.category),
-      subcategory: d.category === 'Pití' ? 'import_piti' : d.category === 'Jídlo' ? 'import_jidlo' : 'import_inventar',
+      category: categoryId,
+      subcategory,
       supplier: d.supplier,
       purchase_price: d.purchase_price,
       average_price: d.purchase_price,
@@ -329,7 +374,8 @@ export function draftsToInventoryItems(drafts: GastroImportDraft[]): InventoryIt
       current_quantity: d.quantity,
       minimum_quantity: d.minimum,
       pack_volume: d.pack_volume,
-      warehouse_section: d.category === 'Pití' ? 'Bar import' : d.category === 'Jídlo' ? 'Kuchyň import' : 'Inventář import',
-    }),
-  )
+      warehouse_section: warehouse,
+    })
+  })
 }
+

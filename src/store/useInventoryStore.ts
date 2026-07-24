@@ -732,7 +732,9 @@ export const useInventoryStore = create<InventoryState>()(
             prev.sale_price !== item.sale_price ||
             prev.purchase_price !== item.purchase_price ||
             prev.minimum_quantity !== item.minimum_quantity ||
-            prev.vat_rate !== item.vat_rate
+            prev.vat_rate !== item.vat_rate ||
+            prev.category !== item.category ||
+            prev.subcategory !== item.subcategory
           ) {
             await persistItem(item)
           }

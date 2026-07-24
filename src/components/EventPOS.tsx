@@ -67,6 +67,17 @@ import type {
 import { PosTableMap } from './pos/PosTableMap'
 import { AdvancedCheckout, type CheckoutResult } from './pos/AdvancedCheckout'
 import { CustomItemModal } from './pos/CustomItemModal'
+import { VoiceOrderButton } from './pos/VoiceOrderButton'
+import {
+  buildVenueMasterCatalog,
+  mergeCatalogs,
+} from '../lib/venueCatalog'
+import {
+  resolveTableIdFromHint,
+} from '../lib/voicePosEngine'
+import type { PosOperationMode } from '../types'
+import { openWhatsApp } from '../lib/whatsapp'
+import { buildWalkoutWhatsAppMessage } from '../lib/cctvEngine'
 
 export type EventPosMode = 'admin' | 'staff'
 
@@ -107,6 +118,11 @@ export function EventPOS({ mode = 'admin' }: EventPOSProps) {
   const readyAlerts = usePosSessionStore((s) => s.readyAlerts)
   const pushReadyAlert = usePosSessionStore((s) => s.pushReadyAlert)
   const dismissReadyAlert = usePosSessionStore((s) => s.dismissReadyAlert)
+  const securityAlerts = usePosSessionStore((s) => s.securityAlerts)
+  const pushSecurityAlert = usePosSessionStore((s) => s.pushSecurityAlert)
+  const dismissSecurityAlert = usePosSessionStore((s) => s.dismissSecurityAlert)
+  const operationMode = usePosSessionStore((s) => s.operationMode)
+  const setOperationMode = usePosSessionStore((s) => s.setOperationMode)
 
   const unlockedTier = hasFeature(subscription || 'LITE', 'BUSINESS')
 
@@ -126,6 +142,10 @@ export function EventPOS({ mode = 'admin' }: EventPOSProps) {
   const [showPrinters, setShowPrinters] = useState(false)
   const [pairingRole, setPairingRole] = useState<PrinterRole | null>(null)
   const [flashReady, setFlashReady] = useState<string | null>(null)
+  const [flashSecurity, setFlashSecurity] = useState<string | null>(null)
+  const [voiceStatus, setVoiceStatus] = useState<string | null>(null)
+
+  const venueCatalog = useMemo(() => buildVenueMasterCatalog(), [])
 
   const project = useMemo(() => migrateProject(activeRaw), [activeRaw])
   const posOpen = isPosUnlocked(project)
@@ -161,6 +181,23 @@ export function EventPOS({ mode = 'admin' }: EventPOSProps) {
     [readyAlerts, activeWaiterId],
   )
 
+  const mySecurityAlerts = useMemo(
+    () => (securityAlerts ?? []).filter((a) => !a.seen),
+    [securityAlerts],
+  )
+
+  const catalogSource = useMemo(() => {
+    const eventMenu = project?.catering ?? []
+    if (operationMode === 'regular') return venueCatalog
+    if (operationMode === 'event') return eventMenu
+    return mergeCatalogs(venueCatalog, eventMenu)
+  }, [operationMode, project?.catering, venueCatalog])
+
+  const menuItems = useMemo(
+    () => filterPosMenu(catalogSource, mainCat, subCat),
+    [catalogSource, mainCat, subCat],
+  )
+
   useEffect(() => {
     if (project?.id) ensureProjectPosReady(project.id)
   }, [project?.id, ensureProjectPosReady])
@@ -189,11 +226,36 @@ export function EventPOS({ mode = 'admin' }: EventPOSProps) {
     setWorkspaceTableId,
   ])
 
-  // Live KDS → waiter notifications
+  // Live KDS → waiter notifications + CCTV security alerts
   useEffect(() => {
     const ch = getPosChannel()
     if (!ch) return
+
+    const handleSecurity = (payload: {
+      message: string
+      tableLabel: string
+    }) => {
+      pushSecurityAlert({
+        message: payload.message,
+        tableLabel: payload.tableLabel,
+      })
+      setFlashSecurity(payload.message)
+      setToast(payload.message)
+      window.setTimeout(() => setFlashSecurity(null), 12000)
+      try {
+        if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+          new Notification('EventFlow Security', { body: payload.message })
+        }
+      } catch {
+        // ignore
+      }
+    }
+
     const onMsg = (ev: MessageEvent<PosBroadcastMessage>) => {
+      if (ev.data?.type === 'security_alert' && ev.data.payload) {
+        handleSecurity(ev.data.payload)
+        return
+      }
       if (ev.data?.type !== 'waiter_ready' || !ev.data.payload) return
       const payload = ev.data.payload
       if (payload.waiterId && payload.waiterId !== activeWaiterId) return
@@ -218,6 +280,18 @@ export function EventPOS({ mode = 'admin' }: EventPOSProps) {
     }
     ch.addEventListener('message', onMsg)
     const onStorage = (e: StorageEvent) => {
+      if (e.key === 'eventflow-security-alert' && e.newValue) {
+        try {
+          const payload = JSON.parse(e.newValue) as {
+            message: string
+            tableLabel: string
+          }
+          handleSecurity(payload)
+        } catch {
+          // ignore
+        }
+        return
+      }
       if (e.key !== 'eventflow-waiter-ready' || !e.newValue) return
       try {
         const payload = JSON.parse(e.newValue) as {
@@ -248,7 +322,7 @@ export function EventPOS({ mode = 'admin' }: EventPOSProps) {
       ch.removeEventListener('message', onMsg)
       window.removeEventListener('storage', onStorage)
     }
-  }, [activeWaiterId, pushReadyAlert, setToast])
+  }, [activeWaiterId, pushReadyAlert, pushSecurityAlert, setToast])
 
   useEffect(() => {
     setSubCat('all')
@@ -281,11 +355,6 @@ export function EventPOS({ mode = 'admin' }: EventPOSProps) {
   const metrics = useMemo(
     () => (project ? computePosLiveMetrics(project) : null),
     [project],
-  )
-
-  const menuItems = useMemo(
-    () => filterPosMenu(project?.catering, mainCat, subCat),
-    [project, mainCat, subCat],
   )
 
   const lowStock = useMemo(
@@ -378,6 +447,54 @@ export function EventPOS({ mode = 'admin' }: EventPOSProps) {
       }
     )
     setToast(`Volná položka na ${tableLabel}: ${line.name}`)
+  }
+
+  const handleVoiceOrders = (
+    matched: Array<{ item: CateringItem; qty: number; tableHint: string | null }>,
+    transcript: string
+  ) => {
+    if (!project || !posOpen || posLocked) {
+      setToast('POS je zamčená — dokončete podpis a zálohu')
+      return
+    }
+    let added = 0
+    for (const row of matched) {
+      const targetTable =
+        resolveTableIdFromHint(tables, row.tableHint, activeTableId) || activeTableId
+      if (!targetTable) continue
+      const planned = Math.max(1, row.item.plannedPortions || row.item.portion || 1)
+      const costPer = (Number(row.item.foodCost) || 0) / planned
+      for (let i = 0; i < row.qty; i++) {
+        addLineToActiveTable(
+          project.id,
+          {
+            cateringId: row.item.id,
+            name: row.item.name,
+            category: row.item.category,
+            subcategory: row.item.subcategory || 'ostatni',
+            unitPrice: Number(row.item.sellPrice) || 0,
+            qty: 1,
+            vatRate: Number(row.item.vatRate) || 12,
+            foodCostPerUnit: costPer,
+            lineId: uid('line'),
+            waiterId: activeWaiter.id,
+            waiterName: activeWaiter.name,
+            sentToKds: false,
+          },
+          {
+            tableId: targetTable,
+            waiterId: activeWaiter.id,
+            waiterName: activeWaiter.name,
+          }
+        )
+        added += 1
+      }
+      setWorkspaceTableId(targetTable)
+      setActiveTable(project.id, targetTable)
+    }
+    setVoiceStatus(`Hlas: „${transcript}" → +${added} položek`)
+    setToast(`Hlasová objednávka: +${added} položek`)
+    window.setTimeout(() => setVoiceStatus(null), 6000)
   }
 
   const handleSendToKds = () => {
@@ -571,6 +688,33 @@ export function EventPOS({ mode = 'admin' }: EventPOSProps) {
         </div>
       )}
 
+      {flashSecurity && (
+        <div
+          className="pos-security-flash"
+          style={{
+            position: 'fixed',
+            top: flashReady ? 88 : 12,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 3100,
+            maxWidth: 'min(96vw, 720px)',
+            width: '100%',
+            padding: '1.1rem 1.25rem',
+            borderRadius: 14,
+            background: '#ef4444',
+            color: '#fff',
+            fontWeight: 900,
+            fontSize: '1.15rem',
+            boxShadow: '0 12px 40px rgba(239,68,68,0.55)',
+            textAlign: 'center',
+            border: '2px solid #fff',
+            animation: 'posSecurityPulse 0.8s ease infinite',
+          }}
+        >
+          {flashSecurity}
+        </div>
+      )}
+
       {!staffMode && (
         <div
           style={{
@@ -725,6 +869,131 @@ export function EventPOS({ mode = 'admin' }: EventPOSProps) {
         )}
       </div>
 
+      {mySecurityAlerts.length > 0 && (
+        <div
+          className="panel"
+          style={{
+            marginBottom: 14,
+            borderColor: '#ef4444',
+            background: 'rgba(239,68,68,0.14)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 8,
+          }}
+        >
+          <div style={{ fontWeight: 900, color: '#fecaca', fontSize: '0.95rem' }}>
+            🚨 CCTV poplach ({mySecurityAlerts.length})
+          </div>
+          {mySecurityAlerts.slice(0, 4).map((a) => (
+            <div
+              key={a.id}
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                gap: 10,
+                flexWrap: 'wrap',
+              }}
+            >
+              <div style={{ color: '#fff', fontWeight: 800, fontSize: '0.95rem' }}>{a.message}</div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  style={{
+                    minHeight: 44,
+                    padding: '0.55rem 0.9rem',
+                    borderRadius: 10,
+                    border: 'none',
+                    background: '#10b981',
+                    color: '#042f1a',
+                    fontWeight: 900,
+                    cursor: 'pointer',
+                    touchAction: 'manipulation',
+                  }}
+                  onClick={() => {
+                    if (!profile.phone) {
+                      setToast('Doplňte telefon agentury v Profilu')
+                      return
+                    }
+                    openWhatsApp(
+                      profile.phone,
+                      buildWalkoutWhatsAppMessage({
+                        tableLabel: a.tableLabel,
+                        cameraLabel: 'AI Kamerový dohled',
+                        companyName: profile.companyName || 'EventFlow',
+                        locationHint: project?.location,
+                      })
+                    )
+                  }}
+                >
+                  WhatsApp poplach
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  style={{ minHeight: 44 }}
+                  onClick={() => dismissSecurityAlert(a.id)}
+                >
+                  Potvrdit zásah
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div
+        className="panel"
+        style={{
+          marginBottom: 14,
+          background: '#0f172a',
+          borderColor: '#334155',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 10,
+        }}
+      >
+        <label className="label" style={{ color: '#D4AF37', fontWeight: 800 }}>
+          Režim provozu POS
+        </label>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {(
+            [
+              ['regular', 'Běžný provoz (Restaurace / Bar)'],
+              ['event', 'Uzavřená akce (Event)'],
+              ['hybrid', 'Hybridní režim'],
+            ] as Array<[PosOperationMode, string]>
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setOperationMode(id)}
+              style={{
+                minHeight: 48,
+                padding: '0.7rem 1rem',
+                borderRadius: 12,
+                border: `2px solid ${operationMode === id ? '#D4AF37' : '#334155'}`,
+                background: operationMode === id ? 'rgba(212,175,55,0.18)' : '#1e293b',
+                color: operationMode === id ? '#D4AF37' : '#e2e8f0',
+                fontWeight: 800,
+                touchAction: 'manipulation',
+                cursor: 'pointer',
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <div style={{ fontSize: '0.78rem', color: '#94a3b8', fontWeight: 600 }}>
+          {operationMode === 'regular' &&
+            'Master katalog podniku (piva, destiláty, stálé menu) · běžné účty.'}
+          {operationMode === 'event' &&
+            'Pouze catering a nápoje aktivní uzavřené akce · eventové stoly.'}
+          {operationMode === 'hybrid' &&
+            'Sloučený katalog · zlaté stoly = event all-inclusive, šedé = restaurace.'}
+        </div>
+      </div>
+
       {myReadyAlerts.length > 0 && (
         <div
           className="panel"
@@ -770,6 +1039,7 @@ export function EventPOS({ mode = 'admin' }: EventPOSProps) {
           tables={tables}
           activeTableId={activeTableId}
           onSelect={selectTable}
+          operationMode={operationMode}
           onAddTable={() => {
             const id = addTable(project.id, `Stůl ${tables.length + 1}`)
             if (id) selectTable(id)
@@ -910,6 +1180,35 @@ export function EventPOS({ mode = 'admin' }: EventPOSProps) {
               >
                 <Sparkles size={15} /> ➕ Volná položka / Rychlý prodej
               </button>
+            </div>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+              <VoiceOrderButton
+                catalog={catalogSource}
+                disabled={!posOpen || posLocked || !activeTableId}
+                onOrders={handleVoiceOrders}
+                onReject={(reason) => {
+                  setVoiceStatus(reason)
+                  setToast(reason)
+                  window.setTimeout(() => setVoiceStatus(null), 5000)
+                }}
+              />
+              {voiceStatus && (
+                <div
+                  style={{
+                    flex: 1,
+                    minWidth: 180,
+                    padding: '0.75rem 1rem',
+                    borderRadius: 12,
+                    background: '#1e293b',
+                    border: '1px solid #334155',
+                    color: '#e2e8f0',
+                    fontWeight: 700,
+                    fontSize: '0.85rem',
+                  }}
+                >
+                  {voiceStatus}
+                </div>
+              )}
             </div>
             <div style={{ display: 'flex', gap: 6, overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
               {currentSubs.map((sub) => (
@@ -1395,6 +1694,10 @@ export function EventPOS({ mode = 'admin' }: EventPOSProps) {
         .pos-checkout-btn:not(:disabled):active {
           transform: scale(0.99);
           box-shadow: 0 6px 18px rgba(212,175,55,0.55) !important;
+        }
+        @keyframes posSecurityPulse {
+          0%, 100% { transform: translateX(-50%) scale(1); }
+          50% { transform: translateX(-50%) scale(1.02); }
         }
         @media (max-width: 900px) {
           .pos-layout { grid-template-columns: 1fr !important; }

@@ -190,7 +190,16 @@ export interface PosTableTab {
   /** Waiter who last touched this table */
   assignedWaiterId?: string | null
   assignedWaiterName?: string | null
+  /**
+   * Hybrid POS billing kind:
+   * - restaurant = ordinary individual bill (slate)
+   * - event = all-inclusive / pre-paid event tab (gold)
+   */
+  billingKind?: 'restaurant' | 'event'
 }
+
+/** POS layout: venue master catalog vs event catering vs merged hybrid */
+export type PosOperationMode = 'regular' | 'event' | 'hybrid'
 
 export type PrinterRole = 'bar' | 'kitchen' | 'receipt'
 export type PrinterConnection = 'bluetooth' | 'network' | 'simulated'
@@ -458,3 +467,4 @@ export type AppView =
   | 'print'
   | 'pos'
   | 'inventory'
+  | 'cctv'

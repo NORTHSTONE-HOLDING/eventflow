@@ -2,21 +2,22 @@ import type { PosTableTab } from '../types'
 import { uid } from './documentIds'
 
 export const DEFAULT_TABLE_LABELS = [
-  'Stůl 1',
-  'Stůl 2',
-  'Stůl 3',
-  'Bar VIP',
-  'Terasa',
+  { label: 'Stůl 1', billingKind: 'restaurant' as const },
+  { label: 'Stůl 2', billingKind: 'restaurant' as const },
+  { label: 'Stůl 3', billingKind: 'event' as const },
+  { label: 'Bar VIP', billingKind: 'event' as const },
+  { label: 'Terasa', billingKind: 'restaurant' as const },
 ] as const
 
 export function createDefaultTables(): PosTableTab[] {
   const now = new Date().toISOString()
-  return DEFAULT_TABLE_LABELS.map((label, i) => ({
+  return DEFAULT_TABLE_LABELS.map((row, i) => ({
     id: `table_default_${i + 1}`,
-    label,
+    label: row.label,
     lines: [],
     status: 'open' as const,
     updatedAt: now,
+    billingKind: row.billingKind,
   }))
 }
 
@@ -24,11 +25,16 @@ export function ensurePosTables(
   tables: PosTableTab[] | null | undefined
 ): PosTableTab[] {
   if (Array.isArray(tables) && tables.length > 0) {
-    return tables.map((t) => ({
+    return tables.map((t, i) => ({
       ...t,
       lines: Array.isArray(t.lines) ? t.lines : [],
       status: t.status === 'paid' ? 'paid' : 'open',
       updatedAt: t.updatedAt || new Date().toISOString(),
+      billingKind:
+        t.billingKind ||
+        ( /vip|event|salon/i.test(t.label) || i === 2
+          ? 'event'
+          : 'restaurant'),
     }))
   }
   return createDefaultTables()

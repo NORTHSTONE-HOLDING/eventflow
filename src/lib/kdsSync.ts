@@ -4,6 +4,7 @@ import type {
   KdsTicketStatus,
   POSCartLine,
 } from '../types'
+import type { CctvWalkoutAlert } from './cctvEngine'
 import { uid } from './documentIds'
 import { splitCartByStation } from './printerHardware'
 
@@ -25,6 +26,7 @@ export type PosBroadcastMessage =
   | { type: 'kds_status'; payload: { id: string; status: KdsTicketStatus } }
   | { type: 'kds_snapshot'; payload: KdsTicket[] }
   | { type: 'waiter_ready'; payload: WaiterReadyPayload }
+  | { type: 'security_alert'; payload: CctvWalkoutAlert }
   | { type: 'ping' }
 
 let sharedChannel: BroadcastChannel | null | undefined

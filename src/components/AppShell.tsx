@@ -11,6 +11,7 @@ import { ProfileSettings } from './ProfileSettings'
 import { EventPOS } from './EventPOS'
 import { InventoryHub } from './inventory/InventoryHub'
 import { CloudSyncBadge } from './inventory/CloudSyncBadge'
+import { CctvSurveillance } from './CctvSurveillance'
 import { ErrorBoundary } from './ErrorBoundary'
 import { ManagerPinGate } from './ManagerPinGate'
 import { AnimatePresence, motion } from 'framer-motion'
@@ -26,8 +27,10 @@ function renderView(view: AppView) {
       return <Dashboard />
     case 'planner':
       return <AIPlanner />
-    case 'pos':
+      case 'pos':
       return <EventPOS />
+    case 'cctv':
+      return <CctvSurveillance />
     case 'inventory':
       return <InventoryHub />
     case 'scanner':

@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { PosWaiterProfile, PosWaiterWorkspace } from '../types'
+import type { PosOperationMode, PosWaiterProfile, PosWaiterWorkspace } from '../types'
 import { uid } from '../lib/documentIds'
 
 export const DEFAULT_WAITERS: PosWaiterProfile[] = [
@@ -22,12 +22,23 @@ export interface WaiterReadyAlert {
   seen: boolean
 }
 
+export interface SecurityFlashAlert {
+  id: string
+  message: string
+  tableLabel: string
+  createdAt: string
+  seen: boolean
+}
+
 interface PosSessionState {
   waiters: PosWaiterProfile[]
   activeWaiterId: string
   workspaces: Record<string, PosWaiterWorkspace>
   readyAlerts: WaiterReadyAlert[]
+  securityAlerts: SecurityFlashAlert[]
   deviceId: string
+  /** Hybrid / restaurant / event POS layout mode */
+  operationMode: PosOperationMode
 
   getActiveWaiter: () => PosWaiterProfile
   setActiveWaiter: (waiterId: string) => void
@@ -36,6 +47,9 @@ interface PosSessionState {
   pushReadyAlert: (alert: Omit<WaiterReadyAlert, 'id' | 'createdAt' | 'seen'>) => void
   dismissReadyAlert: (id: string) => void
   clearSeenAlerts: () => void
+  pushSecurityAlert: (alert: Omit<SecurityFlashAlert, 'id' | 'createdAt' | 'seen'>) => void
+  dismissSecurityAlert: (id: string) => void
+  setOperationMode: (mode: PosOperationMode) => void
 }
 
 function ensureWorkspace(
@@ -61,7 +75,9 @@ export const usePosSessionStore = create<PosSessionState>()(
       activeWaiterId: DEFAULT_WAITERS[0].id,
       workspaces: {},
       readyAlerts: [],
+      securityAlerts: [],
       deviceId: uid('device'),
+      operationMode: 'hybrid',
 
       getActiveWaiter: () => {
         const s = get()
@@ -124,6 +140,27 @@ export const usePosSessionStore = create<PosSessionState>()(
         set((s) => ({
           readyAlerts: s.readyAlerts.filter((a) => !a.seen),
         })),
+
+      pushSecurityAlert: (alert) => {
+        const entry: SecurityFlashAlert = {
+          ...alert,
+          id: uid('sec'),
+          createdAt: new Date().toISOString(),
+          seen: false,
+        }
+        set((s) => ({
+          securityAlerts: [entry, ...s.securityAlerts].slice(0, 30),
+        }))
+      },
+
+      dismissSecurityAlert: (id) =>
+        set((s) => ({
+          securityAlerts: s.securityAlerts.map((a) =>
+            a.id === id ? { ...a, seen: true } : a
+          ),
+        })),
+
+      setOperationMode: (mode) => set({ operationMode: mode }),
     }),
     {
       name: 'eventflow-pos-session',
@@ -132,7 +169,9 @@ export const usePosSessionStore = create<PosSessionState>()(
         activeWaiterId: s.activeWaiterId,
         workspaces: s.workspaces,
         deviceId: s.deviceId,
+        operationMode: s.operationMode,
         readyAlerts: s.readyAlerts.slice(0, 20),
+        securityAlerts: s.securityAlerts.slice(0, 15),
       }),
     }
   )

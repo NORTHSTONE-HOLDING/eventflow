@@ -74,6 +74,7 @@ const APP_VIEWS: AppView[] = [
   'print',
   'pos',
   'inventory',
+  'cctv',
 ]
 
 export function normalizeAppView(view: unknown): AppView {
@@ -787,6 +788,7 @@ export const useAppStore = create<AppState>()(
           lines: [],
           status: 'open',
           updatedAt: new Date().toISOString(),
+          billingKind: 'restaurant',
         }
         get().updateProject(projectId, {
           posTables: [...tables, neu],

@@ -6,6 +6,7 @@ import type {
   POSPaymentMethod,
   POSTransaction,
 } from '../types'
+import { formatCzechDate } from './czechDate'
 import { uid } from './documentIds'
 import { getLowStockItems } from './inventoryEngine'
 
@@ -144,7 +145,7 @@ export function buildDoplatkovaFaktura(
   const contractBalance = Math.round((project.totalRevenue || 0) * 0.5)
   const extras = Math.round(project.posExtrasTotal || 0)
   const total = contractBalance + extras
-  const date = new Date().toLocaleDateString('cs-CZ')
+  const date = formatCzechDate(new Date())
 
   const barLines = (project.posTransactions ?? [])
     .filter((t) => t.appendedToInvoice || t.paymentMethod === 'card')

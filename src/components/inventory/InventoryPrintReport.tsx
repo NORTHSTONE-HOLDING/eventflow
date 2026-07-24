@@ -4,6 +4,7 @@ import type { InventuraSession, InventoryItem } from '../../types'
 import { inventuraVarianceValue } from '../../lib/inventoryModels'
 import { formatCurrency } from '../../lib/documentIds'
 import { useAppStore } from '../../store/useAppStore'
+import { formatCzechDateTime } from '../../lib/czechDate'
 
 interface Props {
   session: InventuraSession
@@ -46,8 +47,8 @@ export function InventoryPrintReport({ session, items, onClose }: Props) {
   }, [])
 
   const closedLabel = session.closed_at
-    ? new Date(session.closed_at).toLocaleString('cs-CZ')
-    : new Date().toLocaleString('cs-CZ')
+    ? formatCzechDateTime(session.closed_at)
+    : formatCzechDateTime(new Date())
 
   return (
     <div className="modal-overlay inventura-print-overlay" onClick={onClose}>

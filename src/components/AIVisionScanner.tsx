@@ -4,6 +4,7 @@ import { useAppStore, selectActiveProject } from '../store/useAppStore'
 import { hasFeature } from '../lib/subscriptions'
 import { scanMenuFromImage, readImageAsDataUrl } from '../lib/visionScan'
 import { formatCurrency } from '../lib/documentIds'
+import { formatCzechDate } from '../lib/czechDate'
 import type { PrintDesign, PrintFormat } from '../types'
 import { exportMenuPdf } from '../lib/printExport'
 
@@ -303,7 +304,7 @@ export function PrintLayoutEngine() {
             {profile.companyName || 'EventFlow Catering'}
           </div>
           <div style={{ fontSize: '0.85rem', opacity: 0.7, marginTop: 4 }}>
-            {project.name} · {project.date} · {project.guests} hostů
+            {project.name} · {formatCzechDate(project.date)} · {project.guests} hostů
           </div>
           {profile.ico && (
             <div style={{ fontSize: '0.75rem', opacity: 0.5, marginTop: 4 }}>

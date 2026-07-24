@@ -7,6 +7,7 @@ import { SUBSCRIPTION_PLANS } from '../lib/subscriptions'
 import { Modal } from './Modal'
 import type { AgencyProfile, SubscriptionTier } from '../types'
 import { formatCurrency } from '../lib/documentIds'
+import { formatCzechDate } from '../lib/czechDate'
 
 export function ProfileSettings() {
   const profile = useAppStore((s) => s.profile)
@@ -161,7 +162,7 @@ export function ProfileSettings() {
           )}
           {profile.registeredAt && (
             <span className="badge badge-success" style={{ alignSelf: 'center' }}>
-              Registrováno {new Date(profile.registeredAt).toLocaleDateString('cs-CZ')}
+              Registrováno {formatCzechDate(profile.registeredAt)}
             </span>
           )}
         </div>

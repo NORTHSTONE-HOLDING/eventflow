@@ -1,4 +1,5 @@
 import type { InvoiceVisionResult } from '../types'
+import { formatCzechDate } from './czechDate'
 
 const SYSTEM_PROMPT =
   'Jseš pokročilý skladový AI auditor pro EventFlow. Analyzuj tuto vyfocenou českou nákupní fakturu nebo dodací list. Extrahuj z ní: Název dodavatele, datum, IČO a kompletní seznam položek. U každé položky urči: Název zboží, množství, jednotku (ks, kg, l), nákupní cenu bez DPH a sazbu DPH (21%, 12%, 0%). Vrať pouze čistá JSON strukturovaná data.'
@@ -6,7 +7,7 @@ const SYSTEM_PROMPT =
 function mockInvoiceFromFilename(fileName: string): InvoiceVisionResult {
   const lower = fileName.toLowerCase()
   const isBeverage = /pivo|vino|bar|nápoj|napoj|cola/.test(lower)
-  const today = new Date().toLocaleDateString('cs-CZ')
+  const today = formatCzechDate(new Date())
 
   if (isBeverage) {
     return {
@@ -102,7 +103,7 @@ function parseVisionJson(raw: string): InvoiceVisionResult {
   const items = Array.isArray(parsed.items) ? parsed.items : []
   return {
     supplier_name: String(parsed.supplier_name || 'Neznámý dodavatel'),
-    date: String(parsed.date || new Date().toLocaleDateString('cs-CZ')),
+    date: String(parsed.date || formatCzechDate(new Date())),
     ico: String(parsed.ico || '—'),
     items: items.map((it) => ({
       name: String(it.name || '').trim(),

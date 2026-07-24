@@ -1,6 +1,7 @@
 import type { ProjectReceivable } from './receivables'
 import type { AgencyProfile } from '../types'
 import { formatCurrency } from './documentIds'
+import { formatCzechDate } from './czechDate'
 
 export interface DebtLegalAnalysis {
   projectId: string
@@ -75,7 +76,7 @@ function buildSimulatedAnalysis(
     `a budeme požadovat jistinu, příslušenství i náhradu nákladů řízení včetně nákladů právního zastoupení;\n` +
     `d) v odůvodněných případech zvážíme i další zákonné prostředky ochrany pohledávky.\n\n` +
     `Okamžitá úhrada online: ${debt.paymentLink}\n\n` +
-    `V ${profile.city || 'Praze'} dne ${new Date().toLocaleDateString('cs-CZ')}\n\n` +
+    `V ${profile.city || 'Praze'} dne ${formatCzechDate(new Date())}\n\n` +
     `${company}\n` +
     `${profile.contactPerson || 'Jednatel / oprávněná osoba'}\n`
 

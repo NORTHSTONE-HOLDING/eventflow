@@ -13,10 +13,15 @@ import {
   type CctvRecordingSegment,
   type CctvWalkoutAlert,
   type CctvZoneCategory,
+  type TheftStandbyTrack,
+  buildCashierCancelMessage,
+  buildCashierUnpaidContinueMessage,
   buildForcedTheftAlertMessage,
+  buildStandbyLeavingMessage,
   createLiveRecordingTick,
   groupRecordingsByDay,
   groupRecordingsTimeline,
+  isTableUnpaidOpen,
   normalizeCamera,
   normalizeRecordingSegment,
   playSecurityAlarmSound,
@@ -45,6 +50,7 @@ interface CctvState {
   monitoring: boolean
   flashingCameraId: string | null
   theftSimRunning: boolean
+  standbyTrack: TheftStandbyTrack | null
   globalAlert: CctvGlobalAlert | null
   lastRetentionPurgeAt: string | null
   lastPurgedCount: number
@@ -73,11 +79,21 @@ interface CctvState {
   pushEventLog: (entry: Omit<CctvEventLogEntry, 'id' | 'createdAt'> & { createdAt?: string }) => void
   clearEventLog: () => void
   dismissGlobalAlert: () => void
-  /** Interactive 3s theft sequence — Camera 01 + system-wide alarm */
+  resolveGlobalAlert: () => void
+  /** Cancel standby when waiter completes payment at cashier (Phase 2 → zero alarm) */
+  cancelStandbyOnPayment: (tableId: string, tableLabel?: string) => boolean
+  /** Demo: simulate payment handshake while standby is active */
+  simulateCashierPaymentHandshake: () => boolean
+  /**
+   * Smart multi-camera theft sequence:
+   * Phase 1 leave table → Phase 2 cashier check → Phase 3 exit unpaid = RED alert
+   */
   runTheftSimulation: (opts: {
     tables: PosTableTab[]
     orders: PosOrder[]
     projectId: string
+    /** Force unpaid path even if table was paid (demo theft) */
+    forceUnpaidPath?: boolean
   }) => Promise<CctvWalkoutAlert | null>
   runWalkoutSimulation: (opts: {
     tables: PosTableTab[]
@@ -141,6 +157,7 @@ export const useCctvStore = create<CctvState>()(
       monitoring: true,
       flashingCameraId: null,
       theftSimRunning: false,
+      standbyTrack: null,
       globalAlert: null,
       lastRetentionPurgeAt: null,
       lastPurgedCount: 0,
@@ -263,65 +280,212 @@ export const useCctvStore = create<CctvState>()(
 
       clearEventLog: () => set({ eventLog: [] }),
 
-      dismissGlobalAlert: () => set({ globalAlert: null }),
+      dismissGlobalAlert: () => set({ globalAlert: null, flashingCameraId: null }),
 
-      runTheftSimulation: async ({ tables, orders, projectId }) => {
+      resolveGlobalAlert: () => {
+        const alert = get().globalAlert
+        if (alert) {
+          get().acknowledgeAlert(alert.id)
+          get().pushEventLog({
+            level: 'info',
+            message: `Poplach uzavřen operátorem — Zavřít / Vyřešeno (${alert.tableLabel || alert.message})`,
+            cameraId: alert.cameraId,
+            tableLabel: alert.tableLabel,
+          })
+        }
+        set({
+          globalAlert: null,
+          flashingCameraId: null,
+          standbyTrack: null,
+          cameras: get().cameras.map((c) =>
+            c.status === 'alert' ? { ...c, status: 'online' as const } : c,
+          ),
+        })
+        try {
+          localStorage.removeItem('eventflow-security-alert')
+        } catch {
+          // ignore
+        }
+      },
+
+      cancelStandbyOnPayment: (tableId, tableLabel) => {
+        const track = get().standbyTrack
+        if (!track) return false
+        if (
+          track.tableId &&
+          tableId &&
+          track.tableId !== tableId &&
+          track.tableLabel !== tableLabel
+        ) {
+          return false
+        }
+        if (
+          track.phase === 'cancelled_paid' ||
+          track.phase === 'alarm' ||
+          track.phase === 'idle'
+        ) {
+          return false
+        }
+
+        clearTheftTimers()
+        const label = tableLabel || track.tableLabel
+        const msg = buildCashierCancelMessage(label)
+        get().pushEventLog({
+          level: 'info',
+          message: msg,
+          cameraId: 'cam_02',
+          tableLabel: label,
+        })
+        set({
+          standbyTrack: {
+            ...track,
+            phase: 'cancelled_paid',
+            cancelledAt: new Date().toISOString(),
+            cancelReason: 'payment_at_cashier',
+            lastCameraId: 'cam_02',
+          },
+          theftSimRunning: false,
+          flashingCameraId: null,
+          cameras: get().cameras.map((c) =>
+            c.status === 'alert' ? { ...c, status: 'online' as const } : c,
+          ),
+        })
+        try {
+          useAppStore.getState().setToast(`✓ ${msg}`)
+        } catch {
+          // ignore
+        }
+        return true
+      },
+
+      simulateCashierPaymentHandshake: () => {
+        const track = get().standbyTrack
+        if (!track || track.phase === 'idle' || track.phase === 'alarm') return false
+        return get().cancelStandbyOnPayment(track.tableId, track.tableLabel)
+      },
+
+      runTheftSimulation: async ({ tables, orders, projectId, forceUnpaidPath = true }) => {
         if (get().theftSimRunning) return null
         clearTheftTimers()
 
         const target = resolveTheftTargetTable(tables, orders)
         const cam01 =
-          get().cameras.find((c) => c.id === 'cam_01') ||
-          get().cameras[0]
+          get().cameras.find((c) => c.id === 'cam_01') || get().cameras[0]
+        const cam02 = get().cameras.find((c) => c.id === 'cam_02')
         if (!cam01) return null
 
-        // Force walkout AI on for interactive demo
         if (!get().aiToggles.walkoutDetection) {
           set((s) => ({ aiToggles: { ...s.aiToggles, walkoutDetection: true } }))
         }
         if (!get().monitoring) set({ monitoring: true })
 
+        const track: TheftStandbyTrack = {
+          id: uid('standby'),
+          tableId: target.tableId,
+          tableLabel: target.tableLabel || 'STŮL 3',
+          projectId: projectId || 'sim',
+          orderIds: target.orderIds,
+          phase: 'leaving_table',
+          startedAt: new Date().toISOString(),
+          lastCameraId: undefined,
+        }
+
         set({
           theftSimRunning: true,
-          flashingCameraId: cam01.id,
-          cameras: get().cameras.map((c) =>
-            c.id === cam01.id
-              ? { ...c, status: 'alert' as const, recording: true }
-              : c,
-          ),
+          standbyTrack: track,
+          flashingCameraId: null,
+          globalAlert: null,
         })
 
+        // —— PHASE 1: Client stands up / leaves table (low-priority standby only)
+        const phase1Msg = buildStandbyLeavingMessage(track.tableLabel)
         get().pushEventLog({
-          level: 'warn',
-          message: `🧪 Simulace útěku spuštěna — ${cam01.label} (Kamera 01) bliká`,
-          cameraId: cam01.id,
-          tableLabel: target.tableLabel,
+          level: 'info',
+          message: `Fáze 1 · ${phase1Msg}`,
+          tableLabel: track.tableLabel,
         })
 
         return await new Promise<CctvWalkoutAlert | null>((resolve) => {
+          // —— PHASE 2: Cashier / Camera 02 handshake
           theftTimerIds.push(
             window.setTimeout(() => {
+              const current = get().standbyTrack
+              if (!current || current.id !== track.id) {
+                resolve(null)
+                return
+              }
+              if (current.phase === 'cancelled_paid') {
+                resolve(null)
+                return
+              }
+
+              set({
+                standbyTrack: {
+                  ...current,
+                  phase: 'cashier_check',
+                  lastCameraId: cam02?.id || 'cam_02',
+                },
+              })
+
               get().pushEventLog({
                 level: 'warn',
-                message:
-                  'AI Vision: detekce rychlého pohybu od stolu směrem k hlavnímu východu…',
-                cameraId: cam01.id,
-                tableLabel: target.tableLabel,
+                message: `Fáze 2 · Kontrola pokladní zóny (${cam02?.label || 'Kamera 02'})…`,
+                cameraId: cam02?.id || 'cam_02',
+                tableLabel: current.tableLabel,
               })
-            }, 1000),
+
+              const tableStillOpen =
+                forceUnpaidPath ||
+                (() => {
+                  const t = (tables ?? []).find((x) => x.id === current.tableId)
+                  if (!t) return true
+                  return isTableUnpaidOpen(t, orders ?? [])
+                })()
+
+              if (!tableStillOpen) {
+                get().cancelStandbyOnPayment(current.tableId, current.tableLabel)
+                resolve(null)
+                return
+              }
+
+              get().pushEventLog({
+                level: 'warn',
+                message: `Fáze 2 · ${buildCashierUnpaidContinueMessage(current.tableLabel)}`,
+                cameraId: cam02?.id || 'cam_02',
+                tableLabel: current.tableLabel,
+              })
+            }, 1200),
           )
 
+          // —— PHASE 3: Exit via Main Entrance (cam_01) while still OTEVŘENO → RED ALERT
           theftTimerIds.push(
             window.setTimeout(() => {
+              const current = get().standbyTrack
+              if (!current || current.id !== track.id) {
+                resolve(null)
+                return
+              }
+              if (current.phase === 'cancelled_paid') {
+                get().pushEventLog({
+                  level: 'info',
+                  message:
+                    'Fáze 3 přeskočena — platba u pokladny zrušila standby (nulový poplach)',
+                  tableLabel: current.tableLabel,
+                })
+                set({ theftSimRunning: false })
+                resolve(null)
+                return
+              }
+
               const message = buildForcedTheftAlertMessage(3)
               const alert: CctvWalkoutAlert = {
                 id: uid('cctv'),
                 cameraId: cam01.id,
                 cameraLabel: cam01.label,
-                tableId: target.tableId,
+                tableId: current.tableId,
                 tableLabel: 'STŮL 3',
-                projectId: projectId || 'sim',
-                orderIds: target.orderIds,
+                projectId: current.projectId,
+                orderIds: current.orderIds,
                 message,
                 createdAt: new Date().toISOString(),
                 acknowledged: false,
@@ -338,18 +502,27 @@ export const useCctvStore = create<CctvState>()(
                 kind: 'walkout',
               }
 
-              // Set globalAlert first so same-tab banners can short-circuit BC echo
               set((state) => ({
                 alerts: [alert, ...state.alerts].slice(0, 40),
                 globalAlert,
                 theftSimRunning: false,
                 flashingCameraId: cam01.id,
+                standbyTrack: {
+                  ...current,
+                  phase: 'alarm',
+                  lastCameraId: cam01.id,
+                },
+                cameras: state.cameras.map((c) =>
+                  c.id === cam01.id
+                    ? { ...c, status: 'alert' as const, recording: true }
+                    : c,
+                ),
                 eventLog: [
                   {
                     id: uid('evt'),
                     createdAt: new Date().toISOString(),
                     level: 'alarm' as const,
-                    message,
+                    message: `Fáze 3 · Východ (Kamera 01) + účet OTEVŘENO → ${message}`,
                     cameraId: cam01.id,
                     tableLabel: 'STŮL 3',
                   },
@@ -358,6 +531,7 @@ export const useCctvStore = create<CctvState>()(
               }))
 
               publishSecurityAlert(alert)
+              playSecurityAlarmSound()
 
               try {
                 usePosSessionStore.getState().pushSecurityAlert({
@@ -365,7 +539,7 @@ export const useCctvStore = create<CctvState>()(
                   tableLabel: alert.tableLabel,
                 })
               } catch {
-                // store may be unavailable in exotic contexts
+                // ignore
               }
 
               try {
@@ -374,9 +548,6 @@ export const useCctvStore = create<CctvState>()(
                 // ignore
               }
 
-              playSecurityAlarmSound()
-
-              // Keep red flash a bit longer, then settle to alert status without pulse flag
               theftTimerIds.push(
                 window.setTimeout(() => {
                   set({ flashingCameraId: null })
@@ -542,6 +713,7 @@ export const useCctvStore = create<CctvState>()(
         state.flashingCameraId = null
         state.theftSimRunning = false
         state.globalAlert = null
+        state.standbyTrack = null
         const { kept, purgedCount } = purgeExpiredRecordings(state.recordings ?? [])
         state.recordings = kept
         if (purgedCount > 0) {

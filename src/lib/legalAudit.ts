@@ -1,4 +1,5 @@
 import type { LegalRisk } from '../types'
+import { formatCzechDate } from './czechDate'
 
 const RISK_PATTERNS: Array<{
   keywords: string[]
@@ -136,7 +137,7 @@ export const COLLECTION_TEMPLATES = {
       `z faktury ${invoice} ve lhůtě 15 dnů od doručení této výzvy.\n\n` +
       `V případě neuhrazení budeme nuceni uplatnit pohledávku soudní cestou ` +
       `včetně příslušenství a náhrady nákladů řízení.\n\n` +
-      `V Praze dne ${new Date().toLocaleDateString('cs-CZ')}`,
+      `V Praze dne ${formatCzechDate(new Date())}`,
   },
   trestni: {
     title: 'Podání trestního oznámení pro podezření na podvod (§ 209 TZ)',
@@ -161,6 +162,6 @@ export const COLLECTION_TEMPLATES = {
       `3. splátka: ${Math.round(amount - 2 * Math.round(amount / 3)).toLocaleString('cs-CZ')} Kč — do 90 dnů\n\n` +
       `Při prodlení jedné splátky se stává splatný celý zůstatek.\n\n` +
       `Podpis dlužníka: ________________\n` +
-      `Datum: ${new Date().toLocaleDateString('cs-CZ')}`,
+      `Datum: ${formatCzechDate(new Date())}`,
   },
 } as const

@@ -12,6 +12,7 @@ import {
 import { useInventoryStore } from '../../store/useInventoryStore'
 import { analyzeInvoiceImage } from '../../lib/invoiceVision'
 import { formatCurrency } from '../../lib/documentIds'
+import { formatCzechDate } from '../../lib/czechDate'
 import type { InvoiceVisionResult } from '../../types'
 import { useAppStore } from '../../store/useAppStore'
 
@@ -141,7 +142,7 @@ export function MobileInvoiceRestock() {
                 <div className="label">Dodavatel</div>
                 <div style={{ fontWeight: 600 }}>{draft.supplier_name}</div>
                 <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                  IČO {draft.ico} · {draft.date}
+                  IČO {draft.ico} · {formatCzechDate(draft.date)}
                 </div>
               </div>
               <div style={{ textAlign: 'right' }}>

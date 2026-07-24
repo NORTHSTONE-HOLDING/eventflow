@@ -1,6 +1,7 @@
 import type { PosOrder, PosTableTab } from '../types'
 import { uid } from './documentIds'
 import { getPosChannel, type PosBroadcastMessage } from './kdsSync'
+import { formatCzechDateWithWeekday, formatCzechHourRange } from './czechDate'
 
 export const CCTV_RETENTION_DAYS = 60
 
@@ -97,6 +98,29 @@ export interface CctvGlobalAlert {
   cameraLabel: string
   createdAt: string
   kind: 'walkout' | 'fight' | 'queue'
+}
+
+/** Multi-camera theft handshake phases (false-alarm prevention) */
+export type TheftStandbyPhase =
+  | 'idle'
+  | 'leaving_table'
+  | 'cashier_check'
+  | 'exit_unpaid'
+  | 'cancelled_paid'
+  | 'alarm'
+
+export interface TheftStandbyTrack {
+  id: string
+  tableId: string
+  tableLabel: string
+  projectId: string
+  orderIds: string[]
+  phase: TheftStandbyPhase
+  startedAt: string
+  cancelledAt?: string
+  cancelReason?: string
+  /** Camera that last observed the guest */
+  lastCameraId?: string
 }
 
 export interface CctvAiToggles {
@@ -293,6 +317,18 @@ export function buildWalkoutAlertMessage(tableLabel: string): string {
 /** Exact high-priority copy for interactive theft simulation */
 export function buildForcedTheftAlertMessage(tableNumber = 3): string {
   return `🚨 POPLACH: Detekován útěk bez placení ze STOLU ${tableNumber}!`
+}
+
+export function buildStandbyLeavingMessage(tableLabel: string): string {
+  return `Klient odchází od stolu (${tableLabel}) — standby monitoring`
+}
+
+export function buildCashierCancelMessage(tableLabel: string): string {
+  return `Platba u pokladny potvrzena — standby pro ${tableLabel} zrušen (nulový poplach)`
+}
+
+export function buildCashierUnpaidContinueMessage(tableLabel: string): string {
+  return `Pokladní zóna (Kamera 02): platba pro ${tableLabel} NEPROVEDENA — standby pokračuje`
 }
 
 export function hourKeyFromIso(iso: string): string {
@@ -627,17 +663,12 @@ export function groupRecordingsTimeline(
       .sort((a, b) => b[0].localeCompare(a[0]))
       .map(([hourKey, items]) => ({
         hourKey,
-        label: `${hourKey}:00 – ${hourKey}:59`,
+        label: formatCzechHourRange(hourKey),
         items,
       }))
     return {
       dayKey: day.dayKey,
-      label: new Date(day.dayKey + 'T12:00:00').toLocaleDateString('cs-CZ', {
-        weekday: 'long',
-        day: 'numeric',
-        month: 'long',
-        year: 'numeric',
-      }),
+      label: formatCzechDateWithWeekday(day.dayKey + 'T12:00:00'),
       totalMb: day.totalMb,
       hours,
     }

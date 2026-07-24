@@ -10,6 +10,7 @@ import {
   ShoppingCart,
   Warehouse,
 } from 'lucide-react'
+import { formatCzechDateTime } from '../../lib/czechDate'
 import { useInventoryStore } from '../../store/useInventoryStore'
 import { useAppStore } from '../../store/useAppStore'
 import { hasFeature } from '../../lib/subscriptions'
@@ -346,7 +347,7 @@ function InventoryOverview() {
                     {log.type} · {item?.name || log.item_id}
                   </div>
                   <div style={{ color: 'var(--text-dim)' }}>
-                    {new Date(log.timestamp).toLocaleString('cs-CZ')}
+                    {formatCzechDateTime(log.timestamp)}
                     {log.note ? ` · ${log.note}` : ''}
                   </div>
                 </div>

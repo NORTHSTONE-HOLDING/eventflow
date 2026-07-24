@@ -6,6 +6,7 @@ import { useAppStore, selectActiveProject } from '../store/useAppStore'
 import { hasFeature } from '../lib/subscriptions'
 import { buildClientWhatsAppMessage, openWhatsApp } from '../lib/whatsapp'
 import { formatCurrency } from '../lib/documentIds'
+import { formatCzechDate } from '../lib/czechDate'
 
 export function ClientPortal() {
   const subscription = useAppStore((s) => s.profile.subscription)
@@ -155,7 +156,7 @@ export function ClientPortal() {
               Nabídka {project.documents.nabidka} / Smlouva {project.documents.smlouva}
             </h3>
             <p style={{ color: 'var(--text-muted)', marginBottom: 16 }}>
-              {project.name} · {project.date} · {project.guests} hostů · {project.location}
+              {project.name} · {formatCzechDate(project.date)} · {project.guests} hostů · {project.location}
             </p>
             <table style={{ width: '100%', fontSize: '0.9rem', borderCollapse: 'collapse' }}>
               <tbody>

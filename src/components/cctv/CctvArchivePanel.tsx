@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { motion } from 'framer-motion'
-import { Archive, Cloud, Pause, Play, Trash2 } from 'lucide-react'
+import { AnimatePresence, motion } from 'framer-motion'
+import { Archive, ChevronDown, Cloud, Pause, Play, Trash2 } from 'lucide-react'
 import type { CctvRecordingSegment } from '../../lib/cctvEngine'
 import { CCTV_RETENTION_DAYS, useCctvStore } from '../../store/useCctvStore'
 import {
@@ -9,6 +9,10 @@ import {
   isCctvStorageReady,
 } from '../../lib/cctvStorage'
 import { useAppStore } from '../../store/useAppStore'
+import {
+  formatCzechDateTime,
+  formatCzechHourRange,
+} from '../../lib/czechDate'
 
 const GOLD = '#D4AF37'
 
@@ -42,16 +46,18 @@ function MockVideoPlayer({
     <div
       style={{
         border: `2px solid ${GOLD}`,
-        borderRadius: 14,
+        borderRadius: 16,
         background: '#020617',
         overflow: 'hidden',
-        marginBottom: 14,
+        marginBottom: 16,
+        width: '100%',
       }}
     >
       <div
         style={{
           aspectRatio: '16 / 9',
-          background: `linear-gradient(145deg, #1e293b, #020617 50%, #0f172a)`,
+          maxHeight: 420,
+          background: 'linear-gradient(145deg, #1e293b, #020617 50%, #0f172a)',
           position: 'relative',
           display: 'flex',
           alignItems: 'center',
@@ -69,21 +75,21 @@ function MockVideoPlayer({
           }}
         />
         <div style={{ textAlign: 'center', zIndex: 1, padding: 16 }}>
-          <div style={{ color: GOLD, fontWeight: 900, fontSize: '1.1rem' }}>
+          <div style={{ color: GOLD, fontWeight: 900, fontSize: '1.2rem' }}>
             Přehrávání záznamu
           </div>
-          <div style={{ color: '#e2e8f0', fontWeight: 800, marginTop: 6 }}>
+          <div style={{ color: '#e2e8f0', fontWeight: 800, marginTop: 8, fontSize: '1.05rem' }}>
             {segment.cameraLabel}
           </div>
-          <div style={{ color: '#94a3b8', fontSize: '0.78rem', marginTop: 6, fontWeight: 600 }}>
-            {new Date(segment.createdAt).toLocaleString('cs-CZ')} · {segment.resolution}{' '}
-            {segment.fps}fps
+          <div style={{ color: '#94a3b8', fontSize: '0.85rem', marginTop: 8, fontWeight: 600 }}>
+            {formatCzechDateTime(segment.createdAt)} · {segment.resolution} {segment.fps}fps ·{' '}
+            {Math.round(segment.durationSec / 60)} min
           </div>
           <div
             style={{
               color: '#64748b',
-              fontSize: '0.68rem',
-              marginTop: 8,
+              fontSize: '0.72rem',
+              marginTop: 10,
               fontFamily: 'ui-monospace, monospace',
               wordBreak: 'break-all',
             }}
@@ -93,15 +99,15 @@ function MockVideoPlayer({
         </div>
       </div>
 
-      <div style={{ padding: '0.85rem 1rem', background: '#0b1220' }}>
+      <div style={{ padding: '1rem 1.15rem', background: '#0b1220' }}>
         <div
           style={{
-            height: 8,
+            height: 10,
             borderRadius: 999,
             background: '#1e293b',
             overflow: 'hidden',
-            border: `1px solid ${GOLD}44`,
-            marginBottom: 10,
+            border: `1px solid ${GOLD}55`,
+            marginBottom: 12,
           }}
         >
           <div
@@ -113,21 +119,33 @@ function MockVideoPlayer({
             }}
           />
         </div>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
           <button
             type="button"
             className="btn btn-gold"
-            style={{ minHeight: 42 }}
+            style={{ minHeight: 48, fontWeight: 900 }}
             onClick={() => setPlaying((v) => !v)}
           >
-            {playing ? <Pause size={15} /> : <Play size={15} />}{' '}
+            {playing ? <Pause size={16} /> : <Play size={16} />}{' '}
             {playing ? 'Pozastavit' : 'Přehrát záznam'}
           </button>
-          <button type="button" className="btn btn-ghost" style={{ minHeight: 42 }} onClick={onClose}>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            style={{ minHeight: 48 }}
+            onClick={onClose}
+          >
             Zavřít přehrávač
           </button>
-          <span style={{ color: '#94a3b8', fontSize: '0.75rem', fontWeight: 700, marginLeft: 'auto' }}>
-            Mock player · bucket {CCTV_STORAGE_BUCKET}
+          <span
+            style={{
+              color: '#94a3b8',
+              fontSize: '0.78rem',
+              fontWeight: 700,
+              marginLeft: 'auto',
+            }}
+          >
+            Mock player · {CCTV_STORAGE_BUCKET}
           </span>
         </div>
       </div>
@@ -135,6 +153,10 @@ function MockVideoPlayer({
   )
 }
 
+/**
+ * Spacious archive: full-width day rows (DD.MM.YYYY + weekday),
+ * expand to wide hourly clip grid with play controls.
+ */
 export function CctvArchivePanel() {
   const recordings = useCctvStore((s) => s.recordings)
   const lastRetentionPurgeAt = useCctvStore((s) => s.lastRetentionPurgeAt)
@@ -144,23 +166,23 @@ export function CctvArchivePanel() {
   const setToast = useAppStore((s) => s.setToast)
 
   const timeline = useMemo(() => getArchiveTimeline(), [recordings, getArchiveTimeline])
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [playing, setPlaying] = useState<CctvRecordingSegment | null>(null)
   const [expandedDay, setExpandedDay] = useState<string | null>(null)
+  const [playing, setPlaying] = useState<CctvRecordingSegment | null>(null)
 
   useEffect(() => {
     if (!expandedDay && timeline[0]) setExpandedDay(timeline[0].dayKey)
   }, [timeline, expandedDay])
 
-  const selected = useMemo(
-    () => recordings.find((r) => r.id === selectedId) || null,
-    [recordings, selectedId],
-  )
-
   return (
     <div
       className="panel"
-      style={{ marginBottom: 16, borderColor: `${GOLD}66`, background: '#0f172a' }}
+      style={{
+        marginBottom: 16,
+        borderColor: `${GOLD}66`,
+        background: '#0f172a',
+        width: '100%',
+        padding: '1.15rem 1.25rem',
+      }}
     >
       <div
         style={{
@@ -169,21 +191,20 @@ export function CctvArchivePanel() {
           gap: 12,
           flexWrap: 'wrap',
           alignItems: 'center',
-          marginBottom: 12,
+          marginBottom: 14,
         }}
       >
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <Archive size={16} color={GOLD} />
-          <strong style={{ color: GOLD }}>Archiv záznamů</strong>
-          <span style={{ color: '#94a3b8', fontSize: '0.8rem', fontWeight: 600 }}>
-            · časová osa dny/hodiny · retence {CCTV_RETENTION_DAYS} dní · {recordings.length}{' '}
-            klipů
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <Archive size={18} color={GOLD} />
+          <strong style={{ color: GOLD, fontSize: '1.05rem' }}>Archiv záznamů</strong>
+          <span style={{ color: '#94a3b8', fontSize: '0.82rem', fontWeight: 600 }}>
+            retence {CCTV_RETENTION_DAYS} dní · {recordings.length} klipů · formát DD.MM.YYYY
           </span>
         </div>
         <button
           type="button"
           className="btn btn-ghost"
-          style={{ minHeight: 42 }}
+          style={{ minHeight: 46 }}
           title="Spustit čištění expirovaných nahrávek"
           onClick={() => {
             const n = runRetentionPurge()
@@ -203,86 +224,52 @@ export function CctvArchivePanel() {
           display: 'flex',
           gap: 8,
           alignItems: 'center',
-          marginBottom: 12,
-          padding: '0.65rem 0.85rem',
-          borderRadius: 10,
+          marginBottom: 14,
+          padding: '0.75rem 1rem',
+          borderRadius: 12,
           border: '1px solid #334155',
           background: '#020617',
           color: '#94a3b8',
-          fontSize: '0.78rem',
+          fontSize: '0.8rem',
           fontWeight: 600,
         }}
       >
-        <Cloud size={14} color={isCctvStorageReady() ? GOLD : '#64748b'} />
+        <Cloud size={15} color={isCctvStorageReady() ? GOLD : '#64748b'} />
         {cctvStorageStatusLabel()}
       </div>
 
-      <div style={{ color: '#64748b', fontSize: '0.78rem', fontWeight: 600, marginBottom: 12 }}>
+      <div style={{ color: '#64748b', fontSize: '0.78rem', fontWeight: 600, marginBottom: 14 }}>
         Poslední čištění:{' '}
-        {lastRetentionPurgeAt
-          ? new Date(lastRetentionPurgeAt).toLocaleString('cs-CZ')
-          : 'ještě neproběhlo'}
+        {lastRetentionPurgeAt ? formatCzechDateTime(lastRetentionPurgeAt) : 'ještě neproběhlo'}
         {lastPurgedCount > 0 ? ` · naposledy smazáno ${lastPurgedCount}` : ''}
       </div>
 
-      {playing && (
-        <MockVideoPlayer segment={playing} onClose={() => setPlaying(null)} />
-      )}
-
-      {selected && !playing && (
-        <div
-          style={{
-            marginBottom: 12,
-            padding: '0.85rem 1rem',
-            borderRadius: 12,
-            border: `1px solid ${GOLD}`,
-            background: 'rgba(212,175,55,0.08)',
-            display: 'flex',
-            justifyContent: 'space-between',
-            gap: 12,
-            flexWrap: 'wrap',
-            alignItems: 'center',
-          }}
-        >
-          <div>
-            <div style={{ color: '#fff', fontWeight: 800 }}>{selected.cameraLabel}</div>
-            <div style={{ color: '#94a3b8', fontSize: '0.78rem', fontWeight: 600 }}>
-              {new Date(selected.createdAt).toLocaleString('cs-CZ')} · {selected.note}
-            </div>
-          </div>
-          <button
-            type="button"
-            className="btn btn-gold"
-            style={{ minHeight: 44, fontWeight: 900 }}
-            onClick={() => setPlaying(selected)}
-          >
-            <Play size={15} /> Přehrát záznam
-          </button>
-        </div>
-      )}
+      {playing && <MockVideoPlayer segment={playing} onClose={() => setPlaying(null)} />}
 
       <div
         style={{
           display: 'flex',
           flexDirection: 'column',
           gap: 10,
-          maxHeight: 520,
-          overflow: 'auto',
-          paddingRight: 4,
+          width: '100%',
         }}
       >
         {timeline.length === 0 && (
-          <div style={{ color: '#94a3b8', fontWeight: 600 }}>Archiv je prázdný.</div>
+          <div style={{ color: '#94a3b8', fontWeight: 600, padding: '1rem 0' }}>
+            Archiv je prázdný.
+          </div>
         )}
 
         {timeline.map((day) => {
           const open = expandedDay === day.dayKey
+          const clipCount = day.hours.reduce((n, h) => n + h.items.length, 0)
           return (
             <div
               key={day.dayKey}
               style={{
+                width: '100%',
                 border: `1px solid ${open ? GOLD : '#334155'}`,
-                borderRadius: 12,
+                borderRadius: 14,
                 background: '#020617',
                 overflow: 'hidden',
               }}
@@ -293,132 +280,207 @@ export function CctvArchivePanel() {
                 style={{
                   width: '100%',
                   textAlign: 'left',
-                  padding: '0.75rem 0.9rem',
+                  padding: '1.05rem 1.2rem',
+                  minHeight: 64,
                   border: 'none',
-                  background: open ? 'rgba(212,175,55,0.12)' : '#0b1220',
+                  background: open
+                    ? 'linear-gradient(90deg, rgba(212,175,55,0.16), rgba(15,23,42,0.4))'
+                    : '#0b1220',
                   cursor: 'pointer',
                   display: 'flex',
                   justifyContent: 'space-between',
-                  gap: 8,
+                  alignItems: 'center',
+                  gap: 12,
                   touchAction: 'manipulation',
                 }}
               >
-                <strong style={{ color: open ? GOLD : '#e2e8f0', textTransform: 'capitalize' }}>
-                  {day.label}
-                </strong>
-                <span style={{ color: '#94a3b8', fontSize: '0.78rem', fontWeight: 700 }}>
-                  {day.hours.reduce((n, h) => n + h.items.length, 0)} klipů · ~{day.totalMb} MB
-                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+                  <motion.span
+                    animate={{ rotate: open ? 180 : 0 }}
+                    transition={{ duration: 0.22 }}
+                    style={{ display: 'inline-flex', color: GOLD, flexShrink: 0 }}
+                  >
+                    <ChevronDown size={22} />
+                  </motion.span>
+                  <div style={{ minWidth: 0 }}>
+                    <div
+                      style={{
+                        color: open ? GOLD : '#f8fafc',
+                        fontWeight: 900,
+                        fontSize: '1.08rem',
+                        letterSpacing: '0.01em',
+                      }}
+                    >
+                      {day.label}
+                    </div>
+                    <div style={{ color: '#64748b', fontSize: '0.78rem', fontWeight: 700, marginTop: 2 }}>
+                      Klikněte pro {open ? 'sbalení' : 'rozbalení'} hodinových klipů
+                    </div>
+                  </div>
+                </div>
+                <div
+                  style={{
+                    color: '#cbd5e1',
+                    fontSize: '0.85rem',
+                    fontWeight: 800,
+                    whiteSpace: 'nowrap',
+                    flexShrink: 0,
+                  }}
+                >
+                  {clipCount} klipů · ~{day.totalMb} MB
+                </div>
               </button>
 
-              {open && (
-                <div style={{ padding: '0.35rem 0.65rem 0.85rem', position: 'relative' }}>
-                  <div
-                    style={{
-                      position: 'absolute',
-                      left: 22,
-                      top: 8,
-                      bottom: 12,
-                      width: 2,
-                      background: `linear-gradient(180deg, ${GOLD}, #334155)`,
-                    }}
-                  />
-                  {day.hours.map((hour) => (
-                    <div key={hour.hourKey} style={{ marginBottom: 12, paddingLeft: 28 }}>
-                      <div
-                        style={{
-                          color: GOLD,
-                          fontWeight: 800,
-                          fontSize: '0.78rem',
-                          marginBottom: 6,
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 8,
-                        }}
-                      >
-                        <span
-                          style={{
-                            width: 10,
-                            height: 10,
-                            borderRadius: '50%',
-                            background: GOLD,
-                            boxShadow: `0 0 0 3px ${GOLD}33`,
-                            marginLeft: -23,
-                          }}
-                        />
-                        {hour.label}
-                      </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                        {hour.items.map((seg) => {
-                          const active = selectedId === seg.id
-                          const pct = Math.min(
-                            100,
-                            Math.round((seg.durationSec / 7200) * 100),
-                          )
-                          return (
-                            <button
-                              key={seg.id}
-                              type="button"
-                              onClick={() => setSelectedId(seg.id)}
-                              style={{
-                                textAlign: 'left',
-                                padding: '0.65rem 0.75rem',
-                                borderRadius: 10,
-                                border: `1px solid ${active ? GOLD : '#334155'}`,
-                                background: active ? 'rgba(212,175,55,0.1)' : '#0f172a',
-                                cursor: 'pointer',
-                                touchAction: 'manipulation',
-                              }}
-                            >
+              <AnimatePresence initial={false}>
+                {open && (
+                  <motion.div
+                    key="day-body"
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: 'auto', opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    transition={{ duration: 0.28, ease: 'easeOut' }}
+                    style={{ overflow: 'hidden' }}
+                  >
+                    <div
+                      style={{
+                        padding: '0.85rem 1.1rem 1.2rem',
+                        borderTop: `1px solid ${GOLD}33`,
+                        background: '#020617',
+                      }}
+                    >
+                      {day.hours.map((hour) => (
+                        <div key={hour.hourKey} style={{ marginBottom: 18 }}>
+                          <div
+                            style={{
+                              color: GOLD,
+                              fontWeight: 900,
+                              fontSize: '0.92rem',
+                              marginBottom: 10,
+                              paddingBottom: 6,
+                              borderBottom: '1px solid #1e293b',
+                              letterSpacing: '0.02em',
+                            }}
+                          >
+                            {formatCzechHourRange(hour.hourKey)}
+                          </div>
+
+                          <div
+                            style={{
+                              display: 'grid',
+                              gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+                              gap: 12,
+                              width: '100%',
+                            }}
+                          >
+                            {hour.items.map((seg) => (
                               <div
+                                key={seg.id}
                                 style={{
+                                  border: `1px solid #334155`,
+                                  borderRadius: 12,
+                                  background: '#0f172a',
+                                  padding: '0.9rem 1rem',
                                   display: 'flex',
-                                  justifyContent: 'space-between',
-                                  gap: 8,
-                                  marginBottom: 6,
+                                  flexDirection: 'column',
+                                  gap: 10,
+                                  minHeight: 140,
                                 }}
-                              >
-                                <span style={{ color: '#f8fafc', fontWeight: 800, fontSize: '0.85rem' }}>
-                                  {seg.cameraLabel}
-                                </span>
-                                <span style={{ color: GOLD, fontWeight: 800, fontSize: '0.75rem' }}>
-                                  {seg.sizeMb} MB
-                                </span>
-                              </div>
-                              <div style={{ color: '#64748b', fontSize: '0.72rem', fontWeight: 600 }}>
-                                {new Date(seg.createdAt).toLocaleTimeString('cs-CZ', {
-                                  hour: '2-digit',
-                                  minute: '2-digit',
-                                })}{' '}
-                                · {Math.round(seg.durationSec / 60)} min · {seg.resolution}{' '}
-                                {seg.fps}fps
-                              </div>
-                              <div
-                                style={{
-                                  marginTop: 8,
-                                  height: 5,
-                                  borderRadius: 999,
-                                  background: '#1e293b',
-                                  overflow: 'hidden',
-                                }}
-                                title="Délka klipu (náhled)"
                               >
                                 <div
                                   style={{
-                                    width: `${pct}%`,
-                                    height: '100%',
-                                    background: active ? GOLD : '#475569',
+                                    display: 'flex',
+                                    justifyContent: 'space-between',
+                                    gap: 8,
+                                    alignItems: 'flex-start',
                                   }}
-                                />
+                                >
+                                  <div>
+                                    <div
+                                      style={{
+                                        color: '#f8fafc',
+                                        fontWeight: 900,
+                                        fontSize: '0.95rem',
+                                      }}
+                                    >
+                                      {seg.cameraLabel}
+                                    </div>
+                                    <div
+                                      style={{
+                                        color: '#94a3b8',
+                                        fontSize: '0.78rem',
+                                        fontWeight: 600,
+                                        marginTop: 4,
+                                      }}
+                                    >
+                                      {formatCzechDateTime(seg.createdAt)}
+                                    </div>
+                                  </div>
+                                  <span
+                                    style={{
+                                      color: GOLD,
+                                      fontWeight: 900,
+                                      fontSize: '0.82rem',
+                                      flexShrink: 0,
+                                    }}
+                                  >
+                                    {seg.sizeMb} MB
+                                  </span>
+                                </div>
+
+                                <div
+                                  style={{
+                                    color: '#64748b',
+                                    fontSize: '0.75rem',
+                                    fontWeight: 600,
+                                    lineHeight: 1.4,
+                                  }}
+                                >
+                                  {seg.resolution} · {seg.fps} fps ·{' '}
+                                  {Math.round(seg.durationSec / 60)} min
+                                  <br />
+                                  {seg.note}
+                                </div>
+
+                                <div
+                                  style={{
+                                    height: 6,
+                                    borderRadius: 999,
+                                    background: '#1e293b',
+                                    overflow: 'hidden',
+                                  }}
+                                  title="Délka klipu"
+                                >
+                                  <div
+                                    style={{
+                                      width: `${Math.min(100, Math.round((seg.durationSec / 7200) * 100))}%`,
+                                      height: '100%',
+                                      background: GOLD,
+                                    }}
+                                  />
+                                </div>
+
+                                <button
+                                  type="button"
+                                  className="btn btn-gold"
+                                  style={{
+                                    minHeight: 46,
+                                    width: '100%',
+                                    fontWeight: 900,
+                                    marginTop: 'auto',
+                                  }}
+                                  onClick={() => setPlaying(seg)}
+                                >
+                                  <Play size={16} /> Přehrát záznam
+                                </button>
                               </div>
-                            </button>
-                          )
-                        })}
-                      </div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-              )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           )
         })}

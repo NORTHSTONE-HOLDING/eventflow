@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
+import { formatCzechDateTime } from '../lib/czechDate'
 import {
   AlertTriangle,
   Bluetooth,
@@ -32,6 +33,7 @@ import {
 } from '../store/useAppStore'
 import { useInventoryStore } from '../store/useInventoryStore'
 import { usePosSessionStore } from '../store/usePosSessionStore'
+import { useCctvStore } from '../store/useCctvStore'
 import { hasFeature } from '../lib/subscriptions'
 import {
   cartTotals,
@@ -610,6 +612,15 @@ export function EventPOS({ mode = 'admin' }: EventPOSProps) {
       setLastReceipt(tx)
       setCheckoutOpen(false)
       setPosLocked(false)
+
+      // Phase 2 handshake: payment at cashier cancels CCTV theft standby (zero alarm)
+      try {
+        useCctvStore
+          .getState()
+          .cancelStandbyOnPayment(activeTable.id, activeTable.label)
+      } catch {
+        // ignore
+      }
 
       publishCustomerDisplay({
         projectName: project.name,
@@ -1935,7 +1946,7 @@ function ReceiptPanel({
           {tx.tableLabel ? <div>{tx.tableLabel}</div> : null}
         </div>
         <div>{tx.receiptNumber}</div>
-        <div>{new Date(tx.timestamp).toLocaleString('cs-CZ')}</div>
+        <div>{formatCzechDateTime(tx.timestamp)}</div>
         <div>{paymentMethodLabel(tx.paymentMethod)}</div>
         <hr />
         {(tx.lines ?? []).map((l, i) => (

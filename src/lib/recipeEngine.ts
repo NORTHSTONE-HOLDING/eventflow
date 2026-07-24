@@ -5,6 +5,7 @@ import type {
   InventoryItem,
   RecipeIngredientRecord,
 } from '../types'
+import { formatCzechDate } from './czechDate'
 import { inferIngredientsFromCatering } from './inventoryEngine'
 import {
   DEFAULT_USER_ID,
@@ -267,7 +268,7 @@ export function buildPurchaseOrderDocument(opts: {
   projectName?: string
   orderNumber: string
 }): string {
-  const date = new Date().toLocaleDateString('cs-CZ')
+  const date = formatCzechDate(new Date())
   const total = opts.groups.reduce((s, g) => s + g.total_czk, 0)
   const blocks = opts.groups
     .map((g) => {

@@ -11,7 +11,6 @@ import {
   parseISO,
   isToday,
 } from 'date-fns'
-import { cs } from 'date-fns/locale'
 import {
   CalendarDays,
   ChevronLeft,
@@ -24,6 +23,10 @@ import {
 } from 'lucide-react'
 import { Modal } from './Modal'
 import { getCzechHolidayName, isWeekend, toDateKey } from '../lib/czechHolidays'
+import {
+  formatCzechDateWithWeekday,
+  formatCzechMonthNameYear,
+} from '../lib/czechDate'
 import {
   shiftsForDate,
   sumShiftLaborCost,
@@ -152,7 +155,7 @@ export function EventCalendarScheduler({
                 textTransform: 'capitalize',
               }}
             >
-              {isValid(month) ? format(month, 'LLLL yyyy', { locale: cs }) : '—'}
+              {isValid(month) ? formatCzechMonthNameYear(month) : '—'}
             </span>
             <button
               type="button"
@@ -357,7 +360,7 @@ export function EventCalendarScheduler({
         onClose={() => setSelectedDay(null)}
         title={
           selectedDay
-            ? format(selectedDay, 'EEEE d. MMMM yyyy', { locale: cs })
+            ? formatCzechDateWithWeekday(selectedDay)
             : 'Detail dne'
         }
         wide

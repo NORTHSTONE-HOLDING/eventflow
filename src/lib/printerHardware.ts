@@ -4,6 +4,7 @@ import type {
   PrinterRole,
 } from '../types'
 import { uid } from './documentIds'
+import { formatCzechDateTime } from './czechDate'
 
 declare global {
   interface Navigator {
@@ -133,7 +134,7 @@ export function formatKitchenTicket(opts: {
 }): string {
   const title =
     opts.station === 'kitchen' ? 'KUCHYŇSKÁ OBJEDNÁVKA / BONIČKA' : 'BAROVÁ OBJEDNÁVKA'
-  const stamp = new Date().toLocaleString('cs-CZ')
+  const stamp = formatCzechDateTime(new Date())
   const body = (opts.lines ?? [])
     .map((l) => `${String(l.qty).padStart(2, ' ')}×  ${l.name}`)
     .join('\n')
@@ -160,7 +161,7 @@ export function formatCustomerReceipt80mm(opts: {
   totalVat: number
   paymentLabel: string
 }): string {
-  const stamp = new Date().toLocaleString('cs-CZ')
+  const stamp = formatCzechDateTime(new Date())
   const body = (opts.lines ?? [])
     .map(
       (l) =>

@@ -22,6 +22,7 @@ import {
   type CctvCamera,
 } from '../lib/cctvEngine'
 import { cctvStorageStatusLabel } from '../lib/cctvStorage'
+import { formatCzechTime } from '../lib/czechDate'
 import { openWhatsApp } from '../lib/whatsapp'
 import { ensurePosTables as ensureTables } from '../lib/tableTabs'
 import { CctvCameraFeed, CctvFullscreenModal } from './cctv/CctvCameraTile'
@@ -46,6 +47,7 @@ export function CctvSurveillance() {
   const aiToggles = useCctvStore((s) => s.aiToggles)
   const flashingCameraId = useCctvStore((s) => s.flashingCameraId)
   const theftSimRunning = useCctvStore((s) => s.theftSimRunning)
+  const standbyTrack = useCctvStore((s) => s.standbyTrack)
   const customZones = useCctvStore((s) => s.customZones)
   const setMonitoring = useCctvStore((s) => s.setMonitoring)
   const setAiToggle = useCctvStore((s) => s.setAiToggle)
@@ -56,6 +58,9 @@ export function CctvSurveillance() {
   const seedDemoArchiveIfEmpty = useCctvStore((s) => s.seedDemoArchiveIfEmpty)
   const runRetentionPurge = useCctvStore((s) => s.runRetentionPurge)
   const runTheftSimulation = useCctvStore((s) => s.runTheftSimulation)
+  const simulateCashierPaymentHandshake = useCctvStore(
+    (s) => s.simulateCashierPaymentHandshake,
+  )
   const runFightSimulation = useCctvStore((s) => s.runFightSimulation)
   const acknowledgeAlert = useCctvStore((s) => s.acknowledgeAlert)
   const clearAcknowledged = useCctvStore((s) => s.clearAcknowledged)
@@ -121,12 +126,31 @@ export function CctvSurveillance() {
       tables,
       orders: posOrders ?? [],
       projectId: project?.id || 'sim',
+      forceUnpaidPath: true,
     })
     if (!alert) {
-      setToast('Simulace již běží — počkejte na dokončení 3s sekvence')
+      const track = useCctvStore.getState().standbyTrack
+      if (track?.phase === 'cancelled_paid') {
+        setToast('Standby zrušen — platba u pokladny (nulový poplach)')
+        return
+      }
+      if (useCctvStore.getState().theftSimRunning) {
+        setToast('Simulace handshake právě běží…')
+        return
+      }
+      setToast('Simulace ukončena bez poplachu')
       return
     }
     setToast(alert.message)
+  }
+
+  const triggerCashierCancel = () => {
+    const ok = simulateCashierPaymentHandshake()
+    setToast(
+      ok
+        ? '✓ Platba u pokladny (Kamera 02) — standby zrušen, nulový poplach'
+        : 'Žádný aktivní standby — nejdříve spusťte simulaci útěku',
+    )
   }
 
   const triggerFight = () => {
@@ -219,10 +243,26 @@ export function CctvSurveillance() {
               opacity: theftSimRunning ? 0.85 : 1,
             }}
             onClick={() => void triggerTheft()}
-            title="3s sekvence: Kamera 01 bliká → live log → systémový poplach STŮL 3"
+            title="Chytrý handshake: Fáze 1 odchod → Fáze 2 pokladna → Fáze 3 východ = poplach"
           >
             <Siren size={16} />{' '}
-            {theftSimRunning ? 'Simulace běží (3s)…' : '🧪 Nasimulovat útěk bez placení'}
+            {theftSimRunning
+              ? `Handshake běží (${standbyTrack?.phase || '…'})…`
+              : '🧪 Nasimulovat útěk bez placení'}
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            style={{
+              minHeight: 52,
+              fontWeight: 800,
+              borderColor: '#22c55e',
+              color: '#86efac',
+            }}
+            onClick={triggerCashierCancel}
+            title="Fáze 2: simulovat platbu u pokladny — zruší standby (nulový poplach)"
+          >
+            ✓ Platba u pokladny (zrušit standby)
           </button>
           <button
             type="button"
@@ -486,7 +526,7 @@ export function CctvSurveillance() {
               }}
             >
               <span style={{ color: '#64748b' }}>
-                {new Date(row.createdAt).toLocaleTimeString('cs-CZ')} ·{' '}
+                {formatCzechTime(row.createdAt)} ·{' '}
               </span>
               {row.message}
             </div>
@@ -537,14 +577,16 @@ export function CctvSurveillance() {
           <strong style={{ color: GOLD }}>Logika Vision AI + infrastruktura</strong>
         </div>
         <p style={{ color: '#94a3b8', fontSize: '0.88rem', lineHeight: 1.6, margin: 0 }}>
-          Interaktivní simulace útěku spustí 3s sekvenci na kameře 01 (Hlavní vchod), zapíše live
-          event log a vyšle systémový poplach: „🚨 POPLACH: Detekován útěk bez placení ze STOLU
-          3!“ na dashboard, POS terminály a TV wall. Video chunky cílí do Supabase bucketu{' '}
+          Chytré hlídání: Fáze 1 — klient odchází od stolu (standby log). Fáze 2 — Kamera 02 /
+          pokladna: pokud číšník zpracuje platbu, standby se ihned zruší (nulový poplach). Fáze 3 —
+          pouze pokud Kamera 01 (Hlavní vchod) detekuje odchod a účet zůstává{' '}
+          <strong style={{ color: '#fecaca' }}>OTEVŘENO</strong>, spustí se červený systémový
+          poplach. Video chunky cílí do Supabase bucketu{' '}
           <strong style={{ color: GOLD }}>cctv-recordings</strong> ve tvaru{' '}
           <code style={{ color: '#e2e8f0' }}>
             /cctv-recordings/&#123;camera_id&#125;/&#123;YYYY-MM-DD&#125;/&#123;hour&#125;.mp4
           </code>{' '}
-          s automatickou retencí {CCTV_RETENTION_DAYS} dní.
+          s retencí {CCTV_RETENTION_DAYS} dní. Data v UI: formát <strong>DD.MM.YYYY</strong>.
         </p>
       </div>
 

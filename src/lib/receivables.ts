@@ -1,5 +1,6 @@
 import type { AgencyProfile, EventProject } from '../types'
 import { formatCurrency } from './documentIds'
+import { formatCzechDate } from './czechDate'
 
 export type ReceivableStatus = 'paid' | 'open' | 'overdue' | 'none'
 
@@ -54,7 +55,7 @@ export function buildContractDocumentText(
     `Zhotovitel: ${company}, IČO ${profile.ico || '—'}, ${profile.street || ''} ${profile.city || ''}\n` +
     `Objednatel: ${project.clientName || 'Klient'}, tel. ${project.clientPhone || '—'}\n\n` +
     `Čl. I — Předmět díla\n` +
-    `Zhotovitel se zavazuje zajistit eventovou produkci „${project.name}" dne ${project.date || '—'} ` +
+    `Zhotovitel se zavazuje zajistit eventovou produkci „${project.name}" dne ${formatCzechDate(project.date)} ` +
     `v lokalitě ${project.location || '—'} pro ${project.guests || 0} hostů.\n\n` +
     `Čl. II — Cena a platební podmínky\n` +
     `Celková cena díla: ${formatCurrency(amount)} bez DPH dle nabídky ${project.documents?.nabidka || '—'}.\n` +
@@ -87,7 +88,7 @@ export function buildProtocolDocumentText(
     `Zhotovitel: ${company}\n` +
     `Objednatel: ${project.clientName || 'Klient'}\n` +
     `Akce: ${project.name}\n` +
-    `Datum akce: ${project.date || '—'}\n` +
+    `Datum akce: ${formatCzechDate(project.date)}\n` +
     `Místo: ${project.location || '—'}\n\n` +
     `1. Objednatel potvrzuje, že dílo (eventová produkce) bylo předáno řádně a včas.\n` +
     `2. Objednatel nemá výhrady k rozsahu ani kvalitě plnění, které by odůvodňovaly zadržení doplatku.\n` +
@@ -144,7 +145,7 @@ export function getProjectReceivable(
     contractId: project.documents?.smlouva || 'SOD—',
     protocolId: project.documents?.protokol || 'PP—',
     dueDate,
-    dueDateLabel: due.toLocaleDateString('cs-CZ'),
+    dueDateLabel: formatCzechDate(due),
     daysOverdue,
     contractBalance,
     posExtras,

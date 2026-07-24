@@ -47,6 +47,7 @@ import {
 } from '../lib/gastroImporter'
 import { runInventoryAiCommand } from '../lib/inventoryAiCopilot'
 import { uid } from '../lib/documentIds'
+import { useProductImageStore } from './useProductImageStore'
 
 function normalizeStoredItem(item: InventoryItem): InventoryItem {
   return createEmptyInventoryItem({
@@ -55,7 +56,39 @@ function normalizeStoredItem(item: InventoryItem): InventoryItem {
     sale_price: item.sale_price ?? 0,
     pack_volume: item.pack_volume ?? null,
     open_pack_remaining: item.open_pack_remaining ?? null,
+    image_url: item.image_url ?? null,
   })
+}
+
+function syncItemImageToProductStore(item: InventoryItem) {
+  if (!item.image_url) return
+  useProductImageStore.getState().setImage(item.id, item.image_url, item.name)
+}
+
+/** Background AI image fetch → writes image_url + POS image store. */
+async function provisionAiImageForItem(item: InventoryItem) {
+  if (item.image_url) {
+    syncItemImageToProductStore(item)
+    return
+  }
+  const url = await useProductImageStore.getState().ensureAiImage(item)
+  if (!url) return
+  const state = useInventoryStore.getState()
+  const current = state.items.find((i) => i.id === item.id) || item
+  if (current.image_url) {
+    syncItemImageToProductStore(current)
+    return
+  }
+  const updated = normalizeStoredItem({
+    ...current,
+    image_url: url,
+    updated_at: new Date().toISOString(),
+  })
+  useInventoryStore.setState({
+    items: state.items.map((i) => (i.id === item.id ? updated : i)),
+  })
+  syncItemImageToProductStore(updated)
+  await persistItem(updated)
 }
 
 interface InventoryState {
@@ -90,6 +123,11 @@ interface InventoryState {
 
   upsertInventoryItem: (
     patch: Partial<InventoryItem> & { name: string; id?: string },
+  ) => Promise<{ ok: boolean; item?: InventoryItem; error?: string }>
+
+  setItemImageUrl: (
+    itemId: string,
+    imageUrl: string,
   ) => Promise<{ ok: boolean; item?: InventoryItem; error?: string }>
 
   importGastroDrafts: (
@@ -180,8 +218,10 @@ export const useInventoryStore = create<InventoryState>()(
               const recipesRes = await fetchRecipesRemote()
               if (remote.ok && remote.items.length) {
                 const logsRes = await fetchInventoryLogsRemote()
+                const remoteItems = remote.items.map(normalizeStoredItem)
+                remoteItems.forEach(syncItemImageToProductStore)
                 set({
-                  items: remote.items.map(normalizeStoredItem),
+                  items: remoteItems,
                   logs: logsRes.ok ? logsRes.logs : get().logs,
                   recipes: recipesRes.ok ? recipesRes.recipes : get().recipes,
                   lastSyncedAt: new Date().toISOString(),
@@ -195,10 +235,12 @@ export const useInventoryStore = create<InventoryState>()(
             }
           }
 
-          const existing = get().items
+          const existing = get().items.map(normalizeStoredItem)
           if (!existing.length) {
+            const seeded = seedDefaultInventory()
+            seeded.forEach(syncItemImageToProductStore)
             set({
-              items: seedDefaultInventory(),
+              items: seeded,
               loading: false,
               hydrated: true,
               syncMode: mode,
@@ -207,7 +249,9 @@ export const useInventoryStore = create<InventoryState>()(
             })
             return
           }
+          existing.forEach(syncItemImageToProductStore)
           set({
+            items: existing,
             loading: false,
             hydrated: true,
             syncMode: mode,
@@ -215,11 +259,15 @@ export const useInventoryStore = create<InventoryState>()(
             pendingQueue: getOfflineQueueSize(),
           })
         } catch (e) {
+          const fallback = get().items.length
+            ? get().items.map(normalizeStoredItem)
+            : seedDefaultInventory()
+          fallback.forEach(syncItemImageToProductStore)
           set({
             loading: false,
             hydrated: true,
             error: e instanceof Error ? e.message : 'Nepodařilo se načíst sklad',
-            items: get().items.length ? get().items : seedDefaultInventory(),
+            items: fallback,
             syncMode: 'offline',
             cloudStatus: 'local',
             pendingQueue: getOfflineQueueSize(),
@@ -498,6 +546,9 @@ export const useInventoryStore = create<InventoryState>()(
               1000
             set({ items: next })
             await persistItem(updated)
+            if (updated.image_url) {
+              syncItemImageToProductStore(updated)
+            }
             if (delta !== 0) {
               const log = createInventoryLog({
                 item_id: updated.id,
@@ -508,6 +559,9 @@ export const useInventoryStore = create<InventoryState>()(
               })
               set({ logs: [log, ...get().logs].slice(0, 300) })
               await persistLog(log)
+            }
+            if (!updated.image_url) {
+              void provisionAiImageForItem(updated)
             }
             await get().refreshSyncStatus()
             return { ok: true, item: updated }
@@ -531,10 +585,40 @@ export const useInventoryStore = create<InventoryState>()(
             set({ logs: [log, ...get().logs].slice(0, 300) })
             await persistLog(log)
           }
+          if (neu.image_url) {
+            syncItemImageToProductStore(neu)
+          } else {
+            void provisionAiImageForItem(neu)
+          }
           await get().refreshSyncStatus()
           return { ok: true, item: neu }
         } catch (e) {
           const msg = e instanceof Error ? e.message : 'Uložení položky selhalo'
+          return { ok: false, error: msg }
+        }
+      },
+
+      setItemImageUrl: async (itemId, imageUrl) => {
+        try {
+          const items = get().items.map(normalizeStoredItem)
+          const existing = items.find((i) => i.id === itemId)
+          if (!existing) {
+            return { ok: false, error: 'Položka nenalezena' }
+          }
+          const updated = normalizeStoredItem({
+            ...existing,
+            image_url: imageUrl,
+            updated_at: new Date().toISOString(),
+          })
+          set({
+            items: items.map((i) => (i.id === itemId ? updated : i)),
+          })
+          syncItemImageToProductStore(updated)
+          await persistItem(updated)
+          await get().refreshSyncStatus()
+          return { ok: true, item: updated }
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : 'Uložení fotky selhalo'
           return { ok: false, error: msg }
         }
       },
@@ -547,6 +631,7 @@ export const useInventoryStore = create<InventoryState>()(
           let updated = 0
           const newLogs: InventoryLog[] = []
           const imported = draftsToInventoryItems(drafts)
+          const touchedIds = new Set<string>()
 
           for (const neu of imported) {
             const existing = matchInventoryItem(items, {
@@ -576,6 +661,7 @@ export const useInventoryStore = create<InventoryState>()(
                 updated_at: new Date().toISOString(),
               })
               items = items.map((i) => (i.id === existing.id ? updatedItem : i))
+              touchedIds.add(existing.id)
               const log = createInventoryLog({
                 item_id: existing.id,
                 type: 'naskladneni',
@@ -589,6 +675,7 @@ export const useInventoryStore = create<InventoryState>()(
               updated += 1
             } else {
               items = [...items, neu]
+              touchedIds.add(neu.id)
               const log = createInventoryLog({
                 item_id: neu.id,
                 type: 'naskladneni',
@@ -609,6 +696,14 @@ export const useInventoryStore = create<InventoryState>()(
             loading: false,
             lastSyncedAt: new Date().toISOString(),
           })
+          for (const item of items) {
+            if (!touchedIds.has(item.id)) continue
+            if (item.image_url) {
+              syncItemImageToProductStore(item)
+            } else {
+              void provisionAiImageForItem(item)
+            }
+          }
           await get().refreshSyncStatus()
           return { ok: true, created, updated }
         } catch (e) {

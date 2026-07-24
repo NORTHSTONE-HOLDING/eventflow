@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { formatCzechDateTime } from '../lib/czechDate'
 import {
-  AlertTriangle,
   Bluetooth,
   FileText,
   Lock,
@@ -19,8 +18,9 @@ import {
   CheckCircle2,
   Banknote,
   ChefHat,
-  Map,
+  Map as MapIcon,
   Sparkles,
+  AlertTriangle,
   Bell,
   Send,
   UserRound,
@@ -32,8 +32,14 @@ import {
   isPosUnlocked,
 } from '../store/useAppStore'
 import { useInventoryStore } from '../store/useInventoryStore'
+import {
+  productNameKey,
+  useProductImageStore,
+} from '../store/useProductImageStore'
 import { usePosSessionStore } from '../store/usePosSessionStore'
 import { useCctvStore } from '../store/useCctvStore'
+import { PosProductTile } from './pos/PosProductTile'
+import { normalizeName } from '../lib/venueCatalog'
 import { hasFeature } from '../lib/subscriptions'
 import {
   cartTotals,
@@ -110,6 +116,10 @@ export function EventPOS({ mode = 'admin' }: EventPOSProps) {
   const sendTableOrderToKds = useAppStore((s) => s.sendTableOrderToKds)
   const syncRecipesFromProjects = useInventoryStore((s) => s.syncRecipesFromProjects)
   const bootstrapInventory = useInventoryStore((s) => s.bootstrap)
+  const inventoryItems = useInventoryStore((s) => s.items)
+  const imageByKey = useProductImageStore((s) => s.byKey)
+  const imageFetching = useProductImageStore((s) => s.fetching)
+  const ensureAiImage = useProductImageStore((s) => s.ensureAiImage)
 
   const activeWaiterId = usePosSessionStore((s) => s.activeWaiterId)
   const waiters = usePosSessionStore((s) => s.waiters)
@@ -201,6 +211,39 @@ export function EventPOS({ mode = 'admin' }: EventPOSProps) {
     [catalogSource, mainCat, subCat],
   )
 
+  const inventoryImageByName = useMemo(() => {
+    const byName = new globalThis.Map<string, string>()
+    for (const inv of inventoryItems ?? []) {
+      const url =
+        inv.image_url ||
+        imageByKey[inv.id] ||
+        imageByKey[productNameKey(inv.name)] ||
+        null
+      if (url) byName.set(normalizeName(inv.name), url)
+    }
+    return byName
+  }, [inventoryItems, imageByKey])
+
+  const resolveMenuImage = useCallback(
+    (item: CateringItem): string | null => {
+      if (item.image_url) return item.image_url
+      const byId = imageByKey[item.id]
+      if (byId) return byId
+      const byName = imageByKey[productNameKey(item.name)]
+      if (byName) return byName
+      return inventoryImageByName.get(normalizeName(item.name)) || null
+    },
+    [imageByKey, inventoryImageByName],
+  )
+
+  const isMenuImageFetching = useCallback(
+    (item: CateringItem): boolean =>
+      Boolean(
+        imageFetching[item.id] || imageFetching[productNameKey(item.name)],
+      ),
+    [imageFetching],
+  )
+
   useEffect(() => {
     if (project?.id) ensureProjectPosReady(project.id)
   }, [project?.id, ensureProjectPosReady])
@@ -210,6 +253,28 @@ export function EventPOS({ mode = 'admin' }: EventPOSProps) {
       if (project) void syncRecipesFromProjects([project])
     })
   }, [bootstrapInventory, syncRecipesFromProjects, project])
+
+  // Lazy AI image fill for visible POS tiles (instant inventory/POS sync via shared store)
+  useEffect(() => {
+    let cancelled = false
+    const run = async () => {
+      for (const item of menuItems) {
+        if (cancelled) return
+        if (resolveMenuImage(item)) continue
+        if (isMenuImageFetching(item)) continue
+        await ensureAiImage({
+          id: item.id,
+          name: item.name,
+          category: item.category,
+          image_url: item.image_url ?? null,
+        })
+      }
+    }
+    void run()
+    return () => {
+      cancelled = true
+    }
+  }, [menuItems, resolveMenuImage, isMenuImageFetching, ensureAiImage])
 
   // Keep waiter workspace ↔ project table in sync (fix orphaned IDs)
   useEffect(() => {
@@ -811,7 +876,7 @@ export function EventPOS({ mode = 'admin' }: EventPOSProps) {
           </div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <button type="button" className={showMap ? 'btn btn-gold' : 'btn btn-ghost'} onClick={() => setShowMap((v) => !v)} style={{ minHeight: 48 }}>
-              <Map size={15} /> {showMap ? 'Skrýt mapu stolů' : 'Mapa Stolů'}
+              <MapIcon size={15} /> {showMap ? 'Skrýt mapu stolů' : 'Mapa Stolů'}
             </button>
             <button type="button" className="btn btn-ghost" onClick={() => setShowPrinters((v) => !v)} style={{ minHeight: 48 }}>
               <Settings2 size={15} /> Tiskárny
@@ -837,7 +902,7 @@ export function EventPOS({ mode = 'admin' }: EventPOSProps) {
       {staffMode && (
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
           <button type="button" className={showMap ? 'btn btn-gold' : 'btn btn-ghost'} onClick={() => setShowMap((v) => !v)} style={{ minHeight: 48 }}>
-            <Map size={15} /> {showMap ? 'Skrýt mapu stolů' : 'Mapa Stolů'}
+            <MapIcon size={15} /> {showMap ? 'Skrýt mapu stolů' : 'Mapa Stolů'}
           </button>
           <button type="button" className="btn btn-ghost" onClick={() => openPosDisplayWindow('/pos/kds/kitchen', 2)} style={{ minHeight: 48 }}>
             <ChefHat size={15} /> Displej KUCHYŇ
@@ -1332,86 +1397,18 @@ export function EventPOS({ mode = 'admin' }: EventPOSProps) {
               }}
             >
               {menuItems.map((item) => {
-                const sold = item.soldPortions || 0
-                const planned = item.plannedPortions || item.portion || 1
                 const linkedLow = lowStock.some((w) =>
                   (w.linkedCateringIds ?? []).includes(item.id),
                 )
                 return (
-                  <button
+                  <PosProductTile
                     key={item.id}
-                    type="button"
-                    onClick={() => addToCart(item)}
-                    className="pos-item-card"
-                    style={{
-                      minHeight: 128,
-                      minWidth: 44,
-                      padding: '1rem 0.85rem',
-                      background: '#1e293b',
-                      border: `1px solid ${linkedLow ? 'rgba(239,68,68,0.65)' : '#334155'}`,
-                      borderRadius: 14,
-                      cursor: 'pointer',
-                      textAlign: 'left',
-                      color: '#fff',
-                      position: 'relative',
-                      touchAction: 'manipulation',
-                      boxShadow: '0 4px 14px rgba(0,0,0,0.25)',
-                    }}
-                  >
-                    {linkedLow && (
-                      <motion.span
-                        animate={{ opacity: [1, 0.3, 1] }}
-                        transition={{ duration: 1, repeat: Infinity }}
-                        style={{ position: 'absolute', top: 8, right: 8 }}
-                      >
-                        <AlertTriangle size={14} color="#fca5a5" />
-                      </motion.span>
-                    )}
-                    <div
-                      style={{
-                        fontSize: '0.65rem',
-                        textTransform: 'uppercase',
-                        letterSpacing: '0.08em',
-                        color: '#94a3b8',
-                        marginBottom: 6,
-                        fontWeight: 700,
-                      }}
-                    >
-                      {item.subcategory || item.category}
-                    </div>
-                    <div
-                      style={{
-                        fontFamily: 'var(--font-display)',
-                        fontSize: '1.05rem',
-                        lineHeight: 1.25,
-                        marginBottom: 10,
-                        minHeight: 44,
-                        color: '#ffffff',
-                        fontWeight: 800,
-                      }}
-                    >
-                      {item.name}
-                    </div>
-                    <div
-                      style={{
-                        color: '#D4AF37',
-                        fontWeight: 900,
-                        fontSize: '1.15rem',
-                      }}
-                    >
-                      {formatCurrency(item.sellPrice || 0)}
-                    </div>
-                    <div
-                      style={{
-                        fontSize: '0.7rem',
-                        color: '#64748b',
-                        marginTop: 6,
-                        fontWeight: 600,
-                      }}
-                    >
-                      {sold}/{planned} porcí
-                    </div>
-                  </button>
+                    item={item}
+                    imageUrl={resolveMenuImage(item)}
+                    isFetching={isMenuImageFetching(item)}
+                    lowStock={linkedLow}
+                    onAdd={() => addToCart(item)}
+                  />
                 )
               })}
               {!menuItems.length && (
@@ -1767,6 +1764,11 @@ export function EventPOS({ mode = 'admin' }: EventPOSProps) {
         .pos-item-card:active {
           transform: scale(0.98);
           border-color: #D4AF37 !important;
+        }
+        .pos-item-card .pos-item-overlay {
+          background: rgba(2, 6, 23, 0.7) !important;
+          backdrop-filter: blur(6px);
+          -webkit-backdrop-filter: blur(6px);
         }
         .pos-checkout-btn:not(:disabled):active {
           transform: scale(0.99);

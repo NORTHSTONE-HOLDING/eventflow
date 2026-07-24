@@ -1,7 +1,9 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
+  Camera,
   Download,
+  ImagePlus,
   Loader2,
   Pencil,
   Plus,
@@ -12,6 +14,10 @@ import {
 } from 'lucide-react'
 import { useInventoryStore } from '../../store/useInventoryStore'
 import { useAppStore } from '../../store/useAppStore'
+import {
+  productNameKey,
+  useProductImageStore,
+} from '../../store/useProductImageStore'
 import { formatCurrency } from '../../lib/documentIds'
 import { formatCzechDateTime } from '../../lib/czechDate'
 import { formatStockWithPack } from '../../lib/unitConversion'
@@ -83,9 +89,14 @@ export function InventoryCatalogPanel() {
   const recipes = useInventoryStore((s) => s.recipes)
   const loading = useInventoryStore((s) => s.loading)
   const upsertInventoryItem = useInventoryStore((s) => s.upsertInventoryItem)
+  const setItemImageUrl = useInventoryStore((s) => s.setItemImageUrl)
   const importGastroDrafts = useInventoryStore((s) => s.importGastroDrafts)
   const applyAiCopilotCommand = useInventoryStore((s) => s.applyAiCopilotCommand)
   const setToast = useAppStore((s) => s.setToast)
+  const imageByKey = useProductImageStore((s) => s.byKey)
+  const imageFetching = useProductImageStore((s) => s.fetching)
+  const saveManualImage = useProductImageStore((s) => s.saveManualImage)
+  const ensureAiImage = useProductImageStore((s) => s.ensureAiImage)
 
   const [edit, setEdit] = useState<EditForm | null>(null)
   const [quick, setQuick] = useState<EditForm>(() => emptyQuickForm())
@@ -96,7 +107,9 @@ export function InventoryCatalogPanel() {
   const [importBusy, setImportBusy] = useState(false)
   const [importPreview, setImportPreview] = useState<GastroImportDraft[]>([])
   const [importMsg, setImportMsg] = useState('')
+  const [photoBusy, setPhotoBusy] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
+  const cameraRef = useRef<HTMLInputElement>(null)
 
   const sorted = useMemo(
     () =>
@@ -105,6 +118,28 @@ export function InventoryCatalogPanel() {
       ),
     [items],
   )
+
+  const resolveItemImage = (item: InventoryItem): string | null => {
+    return (
+      imageByKey[item.id] ||
+      imageByKey[productNameKey(item.name)] ||
+      item.image_url ||
+      null
+    )
+  }
+
+  const isItemFetching = (item: InventoryItem): boolean =>
+    Boolean(imageFetching[item.id] || imageFetching[productNameKey(item.name)])
+
+  useEffect(() => {
+    if (!edit?.id) return
+    const item = items.find((i) => i.id === edit.id)
+    if (!item) return
+    if (resolveItemImage(item)) return
+    void ensureAiImage(item).then((url) => {
+      if (url) void setItemImageUrl(item.id, url)
+    })
+  }, [edit?.id, items, ensureAiImage, setItemImageUrl, imageByKey])
 
   const saveForm = async (form: EditForm, closeAfter: boolean) => {
     if (!form.name.trim()) {
@@ -129,9 +164,41 @@ export function InventoryCatalogPanel() {
       setToast(res.error || 'Uložení selhalo')
       return
     }
-    setToast(form.id ? 'Změny uloženy' : 'Položka naskladněna')
+    setToast(
+      form.id
+        ? 'Změny uloženy · AI dohledává produktové foto…'
+        : 'Položka naskladněna · AI dohledává produktové foto…',
+    )
     if (closeAfter) setEdit(null)
     else setQuick(emptyQuickForm())
+  }
+
+  const onManualPhoto = async (file: File | null) => {
+    if (!file || !edit?.id) {
+      setToast('Nejprve uložte položku, poté nahrajte fotku')
+      return
+    }
+    const item = items.find((i) => i.id === edit.id)
+    if (!item) {
+      setToast('Položka nenalezena')
+      return
+    }
+    setPhotoBusy(true)
+    try {
+      const url = await saveManualImage(item, file)
+      if (!url) {
+        setToast('Nahrání fotky selhalo')
+        return
+      }
+      const res = await setItemImageUrl(item.id, url)
+      if (!res.ok) {
+        setToast(res.error || 'Uložení fotky selhalo')
+        return
+      }
+      setToast('Produktová fotka uložena · Kasa aktualizována')
+    } finally {
+      setPhotoBusy(false)
+    }
   }
 
   const runAi = async () => {
@@ -169,7 +236,9 @@ export function InventoryCatalogPanel() {
         setToast(res.error || 'Import selhal')
         return
       }
-      setToast(`Import hotov · nové ${res.created} · aktualizované ${res.updated}`)
+      setToast(
+        `Import hotov · nové ${res.created} · aktualizované ${res.updated} · AI dohledává fotky…`,
+      )
       setImportPreview([])
       setImportOpen(false)
     } finally {
@@ -186,9 +255,12 @@ export function InventoryCatalogPanel() {
     )
   }
 
+  const editItem = edit?.id ? items.find((i) => i.id === edit.id) : null
+  const editImage = editItem ? resolveItemImage(editItem) : null
+  const editFetching = editItem ? isItemFetching(editItem) : false
+
   return (
     <div style={{ display: 'grid', gap: 14 }}>
-      {/* AI Co-pilot */}
       <div
         className="panel"
         style={{
@@ -246,7 +318,6 @@ export function InventoryCatalogPanel() {
         )}
       </div>
 
-      {/* Quick restock + import */}
       <div className="panel">
         <div
           style={{
@@ -315,7 +386,7 @@ export function InventoryCatalogPanel() {
           style={{ marginTop: 12, minHeight: 48, fontWeight: 900 }}
           onClick={() => void saveForm(quick, false)}
         >
-          <Save size={15} /> Uložit
+          <Save size={15} /> Uložit · AI dohledá foto
         </button>
       </div>
 
@@ -331,7 +402,7 @@ export function InventoryCatalogPanel() {
             <strong style={{ color: GOLD }}>Universal Gastro Migrace</strong>
             <p style={{ color: '#94a3b8', fontSize: '0.85rem', margin: '8px 0 12px' }}>
               Nahrajte CSV/Excel ze starého systému. AI (nebo lokální parser) zařadí položky do
-              Jídlo / Pití / Inventář, doplní EAN a ceny.
+              Jídlo / Pití / Inventář, doplní EAN, ceny a automaticky dohledá produktové fotky.
             </p>
             <div
               onDragOver={(e) => e.preventDefault()}
@@ -414,7 +485,7 @@ export function InventoryCatalogPanel() {
                   disabled={importBusy}
                   onClick={() => void commitImport()}
                 >
-                  Potvrdit import ({importPreview.length})
+                  Potvrdit import ({importPreview.length}) · AI fotky
                 </button>
               </>
             )}
@@ -422,7 +493,6 @@ export function InventoryCatalogPanel() {
         )}
       </AnimatePresence>
 
-      {/* Catalog table */}
       <div className="panel" style={{ overflowX: 'auto' }}>
         <h3 style={{ marginBottom: 10, fontSize: '1.1rem' }}>
           Katalog skladu · receptury: {(recipes ?? []).length} · klepněte na ✏️ nebo dvojklik řádku
@@ -430,6 +500,7 @@ export function InventoryCatalogPanel() {
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
           <thead>
             <tr style={{ color: 'var(--text-muted)', textAlign: 'left' }}>
+              <th style={{ padding: '0.5rem' }}>Foto</th>
               <th style={{ padding: '0.5rem' }}>Název</th>
               <th style={{ padding: '0.5rem' }}>EAN</th>
               <th style={{ padding: '0.5rem' }}>Stav</th>
@@ -443,6 +514,8 @@ export function InventoryCatalogPanel() {
           <tbody>
             {sorted.map((i) => {
               const low = i.current_quantity <= i.minimum_quantity
+              const img = resolveItemImage(i)
+              const fetching = isItemFetching(i)
               return (
                 <tr
                   key={i.id}
@@ -450,10 +523,51 @@ export function InventoryCatalogPanel() {
                   onDoubleClick={() => setEdit(itemToForm(i))}
                 >
                   <td style={{ padding: '0.55rem' }}>
+                    <div
+                      style={{
+                        width: 48,
+                        height: 48,
+                        borderRadius: 10,
+                        overflow: 'hidden',
+                        border: `1px solid ${GOLD}55`,
+                        background: '#020617',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        position: 'relative',
+                      }}
+                    >
+                      {img ? (
+                        <img
+                          src={img}
+                          alt={i.name}
+                          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                        />
+                      ) : (
+                        <ImagePlus size={18} color={GOLD} />
+                      )}
+                      {fetching && (
+                        <div
+                          style={{
+                            position: 'absolute',
+                            inset: 0,
+                            background: 'rgba(2,6,23,0.55)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
+                        >
+                          <Loader2 className="spin" size={14} color={GOLD} />
+                        </div>
+                      )}
+                    </div>
+                  </td>
+                  <td style={{ padding: '0.55rem' }}>
                     <div style={{ fontWeight: 700 }}>{i.name}</div>
                     <div style={{ fontSize: '0.72rem', color: 'var(--text-dim)' }}>
                       {CATEGORIES.find((c) => c.value === i.category)?.label || i.category} ·{' '}
                       {i.warehouse_section}
+                      {fetching ? ' · AI vyhledává produktové foto...' : ''}
                     </div>
                   </td>
                   <td style={{ padding: '0.55rem', color: '#94a3b8' }}>{i.barcode || '—'}</td>
@@ -548,7 +662,6 @@ export function InventoryCatalogPanel() {
         </div>
       </div>
 
-      {/* Edit modal */}
       <AnimatePresence>
         {edit && (
           <motion.div
@@ -604,6 +717,115 @@ export function InventoryCatalogPanel() {
                   <X size={16} />
                 </button>
               </div>
+
+              <button
+                type="button"
+                onClick={() => cameraRef.current?.click()}
+                disabled={photoBusy || !edit.id}
+                title="Klepněte pro focení / nahrání fotky"
+                style={{
+                  width: '100%',
+                  minHeight: 180,
+                  marginBottom: 14,
+                  borderRadius: 14,
+                  border: `2px dashed ${GOLD}`,
+                  background: 'radial-gradient(circle at 40% 30%, #1e293b, #020617 75%)',
+                  cursor: edit.id ? 'pointer' : 'not-allowed',
+                  position: 'relative',
+                  overflow: 'hidden',
+                  touchAction: 'manipulation',
+                  padding: 0,
+                }}
+              >
+                {editImage ? (
+                  <img
+                    src={editImage}
+                    alt={edit.name}
+                    style={{
+                      width: '100%',
+                      height: '100%',
+                      objectFit: 'cover',
+                      position: 'absolute',
+                      inset: 0,
+                    }}
+                  />
+                ) : (
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 10,
+                      color: '#e2e8f0',
+                      fontWeight: 700,
+                      padding: 16,
+                    }}
+                  >
+                    <Camera size={36} color={GOLD} />
+                    <span>Klepněte pro fotku z mobilu / nahrání souboru</span>
+                    <span style={{ fontSize: '0.78rem', color: '#94a3b8', fontWeight: 600 }}>
+                      {edit.id
+                        ? 'Kamera tabletu · accept image/* · capture environment'
+                        : 'Nejprve uložte položku, poté přidejte fotku'}
+                    </span>
+                  </div>
+                )}
+                {(photoBusy || editFetching) && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      background: 'rgba(2,6,23,0.62)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 8,
+                      color: '#fef3c7',
+                      fontWeight: 800,
+                      zIndex: 2,
+                    }}
+                  >
+                    <Loader2 className="spin" size={18} color={GOLD} />
+                    AI vyhledává produktové foto...
+                  </div>
+                )}
+                {editImage && !photoBusy && !editFetching && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      padding: '0.55rem 0.75rem',
+                      background: 'rgba(2,6,23,0.7)',
+                      backdropFilter: 'blur(6px)',
+                      color: '#fff',
+                      fontWeight: 700,
+                      fontSize: '0.82rem',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      zIndex: 1,
+                    }}
+                  >
+                    <Camera size={14} color={GOLD} /> Změnit fotku (galerie / fotoaparát)
+                  </div>
+                )}
+              </button>
+              <input
+                ref={cameraRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                hidden
+                onChange={(e) => {
+                  const file = e.target.files?.[0] || null
+                  e.target.value = ''
+                  void onManualPhoto(file)
+                }}
+              />
+
               <div
                 style={{
                   display: 'grid',

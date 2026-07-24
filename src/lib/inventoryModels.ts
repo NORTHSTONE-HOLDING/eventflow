@@ -103,6 +103,12 @@ export function createEmptyInventoryItem(
         : partial.open_pack_remaining == null
           ? null
           : Number(partial.open_pack_remaining),
+    image_url:
+      partial.image_url === undefined
+        ? null
+        : partial.image_url == null
+          ? null
+          : String(partial.image_url) || null,
     shelf_life: partial.shelf_life ?? null,
     warehouse_section: partial.warehouse_section || 'Hlavní sklad',
     created_at: partial.created_at || now,

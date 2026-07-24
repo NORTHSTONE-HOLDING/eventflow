@@ -106,6 +106,8 @@ export interface CateringItem {
   plannedPortions: number
   soldPortions: number
   ingredients: RecipeIngredient[]
+  /** Product photo URL (https, data URL, or Supabase public URL) */
+  image_url?: string | null
 }
 
 export interface WarehouseItem {
@@ -439,6 +441,11 @@ export interface InventoryItem {
    * Null = začít nové balení při prvním odpisu.
    */
   open_pack_remaining: number | null
+  /**
+   * Produktové foto — https / data URL / Supabase Storage
+   * bucket: product-images/{user_id}/{product_id}.jpg
+   */
+  image_url: string | null
   shelf_life: string | null
   warehouse_section: string
   updated_at: string

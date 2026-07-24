@@ -70,6 +70,7 @@ export interface RecipeIngredientRecord {
 }
 
 export type OfflineQueueKind =
+  | 'inventory_delete'
   | 'inventory_upsert'
   | 'inventory_log'
   | 'recipe_upsert'
@@ -99,7 +100,7 @@ export interface CateringItem {
   allergens: string[]
   inventory: string[]
   category: 'food' | 'beverage' | 'other'
-  subcategory: POSSubcategory
+  subcategory: POSSubcategory | string
   /** POS sell price per portion (Kč, vč. DPH) */
   sellPrice: number
   vatRate: number
@@ -108,6 +109,8 @@ export interface CateringItem {
   ingredients: RecipeIngredient[]
   /** Product photo URL (https, data URL, or Supabase public URL) */
   image_url?: string | null
+  /** Origin inventory id when tile is pushed from Sklad „Do kasy“ */
+  inventory_item_id?: string | null
 }
 
 export interface WarehouseItem {
@@ -188,7 +191,7 @@ export interface POSCartLine {
   cateringId: string
   name: string
   category: 'food' | 'beverage' | 'other'
-  subcategory: POSSubcategory
+  subcategory: POSSubcategory | string
   unitPrice: number
   qty: number
   vatRate: number
@@ -446,6 +449,11 @@ export interface InventoryItem {
    * bucket: product-images/{user_id}/{product_id}.jpg
    */
   image_url: string | null
+  /**
+   * true = aktivní prodejní dlaždice v Kase /pos-terminal
+   * false = pouze skladová surovina (výchozí u AI importu)
+   */
+  pos_visible: boolean
   shelf_life: string | null
   warehouse_section: string
   updated_at: string

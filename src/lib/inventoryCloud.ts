@@ -26,6 +26,7 @@ function mapRowToItem(row: Record<string, unknown>): InventoryItem {
     open_pack_remaining:
       row.open_pack_remaining == null ? null : Number(row.open_pack_remaining),
     image_url: row.image_url == null ? null : String(row.image_url) || null,
+    pos_visible: Boolean(row.pos_visible),
     shelf_life: (row.shelf_life as string | null) ?? null,
     warehouse_section: String(row.warehouse_section || 'Hlavní sklad'),
     created_at: String(row.created_at || new Date().toISOString()),
@@ -121,6 +122,7 @@ export async function upsertInventoryRemote(
       pack_volume: item.pack_volume,
       open_pack_remaining: item.open_pack_remaining,
       image_url: item.image_url,
+      pos_visible: Boolean(item.pos_visible),
       shelf_life: item.shelf_life,
       warehouse_section: item.warehouse_section,
       updated_at: new Date().toISOString(),

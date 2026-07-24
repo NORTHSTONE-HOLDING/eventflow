@@ -80,6 +80,7 @@ import {
   buildVenueMasterCatalog,
   mergeCatalogs,
 } from '../lib/venueCatalog'
+import { mergeWithInventoryPosTiles } from '../lib/inventoryPosBridge'
 import {
   resolveTableIdFromHint,
 } from '../lib/voicePosEngine'
@@ -201,10 +202,15 @@ export function EventPOS({ mode = 'admin' }: EventPOSProps) {
 
   const catalogSource = useMemo(() => {
     const eventMenu = project?.catering ?? []
-    if (operationMode === 'regular') return venueCatalog
-    if (operationMode === 'event') return eventMenu
-    return mergeCatalogs(venueCatalog, eventMenu)
-  }, [operationMode, project?.catering, venueCatalog])
+    const base =
+      operationMode === 'regular'
+        ? venueCatalog
+        : operationMode === 'event'
+          ? eventMenu
+          : mergeCatalogs(venueCatalog, eventMenu)
+    // Sklad „Do kasy“ tiles inject reactively into /pos-terminal + admin Kasa
+    return mergeWithInventoryPosTiles(base, inventoryItems ?? [])
+  }, [operationMode, project?.catering, venueCatalog, inventoryItems])
 
   const menuItems = useMemo(
     () => filterPosMenu(catalogSource, mainCat, subCat),

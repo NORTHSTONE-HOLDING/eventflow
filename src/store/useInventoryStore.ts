@@ -57,6 +57,7 @@ function normalizeStoredItem(item: InventoryItem): InventoryItem {
     pack_volume: item.pack_volume ?? null,
     open_pack_remaining: item.open_pack_remaining ?? null,
     image_url: item.image_url ?? null,
+    pos_visible: Boolean(item.pos_visible),
   })
 }
 
@@ -129,6 +130,14 @@ interface InventoryState {
     itemId: string,
     imageUrl: string,
   ) => Promise<{ ok: boolean; item?: InventoryItem; error?: string }>
+
+  togglePosVisible: (
+    itemId: string,
+  ) => Promise<{ ok: boolean; item?: InventoryItem; error?: string }>
+
+  deleteInventoryItem: (
+    itemId: string,
+  ) => Promise<{ ok: boolean; error?: string }>
 
   importGastroDrafts: (
     drafts: GastroImportDraft[],
@@ -619,6 +628,53 @@ export const useInventoryStore = create<InventoryState>()(
           return { ok: true, item: updated }
         } catch (e) {
           const msg = e instanceof Error ? e.message : 'Uložení fotky selhalo'
+          return { ok: false, error: msg }
+        }
+      },
+
+      togglePosVisible: async (itemId) => {
+        try {
+          const items = get().items.map(normalizeStoredItem)
+          const existing = items.find((i) => i.id === itemId)
+          if (!existing) {
+            return { ok: false, error: 'Položka nenalezena' }
+          }
+          const updated = normalizeStoredItem({
+            ...existing,
+            pos_visible: !existing.pos_visible,
+            updated_at: new Date().toISOString(),
+          })
+          set({
+            items: items.map((i) => (i.id === itemId ? updated : i)),
+          })
+          await persistItem(updated)
+          await get().refreshSyncStatus()
+          return { ok: true, item: updated }
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : 'Přepnutí Do kasy selhalo'
+          return { ok: false, error: msg }
+        }
+      },
+
+      deleteInventoryItem: async (itemId) => {
+        try {
+          const items = get().items.map(normalizeStoredItem)
+          const existing = items.find((i) => i.id === itemId)
+          if (!existing) {
+            return { ok: false, error: 'Položka nenalezena' }
+          }
+          set({
+            items: items.filter((i) => i.id !== itemId),
+            logs: get().logs.filter((l) => l.item_id !== itemId),
+            recipes: (get().recipes ?? []).filter(
+              (r) => r.inventory_item_id !== itemId,
+            ),
+          })
+          await persistOrQueue('inventory_delete', { id: itemId })
+          await get().refreshSyncStatus()
+          return { ok: true }
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : 'Smazání položky selhalo'
           return { ok: false, error: msg }
         }
       },

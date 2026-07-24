@@ -375,6 +375,8 @@ export function draftsToInventoryItems(drafts: GastroImportDraft[]): InventoryIt
       minimum_quantity: d.minimum,
       pack_volume: d.pack_volume,
       warehouse_section: warehouse,
+      // AI / Excel import = skladová surovina, ne automatická dlaždice v Kase
+      pos_visible: false,
     })
   })
 }

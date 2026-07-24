@@ -71,15 +71,27 @@ async function flushOne(entry: OfflineQueueEntry): Promise<{ ok: boolean; error?
         supplier: item.supplier,
         purchase_price: item.purchase_price,
         average_price: item.average_price,
+        sale_price: item.sale_price,
         vat_rate: item.vat_rate,
         unit: item.unit,
         current_quantity: item.current_quantity,
         minimum_quantity: item.minimum_quantity,
+        pack_volume: item.pack_volume,
+        open_pack_remaining: item.open_pack_remaining,
+        image_url: item.image_url,
+        pos_visible: Boolean(item.pos_visible),
         shelf_life: item.shelf_life,
         warehouse_section: item.warehouse_section,
         updated_at: item.updated_at,
         created_at: item.created_at,
       })
+      if (error) return { ok: false, error: error.message }
+      return { ok: true }
+    }
+
+    if (entry.kind === 'inventory_delete') {
+      const payload = entry.payload as { id: string }
+      const { error } = await sb.from('inventory').delete().eq('id', payload.id)
       if (error) return { ok: false, error: error.message }
       return { ok: true }
     }

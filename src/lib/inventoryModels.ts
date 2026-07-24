@@ -109,6 +109,7 @@ export function createEmptyInventoryItem(
         : partial.image_url == null
           ? null
           : String(partial.image_url) || null,
+    pos_visible: Boolean(partial.pos_visible),
     shelf_life: partial.shelf_life ?? null,
     warehouse_section: partial.warehouse_section || 'Hlavní sklad',
     created_at: partial.created_at || now,

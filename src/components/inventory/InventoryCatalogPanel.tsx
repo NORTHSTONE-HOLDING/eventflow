@@ -8,7 +8,9 @@ import {
   Pencil,
   Plus,
   Save,
+  ShoppingCart,
   Sparkles,
+  Trash2,
   Upload,
   X,
 } from 'lucide-react'
@@ -98,6 +100,8 @@ export function InventoryCatalogPanel() {
   const loading = useInventoryStore((s) => s.loading)
   const upsertInventoryItem = useInventoryStore((s) => s.upsertInventoryItem)
   const setItemImageUrl = useInventoryStore((s) => s.setItemImageUrl)
+  const togglePosVisible = useInventoryStore((s) => s.togglePosVisible)
+  const deleteInventoryItem = useInventoryStore((s) => s.deleteInventoryItem)
   const importGastroDrafts = useInventoryStore((s) => s.importGastroDrafts)
   const applyAiCopilotCommand = useInventoryStore((s) => s.applyAiCopilotCommand)
   const setToast = useAppStore((s) => s.setToast)
@@ -106,7 +110,9 @@ export function InventoryCatalogPanel() {
   const saveManualImage = useProductImageStore((s) => s.saveManualImage)
   const ensureAiImage = useProductImageStore((s) => s.ensureAiImage)
   const customCategories = useCategoryRegistryStore((s) => s.customCategories)
+  const customSubcategories = useCategoryRegistryStore((s) => s.customSubcategories)
   const addCustomCategory = useCategoryRegistryStore((s) => s.addCustomCategory)
+  const addCustomSubcategory = useCategoryRegistryStore((s) => s.addCustomSubcategory)
   const getAllCategories = useCategoryRegistryStore((s) => s.getAllCategories)
 
   const [edit, setEdit] = useState<EditForm | null>(null)
@@ -124,12 +130,17 @@ export function InventoryCatalogPanel() {
   const [newCatOpen, setNewCatOpen] = useState(false)
   const [newCatLabel, setNewCatLabel] = useState('')
   const [newCatTarget, setNewCatTarget] = useState<'quick' | 'edit' | 'filter'>('quick')
+  const [newSubOpen, setNewSubOpen] = useState(false)
+  const [newSubLabel, setNewSubLabel] = useState('')
+  const [newSubTarget, setNewSubTarget] = useState<'quick' | 'edit'>('quick')
+  const [newSubParentId, setNewSubParentId] = useState('raw')
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const cameraRef = useRef<HTMLInputElement>(null)
 
   const categories = useMemo(
     () => getAllCategories(),
-    [getAllCategories, customCategories],
+    [getAllCategories, customCategories, customSubcategories],
   )
 
   const categoryOptions = useMemo(
@@ -210,6 +221,54 @@ export function InventoryCatalogPanel() {
       setFilterCat(res.category.id)
       setFilterSub(ALL_SUBCATEGORY_ID)
     }
+  }
+
+  const openNewSubcategory = (target: 'quick' | 'edit', parentId: string) => {
+    setNewSubTarget(target)
+    setNewSubParentId(parentId)
+    setNewSubLabel('')
+    setNewSubOpen(true)
+  }
+
+  const commitNewSubcategory = () => {
+    const res = addCustomSubcategory(newSubParentId, newSubLabel)
+    if (!res.ok || !res.subcategory) {
+      setToast(res.error || 'Registrace podkategorie selhala')
+      return
+    }
+    setToast(`Podkategorie „${res.subcategory.label}“ přidána`)
+    setNewSubOpen(false)
+    if (newSubTarget === 'quick') {
+      setQuick((q) => ({ ...q, subcategory: res.subcategory!.id }))
+    } else if (edit) {
+      setEdit({ ...edit, subcategory: res.subcategory.id })
+    }
+  }
+
+  const onTogglePos = async (item: InventoryItem) => {
+    const res = await togglePosVisible(item.id)
+    if (!res.ok) {
+      setToast(res.error || 'Přepnutí Do kasy selhalo')
+      return
+    }
+    setToast(
+      res.item?.pos_visible
+        ? `„${item.name}“ je aktivní v Kase (V kase)`
+        : `„${item.name}“ odstraněno z Kasy · pouze sklad`,
+    )
+  }
+
+  const onConfirmDelete = async () => {
+    if (!deleteConfirmId) return
+    const name = items.find((i) => i.id === deleteConfirmId)?.name || 'Položka'
+    const res = await deleteInventoryItem(deleteConfirmId)
+    setDeleteConfirmId(null)
+    if (!res.ok) {
+      setToast(res.error || 'Smazání selhalo')
+      return
+    }
+    if (edit?.id === deleteConfirmId) setEdit(null)
+    setToast(`Smazáno: ${name}`)
   }
 
   const saveForm = async (form: EditForm, closeAfter: boolean) => {
@@ -464,13 +523,23 @@ export function InventoryCatalogPanel() {
               <Plus size={14} /> ➕ Přidat novou kategorii
             </button>
           </div>
-          <Field
-            label="Podkategorie"
-            as="select"
-            value={quick.subcategory}
-            onChange={(v) => setQuick({ ...quick, subcategory: v })}
-            options={subsForForm(quick.category)}
-          />
+          <div style={{ display: 'grid', gap: 6 }}>
+            <Field
+              label="Podkategorie"
+              as="select"
+              value={quick.subcategory}
+              onChange={(v) => setQuick({ ...quick, subcategory: v })}
+              options={subsForForm(quick.category)}
+            />
+            <button
+              type="button"
+              className="btn btn-ghost"
+              style={{ minHeight: 40, borderColor: `${GOLD}88`, color: GOLD, fontWeight: 800 }}
+              onClick={() => openNewSubcategory('quick', quick.category)}
+            >
+              <Plus size={14} /> ➕ Přidat novou podkategorii
+            </button>
+          </div>
           <Field
             label="Jednotka"
             as="select"
@@ -784,7 +853,32 @@ export function InventoryCatalogPanel() {
                       </div>
                     </td>
                     <td style={{ padding: '0.55rem' }}>
-                      <div style={{ fontWeight: 700 }}>{i.name}</div>
+                      <div
+                        style={{
+                          fontWeight: 700,
+                          display: 'flex',
+                          flexWrap: 'wrap',
+                          gap: 6,
+                          alignItems: 'center',
+                        }}
+                      >
+                        <span>{i.name}</span>
+                        {i.pos_visible && (
+                          <span
+                            style={{
+                              fontSize: '0.65rem',
+                              fontWeight: 900,
+                              letterSpacing: '0.04em',
+                              color: '#052e16',
+                              background: '#34d399',
+                              borderRadius: 999,
+                              padding: '0.15rem 0.5rem',
+                            }}
+                          >
+                            V kase
+                          </span>
+                        )}
+                      </div>
                       <div style={{ fontSize: '0.72rem', color: 'var(--text-dim)' }}>
                         {categoryLabel(i.category, categories)}
                         {' · '}
@@ -815,15 +909,75 @@ export function InventoryCatalogPanel() {
                     </td>
                     <td style={{ padding: '0.55rem' }}>{i.vat_rate}%</td>
                     <td style={{ padding: '0.55rem' }}>
-                      <button
-                        type="button"
-                        className="btn btn-ghost"
-                        style={{ minHeight: 40, minWidth: 40, padding: 8, borderColor: GOLD }}
-                        title="Upravit položku"
-                        onClick={() => setEdit(itemToForm(i))}
+                      <div
+                        style={{
+                          display: 'flex',
+                          gap: 6,
+                          alignItems: 'center',
+                          justifyContent: 'flex-end',
+                        }}
                       >
-                        <Pencil size={14} color={GOLD} />
-                      </button>
+                        <button
+                          type="button"
+                          title={i.pos_visible ? 'Odebrat z Kasy' : 'Do kasy'}
+                          onClick={() => void onTogglePos(i)}
+                          style={{
+                            minHeight: 44,
+                            minWidth: 44,
+                            borderRadius: 12,
+                            border: `1.5px solid ${i.pos_visible ? '#34d399' : '#065f46'}`,
+                            background: i.pos_visible
+                              ? 'rgba(52,211,153,0.22)'
+                              : 'rgba(6,78,59,0.45)',
+                            color: i.pos_visible ? '#6ee7b7' : '#34d399',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            cursor: 'pointer',
+                            touchAction: 'manipulation',
+                            boxShadow: i.pos_visible
+                              ? '0 0 14px rgba(52,211,153,0.35)'
+                              : 'none',
+                          }}
+                        >
+                          <ShoppingCart size={16} />
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-ghost"
+                          style={{
+                            minHeight: 44,
+                            minWidth: 44,
+                            padding: 8,
+                            borderColor: GOLD,
+                            borderRadius: 12,
+                          }}
+                          title="Upravit položku"
+                          onClick={() => setEdit(itemToForm(i))}
+                        >
+                          <Pencil size={15} color={GOLD} />
+                        </button>
+                        <button
+                          type="button"
+                          title="Smazat položku"
+                          onClick={() => setDeleteConfirmId(i.id)}
+                          style={{
+                            minHeight: 44,
+                            minWidth: 44,
+                            borderRadius: 12,
+                            border: '1.5px solid #ef4444',
+                            background: 'rgba(127,29,29,0.35)',
+                            color: '#fca5a5',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            cursor: 'pointer',
+                            touchAction: 'manipulation',
+                          }}
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 )
@@ -1101,13 +1255,23 @@ export function InventoryCatalogPanel() {
                     <Plus size={14} /> ➕ Přidat novou kategorii
                   </button>
                 </div>
-                <Field
-                  label="Podkategorie"
-                  as="select"
-                  value={edit.subcategory}
-                  onChange={(v) => setEdit({ ...edit, subcategory: v })}
-                  options={subsForForm(edit.category)}
-                />
+                <div style={{ display: 'grid', gap: 6 }}>
+                  <Field
+                    label="Podkategorie"
+                    as="select"
+                    value={edit.subcategory}
+                    onChange={(v) => setEdit({ ...edit, subcategory: v })}
+                    options={subsForForm(edit.category)}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    style={{ minHeight: 40, borderColor: `${GOLD}88`, color: GOLD, fontWeight: 800 }}
+                    onClick={() => openNewSubcategory('edit', edit.category)}
+                  >
+                    <Plus size={14} /> ➕ Přidat novou podkategorii
+                  </button>
+                </div>
                 <Field
                   label="Jednotka"
                   as="select"
@@ -1231,6 +1395,158 @@ export function InventoryCatalogPanel() {
                   onClick={commitNewCategory}
                 >
                   <Save size={15} /> Registrovat
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {newSubOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            style={{
+              position: 'fixed',
+              inset: 0,
+              zIndex: 8200,
+              background: 'rgba(2,6,23,0.8)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: 16,
+            }}
+            onClick={() => setNewSubOpen(false)}
+          >
+            <motion.div
+              initial={{ scale: 0.96, y: 8 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.98, opacity: 0 }}
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                width: 'min(96vw, 420px)',
+                background: '#0f172a',
+                border: `2px solid ${GOLD}`,
+                borderRadius: 16,
+                padding: '1.2rem 1.25rem',
+                boxShadow: '0 0 28px rgba(212,175,55,0.2)',
+              }}
+            >
+              <strong style={{ color: GOLD, fontSize: '1.05rem' }}>
+                ➕ Přidat novou podkategorii
+              </strong>
+              <p style={{ color: '#94a3b8', fontSize: '0.82rem', margin: '8px 0 12px' }}>
+                Podkategorie pro{' '}
+                <span style={{ color: '#fef3c7', fontWeight: 800 }}>
+                  {categoryLabel(newSubParentId, categories)}
+                </span>
+                {' '}
+                (např. IPA Piva, Bezlepkové chody).
+              </p>
+              <input
+                className="input"
+                autoFocus
+                value={newSubLabel}
+                onChange={(e) => setNewSubLabel(e.target.value)}
+                placeholder="Název nové podkategorie…"
+                style={{ minHeight: 48, background: '#020617', borderColor: GOLD }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') commitNewSubcategory()
+                }}
+              />
+              <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  style={{ minHeight: 48, flex: 1 }}
+                  onClick={() => setNewSubOpen(false)}
+                >
+                  Zrušit
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-gold"
+                  style={{ minHeight: 48, flex: 1, fontWeight: 900 }}
+                  disabled={!newSubLabel.trim()}
+                  onClick={commitNewSubcategory}
+                >
+                  <Save size={15} /> Registrovat
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {deleteConfirmId && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            style={{
+              position: 'fixed',
+              inset: 0,
+              zIndex: 8300,
+              background: 'rgba(2,6,23,0.82)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: 16,
+            }}
+            onClick={() => setDeleteConfirmId(null)}
+          >
+            <motion.div
+              initial={{ scale: 0.96, y: 8 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.98, opacity: 0 }}
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                width: 'min(96vw, 380px)',
+                background: '#0f172a',
+                border: '2px solid #ef4444',
+                borderRadius: 16,
+                padding: '1.2rem 1.25rem',
+                boxShadow: '0 0 28px rgba(239,68,68,0.25)',
+              }}
+            >
+              <strong style={{ color: '#fca5a5', fontSize: '1.1rem' }}>Smazat?</strong>
+              <p style={{ color: '#cbd5e1', margin: '10px 0 16px', fontWeight: 600 }}>
+                Opravdu smazat „
+                {items.find((x) => x.id === deleteConfirmId)?.name || 'položku'}“ ze skladu
+                (Supabase / lokální úložiště)?
+              </p>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  style={{ minHeight: 48, flex: 1 }}
+                  onClick={() => setDeleteConfirmId(null)}
+                >
+                  Zrušit
+                </button>
+                <button
+                  type="button"
+                  style={{
+                    minHeight: 48,
+                    flex: 1,
+                    fontWeight: 900,
+                    borderRadius: 12,
+                    border: '1px solid #ef4444',
+                    background: 'linear-gradient(135deg, #b91c1c, #7f1d1d)',
+                    color: '#fff',
+                    cursor: 'pointer',
+                    touchAction: 'manipulation',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 8,
+                  }}
+                  onClick={() => void onConfirmDelete()}
+                >
+                  <Trash2 size={15} /> Smazat
                 </button>
               </div>
             </motion.div>

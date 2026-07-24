@@ -53,7 +53,7 @@ export function inferSubcategory(item: Pick<CateringItem, 'name' | 'category' | 
 export function filterPosMenu(
   items: CateringItem[] | null | undefined,
   category: 'all' | 'food' | 'beverage',
-  subcategory: POSSubcategory | 'all'
+  subcategory: POSSubcategory | 'all' | string,
 ): CateringItem[] {
   const list = Array.isArray(items) ? items.filter(Boolean) : []
   return list.filter((item) => {

@@ -999,7 +999,7 @@ export function InventoryCatalogPanel() {
                         }}
                       >
                         <span>{i.name}</span>
-                        {i.pos_visible && (
+                        {i.pos_visible && !i.is_raw_material && (
                           <span
                             style={{
                               fontSize: '0.65rem',
@@ -1010,8 +1010,26 @@ export function InventoryCatalogPanel() {
                               borderRadius: 999,
                               padding: '0.15rem 0.5rem',
                             }}
+                            title="Přímý prodej 1:1 — odepíše 1 jednotku ze skladu"
                           >
                             V kase
+                          </span>
+                        )}
+                        {i.is_raw_material && (
+                          <span
+                            style={{
+                              fontSize: '0.65rem',
+                              fontWeight: 900,
+                              letterSpacing: '0.04em',
+                              color: '#fef3c7',
+                              background: 'rgba(212,175,55,0.2)',
+                              border: `1px solid ${GOLD}66`,
+                              borderRadius: 999,
+                              padding: '0.15rem 0.5rem',
+                            }}
+                            title="Surovina — skrytá v Kase; odepisuje se přes receptury / polední menu (kg/g)"
+                          >
+                            Surovina
                           </span>
                         )}
                       </div>
@@ -1055,25 +1073,49 @@ export function InventoryCatalogPanel() {
                       >
                         <button
                           type="button"
-                          title={i.pos_visible ? 'Odebrat z Kasy' : 'Do kasy'}
+                          title={
+                            i.is_raw_material
+                              ? 'Surovina — nelze Do kasy (použijte recepturu / polední menu)'
+                              : i.pos_visible
+                                ? 'Odebrat z Kasy (zpět jen sklad)'
+                                : 'Do kasy — přímý prodej 1:1'
+                          }
+                          disabled={i.is_raw_material && !i.pos_visible}
                           onClick={() => void onTogglePos(i)}
                           style={{
                             minHeight: 44,
                             minWidth: 44,
                             borderRadius: 12,
-                            border: `1.5px solid ${i.pos_visible ? '#34d399' : '#065f46'}`,
-                            background: i.pos_visible
-                              ? 'rgba(52,211,153,0.22)'
-                              : 'rgba(6,78,59,0.45)',
-                            color: i.pos_visible ? '#6ee7b7' : '#34d399',
+                            border: `1.5px solid ${
+                              i.is_raw_material
+                                ? '#475569'
+                                : i.pos_visible
+                                  ? '#34d399'
+                                  : '#065f46'
+                            }`,
+                            background: i.is_raw_material
+                              ? 'rgba(51,65,85,0.45)'
+                              : i.pos_visible
+                                ? 'rgba(52,211,153,0.22)'
+                                : 'rgba(6,78,59,0.45)',
+                            color: i.is_raw_material
+                              ? '#64748b'
+                              : i.pos_visible
+                                ? '#6ee7b7'
+                                : '#34d399',
                             display: 'inline-flex',
                             alignItems: 'center',
                             justifyContent: 'center',
-                            cursor: 'pointer',
+                            cursor:
+                              i.is_raw_material && !i.pos_visible
+                                ? 'not-allowed'
+                                : 'pointer',
                             touchAction: 'manipulation',
-                            boxShadow: i.pos_visible
-                              ? '0 0 14px rgba(52,211,153,0.35)'
-                              : 'none',
+                            opacity: i.is_raw_material && !i.pos_visible ? 0.55 : 1,
+                            boxShadow:
+                              i.pos_visible && !i.is_raw_material
+                                ? '0 0 14px rgba(52,211,153,0.35)'
+                                : 'none',
                           }}
                         >
                           <ShoppingCart size={16} />

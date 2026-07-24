@@ -80,6 +80,7 @@ async function flushOne(entry: OfflineQueueEntry): Promise<{ ok: boolean; error?
         open_pack_remaining: item.open_pack_remaining,
         image_url: item.image_url,
         pos_visible: Boolean(item.pos_visible),
+        is_raw_material: Boolean(item.is_raw_material),
         shelf_life: item.shelf_life,
         warehouse_section: item.warehouse_section,
         updated_at: item.updated_at,

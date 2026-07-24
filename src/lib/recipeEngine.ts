@@ -74,11 +74,32 @@ export function buildRecipeRecordsFromCatering(
   return out
 }
 
+/**
+ * Hybrid deduction matrix:
+ * 1) Direct sale (pos_visible packaged goods) → 1 unit of linked inventory item
+ * 2) Composite / daily special → recipe_ingredients map (kg/g decimals)
+ */
 export function resolveRecipeForCatering(
   catering: CateringItem,
   recipes: RecipeIngredientRecord[],
   inventory: InventoryItem[]
 ): ResolvedRecipeLine[] {
+  // Direct 1:1 — bottled / packaged goods pushed from Sklad „Do kasy“
+  if (catering.is_direct_sale && catering.inventory_item_id) {
+    const inv = inventory.find((i) => i.id === catering.inventory_item_id)
+    if (inv && !inv.is_raw_material) {
+      return [
+        {
+          ingredient_name: inv.name,
+          qty_per_portion: 1,
+          unit: normalizeUnit(inv.unit),
+          inventory_item_id: inv.id,
+          inventory: inv,
+        },
+      ]
+    }
+  }
+
   const linked = (recipes ?? []).filter((r) => r.catering_id === catering.id)
   if (linked.length) {
     return linked.map((r) => {
@@ -94,6 +115,26 @@ export function resolveRecipeForCatering(
         qty_per_portion: r.qty_per_portion,
         unit: r.unit,
         inventory_item_id: inv?.id ?? r.inventory_item_id,
+        inventory: inv,
+      }
+    })
+  }
+
+  // Explicit composite ingredients on the catering/daily-special tile
+  if (Array.isArray(catering.ingredients) && catering.ingredients.length) {
+    return catering.ingredients.map((ing) => {
+      const inv =
+        (ing.inventoryItemId &&
+          inventory.find((i) => i.id === ing.inventoryItemId)) ||
+        matchInventoryItem(inventory, {
+          name: ing.name,
+          unit: ing.unit,
+        })
+      return {
+        ingredient_name: ing.name,
+        qty_per_portion: ing.qtyPerPortion,
+        unit: normalizeUnit(ing.unit),
+        inventory_item_id: inv?.id ?? ing.inventoryItemId ?? null,
         inventory: inv,
       }
     })

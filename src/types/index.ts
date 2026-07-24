@@ -111,6 +111,12 @@ export interface CateringItem {
   image_url?: string | null
   /** Origin inventory id when tile is pushed from Sklad „Do kasy“ */
   inventory_item_id?: string | null
+  /** Direct 1:1 stock sale (bottles/packaged) — no composite recipe required */
+  is_direct_sale?: boolean
+  /** Temporary Polední menu tile — cleared after midnight */
+  is_daily_special?: boolean
+  /** Local calendar day YYYY-MM-DD for daily special validity */
+  daily_special_date?: string | null
 }
 
 export interface WarehouseItem {
@@ -202,6 +208,9 @@ export interface POSCartLine {
   waiterId?: string
   waiterName?: string
   sentToKds?: boolean
+  /** Direct inventory link for hybrid 1:1 deduction */
+  inventory_item_id?: string | null
+  is_daily_special?: boolean
 }
 
 export interface PosTableTab {
@@ -454,6 +463,11 @@ export interface InventoryItem {
    * false = pouze skladová surovina (výchozí u AI importu)
    */
   pos_visible: boolean
+  /**
+   * true = surovina (kg/g…) — skrytá z Kasy, odepisuje se přes receptury
+   * false = prodejný kus/balení — 1:1 odepis při prodeji
+   */
+  is_raw_material: boolean
   shelf_life: string | null
   warehouse_section: string
   updated_at: string

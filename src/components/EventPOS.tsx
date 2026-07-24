@@ -80,7 +80,9 @@ import {
   buildVenueMasterCatalog,
   mergeCatalogs,
 } from '../lib/venueCatalog'
-import { mergeWithInventoryPosTiles } from '../lib/inventoryPosBridge'
+import { mergeHybridPosCatalog } from '../lib/inventoryPosBridge'
+import { useDailySpecialStore } from '../store/useDailySpecialStore'
+import { DailySpecialBar } from './pos/DailySpecialBar'
 import {
   resolveTableIdFromHint,
 } from '../lib/voicePosEngine'
@@ -118,6 +120,9 @@ export function EventPOS({ mode = 'admin' }: EventPOSProps) {
   const syncRecipesFromProjects = useInventoryStore((s) => s.syncRecipesFromProjects)
   const bootstrapInventory = useInventoryStore((s) => s.bootstrap)
   const inventoryItems = useInventoryStore((s) => s.items)
+  const dailySpecials = useDailySpecialStore((s) => s.specials)
+  const purgeDailySpecials = useDailySpecialStore((s) => s.purgeExpired)
+  const getActiveSpecials = useDailySpecialStore((s) => s.getActiveSpecials)
   const imageByKey = useProductImageStore((s) => s.byKey)
   const imageFetching = useProductImageStore((s) => s.fetching)
   const ensureAiImage = useProductImageStore((s) => s.ensureAiImage)
@@ -208,9 +213,20 @@ export function EventPOS({ mode = 'admin' }: EventPOSProps) {
         : operationMode === 'event'
           ? eventMenu
           : mergeCatalogs(venueCatalog, eventMenu)
-    // Sklad „Do kasy“ tiles inject reactively into /pos-terminal + admin Kasa
-    return mergeWithInventoryPosTiles(base, inventoryItems ?? [])
-  }, [operationMode, project?.catering, venueCatalog, inventoryItems])
+    // Hybrid matrix: venue/event + direct Sklad tiles + Polední menu (no duplicates)
+    return mergeHybridPosCatalog({
+      base,
+      inventory: inventoryItems ?? [],
+      dailySpecials: getActiveSpecials(),
+    })
+  }, [
+    operationMode,
+    project?.catering,
+    venueCatalog,
+    inventoryItems,
+    dailySpecials,
+    getActiveSpecials,
+  ])
 
   const menuItems = useMemo(
     () => filterPosMenu(catalogSource, mainCat, subCat),
@@ -259,6 +275,13 @@ export function EventPOS({ mode = 'admin' }: EventPOSProps) {
       if (project) void syncRecipesFromProjects([project])
     })
   }, [bootstrapInventory, syncRecipesFromProjects, project])
+
+  // Polední menu — purge overnight tiles; keep POS transaction history intact
+  useEffect(() => {
+    purgeDailySpecials()
+    const id = window.setInterval(() => purgeDailySpecials(), 60_000)
+    return () => window.clearInterval(id)
+  }, [purgeDailySpecials])
 
   // Lazy AI image fill for visible POS tiles (instant inventory/POS sync via shared store)
   useEffect(() => {
@@ -506,6 +529,8 @@ export function EventPOS({ mode = 'admin' }: EventPOSProps) {
         waiterId: activeWaiter.id,
         waiterName: activeWaiter.name,
         sentToKds: false,
+        inventory_item_id: item.inventory_item_id ?? null,
+        is_daily_special: Boolean(item.is_daily_special),
       },
       {
         tableId: activeTableId,
@@ -591,6 +616,8 @@ export function EventPOS({ mode = 'admin' }: EventPOSProps) {
             waiterId: activeWaiter.id,
             waiterName: activeWaiter.name,
             sentToKds: false,
+            inventory_item_id: row.item.inventory_item_id ?? null,
+            is_daily_special: Boolean(row.item.is_daily_special),
           },
           {
             tableId: targetTable,
@@ -1181,6 +1208,8 @@ export function EventPOS({ mode = 'admin' }: EventPOSProps) {
           ))}
         </div>
       )}
+
+      <DailySpecialBar />
 
       {project && showMap && activeTableId && (
         <PosTableMap

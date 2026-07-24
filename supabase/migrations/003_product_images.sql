@@ -16,6 +16,9 @@ alter table public.inventory
 alter table public.inventory
   add column if not exists pos_visible boolean not null default false;
 
+alter table public.inventory
+  add column if not exists is_raw_material boolean not null default false;
+
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 values (
   'product-images',

@@ -26,6 +26,42 @@ export function normalizeName(name: string): string {
     .replace(/[\u0300-\u036f]/g, '')
 }
 
+/**
+ * Heuristika suroviny vs. prodejného kusu.
+ * kg/g a kuchyňské váhy → surovina; láhve/ks balení → přímý prodej.
+ */
+export function inferIsRawMaterial(
+  partial: Pick<Partial<InventoryItem>, 'name' | 'unit' | 'category' | 'is_raw_material' | 'pack_volume'>,
+): boolean {
+  if (partial.is_raw_material != null) return Boolean(partial.is_raw_material)
+  const unit = normalizeUnit(partial.unit)
+  const name = normalizeName(partial.name || '')
+  const cat = normalizeName(String(partial.category || ''))
+
+  if (unit === 'kg' || unit === 'g') return true
+  if (unit === 'ml' && cat === 'raw') return true
+  if (
+    unit === 'l' &&
+    cat !== 'beverage' &&
+    /olej|mleko|smetana|omack|vyvar|polev|sirup|ocet/.test(name)
+  ) {
+    return true
+  }
+  if (
+    cat === 'raw' &&
+    unit !== 'ks' &&
+    /cibul|hranol|prsa|maso|hovez|vepr|kure|losos|brambor|mouka|cukr|ryze|zelenin/.test(name)
+  ) {
+    return true
+  }
+  if (/uklid|myci|mycí|sav|dezinfek|had|mycí prostredek|myci prostredek/.test(name)) {
+    return true
+  }
+  // Bottled / packaged sellable goods
+  if (unit === 'ks' && (partial.pack_volume || cat === 'beverage')) return false
+  return false
+}
+
 export function matchInventoryItem(
   items: InventoryItem[],
   opts: { name?: string; barcode?: string | null; unit?: string }
@@ -110,6 +146,7 @@ export function createEmptyInventoryItem(
           ? null
           : String(partial.image_url) || null,
     pos_visible: Boolean(partial.pos_visible),
+    is_raw_material: inferIsRawMaterial(partial),
     shelf_life: partial.shelf_life ?? null,
     warehouse_section: partial.warehouse_section || 'Hlavní sklad',
     created_at: partial.created_at || now,

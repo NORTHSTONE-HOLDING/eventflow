@@ -58,6 +58,7 @@ function normalizeStoredItem(item: InventoryItem): InventoryItem {
     open_pack_remaining: item.open_pack_remaining ?? null,
     image_url: item.image_url ?? null,
     pos_visible: Boolean(item.pos_visible),
+    is_raw_material: item.is_raw_material,
   })
 }
 
@@ -508,11 +509,18 @@ export const useInventoryStore = create<InventoryState>()(
               line.unit,
             )
           }
+        } else if (catering.inventory_item_id) {
+          // Direct fallback when recipe resolution missed linked inventory id
+          await consumeById(catering.inventory_item_id, qty, catering.name, 'ks')
         } else {
           await consumeById(null, qty, catering.name, 'ks')
         }
 
-        if (!(recipes ?? []).some((r) => r.catering_id === catering.id)) {
+        // Persist inferred composite recipes (skip pure direct-sale tiles)
+        if (
+          !catering.is_direct_sale &&
+          !(recipes ?? []).some((r) => r.catering_id === catering.id)
+        ) {
           const neu = buildRecipeRecordsFromCatering([catering], items)
           if (neu.length) {
             set({ recipes: [...(get().recipes ?? []), ...neu] })
@@ -638,6 +646,13 @@ export const useInventoryStore = create<InventoryState>()(
           const existing = items.find((i) => i.id === itemId)
           if (!existing) {
             return { ok: false, error: 'Položka nenalezena' }
+          }
+          if (!existing.pos_visible && existing.is_raw_material) {
+            return {
+              ok: false,
+              error:
+                'Suroviny nelze zobrazit v Kase — vytvořte recepturu / polední menu (odepis přes kg/g).',
+            }
           }
           const updated = normalizeStoredItem({
             ...existing,

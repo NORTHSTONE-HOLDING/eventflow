@@ -43,6 +43,8 @@ import {
 import { ensurePosTables, mergeCartLine, resolveActiveTableId, subtractPaidLines } from '../lib/tableTabs'
 import { syncProjectShiftsAndBudget } from '../lib/shiftScheduler'
 import { useInventoryStore } from './useInventoryStore'
+import { useDailySpecialStore } from './useDailySpecialStore'
+import { resolveSaleCatalogItem } from '../lib/inventoryPosBridge'
 
 const defaultProfile: AgencyProfile = {
   companyName: '',
@@ -472,31 +474,49 @@ export const useAppStore = create<AppState>()(
         const inventoryApi = useInventoryStore.getState()
         const posDeductionJobs: Promise<{ ok: boolean; depleted: string[] }>[] = []
 
+        const dailySpecials = useDailySpecialStore.getState().getActiveSpecials()
+        const inventoryItems = inventoryApi.items ?? []
+
         for (const line of lines) {
           // Volná položka — bez skladového odepisu
           if (line.isCustom || String(line.cateringId).startsWith('custom_')) continue
-          const item = catering.find((c) => c.id === line.cateringId)
+
+          const item = resolveSaleCatalogItem({
+            line,
+            projectCatering: catering,
+            inventory: inventoryItems,
+            dailySpecials,
+          })
           if (!item) continue
-          const result = decrementWarehouseForSale(
-            warehouse,
-            item,
-            line.qty,
-            project.id,
-            project.name
-          )
-          warehouse = result.warehouse
-          newAlerts.push(...(result.alerts ?? []))
-          catering = catering.map((c) =>
-            c.id === line.cateringId
-              ? { ...c, soldPortions: (c.soldPortions || 0) + line.qty }
-              : c
-          )
-          // Recipe-based inventory transaction → inventory + inventory_logs (odpis_pos)
+
+          // Project-local warehouse only for event catering rows
+          if (catering.some((c) => c.id === item.id)) {
+            const result = decrementWarehouseForSale(
+              warehouse,
+              item,
+              line.qty,
+              project.id,
+              project.name
+            )
+            warehouse = result.warehouse
+            newAlerts.push(...(result.alerts ?? []))
+            catering = catering.map((c) =>
+              c.id === item.id
+                ? { ...c, soldPortions: (c.soldPortions || 0) + line.qty }
+                : c
+            )
+          }
+
+          if (item.is_daily_special) {
+            useDailySpecialStore.getState().bumpSold(item.id, line.qty)
+          }
+
+          // Hybrid matrix → inventory + inventory_logs (odpis_pos)
           posDeductionJobs.push(
             inventoryApi.applyPosSaleDeduction(
               item,
               line.qty,
-              `POS ${opts?.tableLabel || 'Kasa'} · ${line.name}`
+              `POS ${opts?.tableLabel || 'Kasa'} · ${line.name}`,
             )
           )
         }

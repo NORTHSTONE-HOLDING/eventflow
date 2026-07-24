@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import {
   AreaChart,
   Area,
@@ -10,22 +10,11 @@ import {
   Bar,
 } from 'recharts'
 import { motion } from 'framer-motion'
-import {
-  format,
-  startOfMonth,
-  endOfMonth,
-  eachDayOfInterval,
-  isSameDay,
-  addMonths,
-  subMonths,
-  isValid,
-  parseISO,
-} from 'date-fns'
-import { cs } from 'date-fns/locale'
-import { ChevronLeft, ChevronRight, Sparkles, TrendingUp, AlertTriangle, MonitorSmartphone } from 'lucide-react'
+import { Sparkles, TrendingUp, AlertTriangle, MonitorSmartphone } from 'lucide-react'
 import { useAppStore, computeMetrics } from '../store/useAppStore'
 import { formatCurrency, formatPercent } from '../lib/documentIds'
 import type { EventProject } from '../types'
+import { EventCalendarScheduler } from './EventCalendarScheduler'
 
 const FALLBACK_CHART = [
   { name: 'Led', revenue: 120000, cost: 85000 },
@@ -44,16 +33,6 @@ const FALLBACK_MARGIN = [
   { name: 'CN004', margin: 22 },
 ]
 
-function safeParseDate(value: string | undefined | null): Date | null {
-  if (!value) return null
-  try {
-    const d = value.includes('T') ? parseISO(value) : new Date(value)
-    return isValid(d) ? d : null
-  } catch {
-    return null
-  }
-}
-
 export function Dashboard() {
   // Select stable primitives / arrays — never call getMetrics() inside a Zustand selector
   // (it allocates a new object every time → infinite re-render crash).
@@ -62,7 +41,6 @@ export function Dashboard() {
   const setActiveProject = useAppStore((s) => s.setActiveProject)
   const warehouseAlerts = useAppStore((s) => s.warehouseAlerts)
   const acknowledgeAlert = useAppStore((s) => s.acknowledgeAlert)
-  const [month, setMonth] = useState(() => new Date(2026, 6, 1))
 
   const safeProjects: EventProject[] = useMemo(
     () => (Array.isArray(projects) ? projects.filter(Boolean) : []),
@@ -100,26 +78,16 @@ export function Dashboard() {
     }))
   }, [safeProjects])
 
-  const days = useMemo(() => {
-    try {
-      const start = startOfMonth(month)
-      const end = endOfMonth(month)
-      if (!isValid(start) || !isValid(end)) return []
-      return eachDayOfInterval({ start, end })
-    } catch {
-      return []
-    }
-  }, [month])
-
-  const eventDates = useMemo(
+  const totalLaborBooked = useMemo(
     () =>
-      safeProjects
-        .map((p) => safeParseDate(p.date))
-        .filter((d): d is Date => d !== null),
+      safeProjects.reduce(
+        (s, p) =>
+          s +
+          (p.shiftBookings ?? []).reduce((a, b) => a + (Number(b.laborCost) || 0), 0),
+        0
+      ),
     [safeProjects]
   )
-
-  const leadingBlanks = days.length ? (days[0].getDay() + 6) % 7 : 0
 
   return (
     <div style={{ animation: 'fadeUp 0.4s ease' }}>
@@ -226,12 +194,12 @@ export function Dashboard() {
           {
             label: 'Průměrná marže v %',
             value: formatPercent(metrics.avgMargin || 0),
-            sub: 'netto po nákladech',
+            sub: 'netto po nákladech včetně směn',
           },
           {
-            label: 'AI Doporučení',
-            value: String(recommendations.length),
-            sub: 'pro optimalizaci nákladů',
+            label: 'Náklady na směny',
+            value: formatCurrency(totalLaborBooked),
+            sub: 'kalendář → rozpočet Personál',
           },
         ].map((m, i) => (
           <motion.div
@@ -343,119 +311,24 @@ export function Dashboard() {
         </div>
       </div>
 
-      <div
-        className="responsive-2col"
-        style={{ display: 'grid', gridTemplateColumns: '1fr 1.2fr', gap: 16 }}
-      >
-        <div className="panel">
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              marginBottom: 16,
-            }}
-          >
-            <h3 style={{ fontSize: '1.2rem' }}>Kalendář</h3>
-            <div style={{ display: 'flex', gap: 4 }}>
-              <button
-                type="button"
-                className="btn btn-ghost"
-                style={{ padding: 6 }}
-                onClick={() => setMonth((m) => subMonths(m, 1))}
-              >
-                <ChevronLeft size={16} />
-              </button>
-              <span
-                style={{
-                  fontSize: '0.85rem',
-                  color: 'var(--text-muted)',
-                  padding: '6px 8px',
-                }}
-              >
-                {isValid(month)
-                  ? format(month, 'LLLL yyyy', { locale: cs })
-                  : '—'}
-              </span>
-              <button
-                type="button"
-                className="btn btn-ghost"
-                style={{ padding: 6 }}
-                onClick={() => setMonth((m) => addMonths(m, 1))}
-              >
-                <ChevronRight size={16} />
-              </button>
-            </div>
-          </div>
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(7, 1fr)',
-              gap: 4,
-              fontSize: '0.75rem',
-              color: 'var(--text-dim)',
-              marginBottom: 8,
-            }}
-          >
-            {['Po', 'Út', 'St', 'Čt', 'Pá', 'So', 'Ne'].map((d) => (
-              <div key={d} style={{ textAlign: 'center' }}>
-                {d}
-              </div>
-            ))}
-          </div>
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(7, 1fr)',
-              gap: 4,
-            }}
-          >
-            {Array.from({ length: leadingBlanks }).map((_, i) => (
-              <div key={`blank-${i}`} />
-            ))}
-            {days.map((day) => {
-              const hasEvent = eventDates.some((d) => isSameDay(d, day))
-              return (
-                <div
-                  key={day.toISOString()}
-                  style={{
-                    aspectRatio: '1',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    borderRadius: 6,
-                    fontSize: '0.8rem',
-                    background: hasEvent ? 'var(--gold-subtle)' : 'transparent',
-                    color: hasEvent ? 'var(--gold)' : 'var(--text-muted)',
-                    border: hasEvent
-                      ? '1px solid var(--border-strong)'
-                      : '1px solid transparent',
-                    fontWeight: hasEvent ? 600 : 400,
-                  }}
-                >
-                  {format(day, 'd')}
-                </div>
-              )
-            })}
-            {!days.length && (
-              <div
-                style={{
-                  gridColumn: '1 / -1',
-                  textAlign: 'center',
-                  color: 'var(--text-dim)',
-                  padding: 16,
-                }}
-              >
-                Kalendář není k dispozici
-              </div>
-            )}
-          </div>
-        </div>
+      <div style={{ marginBottom: 24 }}>
+        <EventCalendarScheduler
+          projects={safeProjects}
+          onOpenPlanner={() => setView('planner')}
+          onOpenProject={(id) => {
+            setActiveProject(id)
+            setView('planner')
+          }}
+        />
+      </div>
 
-        <div className="panel">
-          <h3 style={{ fontSize: '1.2rem', marginBottom: 12 }}>
-            AI Doporučení pro optimalizaci nákladů
-          </h3>
+      <div
+        className="panel"
+        style={{ marginBottom: 0 }}
+      >
+        <h3 style={{ fontSize: '1.2rem', marginBottom: 12 }}>
+          AI Doporučení pro optimalizaci nákladů
+        </h3>
           <ul
             style={{
               listStyle: 'none',
@@ -543,7 +416,6 @@ export function Dashboard() {
               Zatím žádné projekty. Klikněte na „Nová akce přes AI".
             </div>
           )}
-        </div>
       </div>
     </div>
   )

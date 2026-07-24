@@ -41,6 +41,7 @@ import {
   publishWaiterReady,
 } from '../lib/kdsSync'
 import { ensurePosTables, mergeCartLine, resolveActiveTableId, subtractPaidLines } from '../lib/tableTabs'
+import { syncProjectShiftsAndBudget } from '../lib/shiftScheduler'
 import { useInventoryStore } from './useInventoryStore'
 
 const defaultProfile: AgencyProfile = {
@@ -85,8 +86,7 @@ export function normalizeAppView(view: unknown): AppView {
 }
 
 /** Migrate pre-POS projects so POS never crashes on missing fields. */
-export function migrateProject(p: EventProject | null | undefined): EventProject | null {
-  if (!p || typeof p !== 'object') return null
+function migrateProjectRaw(p: EventProject): EventProject {
   const catering = normalizeCateringForPos(Array.isArray(p.catering) ? p.catering : [])
   const warehouse =
     Array.isArray(p.warehouse) && p.warehouse.length > 0
@@ -112,6 +112,7 @@ export function migrateProject(p: EventProject | null | undefined): EventProject
     budgetLines: Array.isArray(p.budgetLines) ? p.budgetLines : [],
     checklist: Array.isArray(p.checklist) ? p.checklist : [],
     staff: Array.isArray(p.staff) ? p.staff : [],
+    shiftBookings: Array.isArray(p.shiftBookings) ? p.shiftBookings : [],
     documents: p.documents ?? {
       nabidka: 'CN2026000',
       smlouva: 'SOD2026000',
@@ -122,10 +123,17 @@ export function migrateProject(p: EventProject | null | undefined): EventProject
   }
 }
 
+/** Public migrate — sync staff shifts into calendar + budget labor. */
+export function migrateProject(p: EventProject | null | undefined): EventProject | null {
+  if (!p || typeof p !== 'object') return null
+  return syncProjectShiftsAndBudget(migrateProjectRaw(p))
+}
+
 function needsPosMigration(p: EventProject): boolean {
   if (!Array.isArray(p.warehouse) || p.warehouse.length === 0) return true
   if (!Array.isArray(p.posTransactions)) return true
   if (!Array.isArray(p.posTables) || p.posTables.length === 0) return true
+  if (!Array.isArray(p.shiftBookings)) return true
   const first = p.catering?.[0]
   if (first && (first.sellPrice == null || first.subcategory == null)) return true
   return false
@@ -313,20 +321,23 @@ export const useAppStore = create<AppState>()(
           const project = await generateEventFromPrompt(prompt)
           project.documents = generateDocumentIds(seq)
           setDocumentSequence(seq + 1)
+          const synced = migrateProject(project)!
           set((s) => {
             const safeProjects = Array.isArray(s.projects) ? s.projects : []
             return {
-              projects: [migrateProject(project)!, ...safeProjects],
-              activeProjectId: project.id,
+              projects: [synced, ...safeProjects],
+              activeProjectId: synced.id,
               aiLoading: false,
               view: 'planner',
               showHero: false,
             }
           })
           // Link catering recipes → inventory for POS odepis
-          void useInventoryStore.getState().syncRecipesFromProjects([project])
-          get().setToast(`Projekt vytvořen — ${project.documents.nabidka}`)
-          return project
+          void useInventoryStore.getState().syncRecipesFromProjects([synced])
+          get().setToast(
+            `Projekt vytvořen — ${synced.documents.nabidka} · směny v kalendáři: ${synced.shiftBookings?.length || 0}`
+          )
+          return synced
         } catch (e) {
           set({ aiLoading: false })
           get().setToast('AI Planner selhal — zkuste to znovu')
@@ -341,9 +352,22 @@ export const useAppStore = create<AppState>()(
           projects: (s.projects ?? []).map((p) => {
             if (p.id !== id) return p
             const merged = { ...p, ...patch }
-            return needsPosMigration(merged)
-              ? migrateProject(merged)!
-              : merged
+            // Staff/date changes must rebuild calendar shifts + labor budget
+            if (
+              patch.staff !== undefined ||
+              patch.date !== undefined ||
+              patch.shiftBookings !== undefined ||
+              needsPosMigration(merged)
+            ) {
+              return migrateProject({
+                ...merged,
+                shiftBookings:
+                  patch.staff !== undefined || patch.date !== undefined
+                    ? []
+                    : merged.shiftBookings,
+              })!
+            }
+            return merged
           }),
         })),
 
@@ -377,8 +401,21 @@ export const useAppStore = create<AppState>()(
           }),
         })),
 
-      updateStaff: (projectId, staff) =>
-        get().updateProject(projectId, { staff: staff ?? [] }),
+      updateStaff: (projectId, staff) => {
+        const found = get().projects.find((x) => x.id === projectId)
+        if (!found) return
+        const p = migrateProjectRaw(found)
+        const next = syncProjectShiftsAndBudget({
+          ...p,
+          staff: staff ?? [],
+          shiftBookings: [], // force rebuild from new roster
+        })
+        set((s) => ({
+          projects: (s.projects ?? []).map((x) =>
+            x.id === projectId ? next : x
+          ),
+        }))
+      },
 
       setClientSignature: (projectId, signature) => {
         get().updateProject(projectId, {

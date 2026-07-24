@@ -148,6 +148,25 @@ export interface StaffMember {
   shiftEnd: string
 }
 
+/** Calendar-linked staff shift booked onto an event date */
+export interface ShiftBooking {
+  id: string
+  projectId: string
+  staffId: string
+  staffName: string
+  role: string
+  /** YYYY-MM-DD */
+  date: string
+  shiftStart: string
+  shiftEnd: string
+  hourlyWage: number
+  hours: number
+  laborCost: number
+  attendance: 'confirmed' | 'pending' | 'absent'
+  tasks: string[]
+  source: 'ai' | 'manual'
+}
+
 export interface DocumentIds {
   nabidka: string
   smlouva: string
@@ -322,6 +341,8 @@ export interface EventProject {
   catering: CateringItem[]
   checklist: ChecklistItem[]
   staff: StaffMember[]
+  /** Auto-booked / managed shifts linked to calendar & budget labor */
+  shiftBookings: ShiftBooking[]
   documents: DocumentIds
   clientPhone: string
   clientName: string

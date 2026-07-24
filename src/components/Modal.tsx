@@ -31,7 +31,13 @@ export function Modal({ open, onClose, title, children, wide }: ModalProps) {
         >
           <motion.div
             className="modal"
-            style={{ maxWidth: wide ? 720 : 560 }}
+            style={{
+              maxWidth: wide ? 860 : 560,
+              maxHeight: 'min(90vh, 900px)',
+              overflowY: 'auto',
+              background: '#0f172a',
+              border: '1px solid rgba(212,175,55,0.35)',
+            }}
             initial={{ opacity: 0, y: 24, scale: 0.96 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 16 }}
@@ -46,8 +52,8 @@ export function Modal({ open, onClose, title, children, wide }: ModalProps) {
                 marginBottom: '1.25rem',
               }}
             >
-              <h2 style={{ fontSize: '1.5rem' }}>{title}</h2>
-              <button className="btn btn-ghost" onClick={onClose} aria-label="Zavřít" style={{ padding: '0.4rem' }}>
+              <h2 style={{ fontSize: '1.35rem', color: '#D4AF37', fontWeight: 900 }}>{title}</h2>
+              <button className="btn btn-ghost" onClick={onClose} aria-label="Zavřít" style={{ padding: '0.4rem', minHeight: 44, minWidth: 44 }}>
                 <X size={18} />
               </button>
             </div>

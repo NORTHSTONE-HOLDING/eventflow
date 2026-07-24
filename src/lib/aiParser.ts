@@ -8,6 +8,7 @@ import type {
 import { calculateBudget, optimizeBudgetRecommendations } from './budgetEngine'
 import { generateDocumentIds, uid } from './documentIds'
 import { buildWarehouseFromCatering } from './inventoryEngine'
+import { bookShiftsFromStaff, applyLaborToProjectFinancials } from './shiftScheduler'
 
 export interface ParsedPrompt {
   guests: number
@@ -383,8 +384,9 @@ export async function generateEventFromPrompt(
   const docs = generateDocumentIds()
   const catering = defaultCatering(parsed.guests)
   const warehouse = buildWarehouseFromCatering(catering)
+  const staff = defaultStaff(parsed.guests)
 
-  return {
+  const draft: EventProject = {
     id: uid('evt'),
     name: parsed.name,
     prompt,
@@ -397,7 +399,8 @@ export async function generateEventFromPrompt(
     budgetLines: budget.lines,
     catering,
     checklist: defaultChecklist(),
-    staff: defaultStaff(parsed.guests),
+    staff,
+    shiftBookings: [],
     documents: docs,
     clientPhone: '',
     clientName: '',
@@ -421,6 +424,10 @@ export async function generateEventFromPrompt(
     invoiceDueDate: null,
     debtLegalAnalysis: null,
   }
+
+  // Auto-book staff shifts into calendar state and feed labor into budget/margin
+  draft.shiftBookings = bookShiftsFromStaff(draft, 'ai')
+  return applyLaborToProjectFinancials(draft)
 }
 
 export function getAIRecommendations(project: EventProject): string[] {

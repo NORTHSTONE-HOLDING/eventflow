@@ -8,6 +8,7 @@ import { ClientPortalRoute } from './components/ClientPortalRoute'
 import { CustomerDisplayPage } from './components/CustomerDisplay'
 import { KitchenDisplayPage } from './components/KitchenDisplay'
 import { PosTerminalPage } from './components/PosTerminalPage'
+import { CctvWallPage } from './components/CctvWallPage'
 import { ErrorBoundary } from './components/ErrorBoundary'
 
 function RootLayout() {
@@ -76,6 +77,14 @@ const router = createBrowserRouter([
         element: (
           <ErrorBoundary fallbackTitle="Chyba KDS Bar">
             <KitchenDisplayPage />
+          </ErrorBoundary>
+        ),
+      },
+      {
+        path: 'cctv-wall',
+        element: (
+          <ErrorBoundary fallbackTitle="Chyba CCTV TV režimu">
+            <CctvWallPage />
           </ErrorBoundary>
         ),
       },

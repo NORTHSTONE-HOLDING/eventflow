@@ -27,6 +27,10 @@ export type PosBroadcastMessage =
   | { type: 'kds_snapshot'; payload: KdsTicket[] }
   | { type: 'waiter_ready'; payload: WaiterReadyPayload }
   | { type: 'security_alert'; payload: CctvWalkoutAlert }
+  | {
+      type: 'cashier_amber_alert'
+      payload: { message: string; cameraId: string; cameraLabel: string }
+    }
   | { type: 'ping' }
 
 let sharedChannel: BroadcastChannel | null | undefined

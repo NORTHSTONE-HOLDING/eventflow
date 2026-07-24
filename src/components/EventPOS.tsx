@@ -143,6 +143,7 @@ export function EventPOS({ mode = 'admin' }: EventPOSProps) {
   const [pairingRole, setPairingRole] = useState<PrinterRole | null>(null)
   const [flashReady, setFlashReady] = useState<string | null>(null)
   const [flashSecurity, setFlashSecurity] = useState<string | null>(null)
+  const [flashAmber, setFlashAmber] = useState<string | null>(null)
   const [voiceStatus, setVoiceStatus] = useState<string | null>(null)
 
   const venueCatalog = useMemo(() => buildVenueMasterCatalog(), [])
@@ -233,18 +234,41 @@ export function EventPOS({ mode = 'admin' }: EventPOSProps) {
 
     const handleSecurity = (payload: {
       message: string
-      tableLabel: string
+      tableLabel?: string
+      kind?: 'walkout' | 'fight' | 'queue'
     }) => {
       pushSecurityAlert({
         message: payload.message,
-        tableLabel: payload.tableLabel,
+        tableLabel: payload.tableLabel || '',
       })
-      setFlashSecurity(payload.message)
-      setToast(payload.message)
-      window.setTimeout(() => setFlashSecurity(null), 12000)
+      if (payload.kind === 'fight') {
+        setFlashAmber(payload.message)
+        setToast(payload.message)
+        window.setTimeout(() => setFlashAmber(null), 12000)
+      } else {
+        setFlashSecurity(payload.message)
+        setToast(payload.message)
+        window.setTimeout(() => setFlashSecurity(null), 12000)
+      }
       try {
         if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-          new Notification('EventFlow Security', { body: payload.message })
+          new Notification(
+            payload.kind === 'fight' ? 'EventFlow Konflikt' : 'EventFlow Security',
+            { body: payload.message },
+          )
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    const handleAmber = (payload: { message: string }) => {
+      setFlashAmber(payload.message)
+      setToast(payload.message)
+      window.setTimeout(() => setFlashAmber(null), 12000)
+      try {
+        if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+          new Notification('EventFlow Konflikt', { body: payload.message })
         }
       } catch {
         // ignore
@@ -252,6 +276,10 @@ export function EventPOS({ mode = 'admin' }: EventPOSProps) {
     }
 
     const onMsg = (ev: MessageEvent<PosBroadcastMessage>) => {
+      if (ev.data?.type === 'cashier_amber_alert' && ev.data.payload) {
+        handleAmber(ev.data.payload)
+        return
+      }
       if (ev.data?.type === 'security_alert' && ev.data.payload) {
         handleSecurity(ev.data.payload)
         return
@@ -280,11 +308,21 @@ export function EventPOS({ mode = 'admin' }: EventPOSProps) {
     }
     ch.addEventListener('message', onMsg)
     const onStorage = (e: StorageEvent) => {
+      if (e.key === 'eventflow-cashier-amber' && e.newValue) {
+        try {
+          const payload = JSON.parse(e.newValue) as { message: string }
+          handleAmber(payload)
+        } catch {
+          // ignore
+        }
+        return
+      }
       if (e.key === 'eventflow-security-alert' && e.newValue) {
         try {
           const payload = JSON.parse(e.newValue) as {
             message: string
-            tableLabel: string
+            tableLabel?: string
+            kind?: 'walkout' | 'fight' | 'queue'
           }
           handleSecurity(payload)
         } catch {
@@ -693,7 +731,7 @@ export function EventPOS({ mode = 'admin' }: EventPOSProps) {
           className="pos-security-flash"
           style={{
             position: 'fixed',
-            top: flashReady ? 88 : 12,
+            top: flashReady || flashAmber ? 88 : 12,
             left: '50%',
             transform: 'translateX(-50%)',
             zIndex: 3100,
@@ -712,6 +750,34 @@ export function EventPOS({ mode = 'admin' }: EventPOSProps) {
           }}
         >
           {flashSecurity}
+        </div>
+      )}
+
+      {flashAmber && (
+        <div
+          className="pos-amber-flash"
+          style={{
+            position: 'fixed',
+            top: flashReady ? 88 : 12,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 3090,
+            maxWidth: 'min(96vw, 720px)',
+            width: '100%',
+            padding: '1.1rem 1.25rem',
+            borderRadius: 14,
+            background: '#d97706',
+            color: '#fffbeb',
+            fontWeight: 900,
+            fontSize: '1.15rem',
+            boxShadow: '0 12px 40px rgba(245,158,11,0.55)',
+            textAlign: 'center',
+            border: '2px solid #fde68a',
+            animation: 'posSecurityPulse 0.9s ease infinite',
+          }}
+          title="Varování pokladny — detekce konfliktu"
+        >
+          {flashAmber}
         </div>
       )}
 

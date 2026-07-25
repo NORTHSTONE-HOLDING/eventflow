@@ -12,10 +12,13 @@ import { getLowStockItems } from './inventoryEngine'
 
 let receiptSeq = 1
 
+/** Sequential ZDD number: F2026XXXX (Czech simplified tax document). */
 export function nextReceiptNumber(projectSequence: number): string {
-  const n = String(receiptSeq++).padStart(4, '0')
-  const seq = String(projectSequence || 1).padStart(3, '0')
-  return `UC2026${seq}-${n}`
+  const year = new Date().getFullYear()
+  // Blend project document sequence with local receipt counter for uniqueness
+  const base = Math.max(1, Number(projectSequence) || 1) * 100 + (receiptSeq++ % 100)
+  const n = String(base).padStart(4, '0').slice(-4)
+  return `F${year}${n}`
 }
 
 export function setReceiptSequence(n: number) {

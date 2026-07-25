@@ -484,6 +484,17 @@ export function StaffTerminal() {
       totalVat: result.method === 'all_inclusive' ? 0 : totals.totalVat,
       paymentLabel: paymentMethodLabel(result.method),
       printCustomerReceipt: result.method !== 'all_inclusive',
+      profile: {
+        companyName: profile.companyName,
+        ico: profile.ico,
+        dic: profile.dic,
+        street: profile.street,
+        city: profile.city,
+        zip: profile.zip,
+        logoUrl: profile.logoUrl ?? null,
+      },
+      paymentMethod: result.method,
+      projectSequence: project?.documents?.sequence,
     })
   }
 

@@ -1,10 +1,22 @@
 import type {
+  AgencyProfile,
   POSCartLine,
   PosPrinter,
   PrinterRole,
 } from '../types'
 import { uid } from './documentIds'
 import { formatCzechDateTime } from './czechDate'
+import {
+  THERMAL_LOGO_SVG,
+  buildVatBreakdown,
+  formatKcPlain,
+  formatTaxDocumentNumber,
+  formatVenueAddress,
+  isVatPayer,
+  receiptPaymentLabel,
+  receiptPrintedAtLabel,
+} from './taxReceipt'
+import type { POSPaymentMethod } from '../types'
 
 declare global {
   interface Navigator {
@@ -152,38 +164,317 @@ export function formatKitchenTicket(opts: {
   )
 }
 
-export function formatCustomerReceipt80mm(opts: {
-  companyName: string
-  projectName: string
+export type CustomerReceiptProfile = Pick<
+  AgencyProfile,
+  'companyName' | 'ico' | 'dic' | 'street' | 'city' | 'zip' | 'logoUrl'
+>
+
+export interface CustomerReceiptOpts {
+  profile: CustomerReceiptProfile
+  projectName?: string
+  tableLabel?: string
   receiptNumber: string
+  projectSequence?: number
   lines: POSCartLine[]
-  totalGross: number
-  totalVat: number
-  paymentLabel: string
-}): string {
-  const stamp = formatCzechDateTime(new Date())
-  const body = (opts.lines ?? [])
+  paymentMethod?: POSPaymentMethod
+  /** Fallback when paymentMethod not provided */
+  paymentLabel?: string
+  printedAt?: Date
+  openingHours?: string
+}
+
+/** Plain-text ZDD body (also embedded in HTML pre for thermal drivers). */
+export function formatCustomerReceipt80mm(opts: CustomerReceiptOpts): string {
+  const profile = opts.profile
+  const company = (profile.companyName || 'EventFlow').trim()
+  const address = formatVenueAddress(profile)
+  const ico = String(profile.ico || '').trim() || '—'
+  const dic = String(profile.dic || '').trim()
+  const vatStatus = isVatPayer(dic) ? 'Plátce DPH' : 'Neplátce DPH'
+  const hours = opts.openingHours || 'Po - Ne: 11:00 - 23:00'
+  const docNo = formatTaxDocumentNumber({
+    receiptNumber: opts.receiptNumber,
+    projectSequence: opts.projectSequence,
+  })
+  const printedAt = receiptPrintedAtLabel(opts.printedAt || new Date())
+  const payLabel =
+    opts.paymentMethod != null
+      ? receiptPaymentLabel(opts.paymentMethod)
+      : opts.paymentLabel || 'Hotovost'
+
+  const { rows, totalGross, printLines } = buildVatBreakdown(opts.lines ?? [])
+
+  const itemBlock = printLines
+    .map((l) => {
+      const unit = formatKcPlain(l.unitPrice)
+      const sum = formatKcPlain(l.lineGross)
+      return (
+        `${l.name}\n` +
+        `  ${l.qty} ks × ${unit}  ${sum}  ${l.letter}`
+      )
+    })
+    .join('\n')
+
+  const vatBlock = rows.length
+    ? rows
+        .map(
+          (r) =>
+            `${r.letter} ${r.label}\n` +
+            `  Základ: ${formatKcPlain(r.base)}\n` +
+            `  Daň:    ${formatKcPlain(r.vat)}\n` +
+            `  Celkem: ${formatKcPlain(r.gross)}`,
+        )
+        .join('\n')
+    : '  (bez položek s DPH)'
+
+  return (
+    `${company}\n` +
+    `${address}\n` +
+    `IČO: ${ico}\n` +
+    (dic ? `DIČ: ${dic}\n` : '') +
+    `${vatStatus}\n` +
+    `Otevírací doba: ${hours}\n` +
+    `================================\n` +
+    `ZJEDNODUŠENÝ DAŇOVÝ DOKLAD\n` +
+    (opts.tableLabel ? `Stůl: ${opts.tableLabel}\n` : '') +
+    (opts.projectName ? `Akce: ${opts.projectName}\n` : '') +
+    `--------------------------------\n` +
+    `${itemBlock || '(prázdný košík)'}\n` +
+    `--------------------------------\n` +
+    `CELKEM K ÚHRADĚ: ${formatKcPlain(totalGross)}\n` +
+    `--------------------------------\n` +
+    `ROZPIS DPH\n` +
+    `${vatBlock}\n` +
+    `================================\n` +
+    `Číslo dokladu: ${docNo}\n` +
+    `Datum a čas: ${printedAt}\n` +
+    `Způsob úhrady: ${payLabel}\n` +
+    `--------------------------------\n` +
+    `Děkujeme za Vaši návštěvu!\n` +
+    `Účtenka slouží jako zjednodušený\n` +
+    `daňový doklad.\n`
+  )
+}
+
+/** High-contrast HTML thermal receipt — black on white, centered headers. */
+export function buildCustomerReceiptHtml(opts: CustomerReceiptOpts): string {
+  const profile = opts.profile
+  const company = escapeHtml((profile.companyName || 'EventFlow').trim())
+  const address = escapeHtml(formatVenueAddress(profile))
+  const ico = escapeHtml(String(profile.ico || '').trim() || '—')
+  const dicRaw = String(profile.dic || '').trim()
+  const dic = escapeHtml(dicRaw)
+  const vatStatus = isVatPayer(dicRaw) ? 'Plátce DPH' : 'Neplátce DPH'
+  const hours = escapeHtml(opts.openingHours || 'Po - Ne: 11:00 - 23:00')
+  const docNo = escapeHtml(
+    formatTaxDocumentNumber({
+      receiptNumber: opts.receiptNumber,
+      projectSequence: opts.projectSequence,
+    }),
+  )
+  const printedAt = escapeHtml(receiptPrintedAtLabel(opts.printedAt || new Date()))
+  const payLabel = escapeHtml(
+    opts.paymentMethod != null
+      ? receiptPaymentLabel(opts.paymentMethod)
+      : opts.paymentLabel || 'Hotovost',
+  )
+
+  const { rows, totalGross, printLines } = buildVatBreakdown(opts.lines ?? [])
+
+  const itemsHtml = printLines
+    .map((l) => {
+      return `<div class="line">
+  <div class="line-name">${escapeHtml(l.name)}</div>
+  <div class="line-row">
+    <span>${l.qty}&nbsp;ks × ${escapeHtml(formatKcPlain(l.unitPrice))}</span>
+    <span class="line-sum">${escapeHtml(formatKcPlain(l.lineGross))}&nbsp;<b>${l.letter}</b></span>
+  </div>
+</div>`
+    })
+    .join('\n')
+
+  const vatHtml = rows
     .map(
-      (l) =>
-        `${l.name}\n  ${l.qty} × ${l.unitPrice.toLocaleString('cs-CZ')} = ${(l.qty * l.unitPrice).toLocaleString('cs-CZ')}`
+      (r) => `<tr>
+  <td class="c">${r.letter}<br/><span class="small">${escapeHtml(r.label)}</span></td>
+  <td class="r">${escapeHtml(formatKcPlain(r.base))}</td>
+  <td class="r">${escapeHtml(formatKcPlain(r.vat))}</td>
+  <td class="r">${escapeHtml(formatKcPlain(r.gross))}</td>
+</tr>`,
     )
     .join('\n')
-  return (
-    `${opts.companyName}\n` +
-    `EventFlow POS · Účtenka\n` +
-    `${opts.projectName}\n` +
-    `================================\n` +
-    `${opts.receiptNumber}\n` +
-    `${stamp}\n` +
-    `${opts.paymentLabel}\n` +
-    `--------------------------------\n` +
-    `${body}\n` +
-    `--------------------------------\n` +
-    `DPH: ${opts.totalVat.toLocaleString('cs-CZ')} Kč\n` +
-    `CELKEM: ${opts.totalGross.toLocaleString('cs-CZ')} Kč\n` +
-    `================================\n` +
-    `Děkujeme · 80mm\n`
-  )
+
+  const logoBlock = profile.logoUrl
+    ? `<img class="logo" src="${escapeAttr(profile.logoUrl)}" alt="Logo" />`
+    : `<div class="logo-svg">${THERMAL_LOGO_SVG}</div>`
+
+  return `<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8"/>
+<title>Účtenka ${docNo}</title>
+<style>
+  :root { color-scheme: only light; }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #fff !important;
+    color: #000 !important;
+    font-family: "Courier New", ui-monospace, Menlo, monospace;
+    font-size: 12px;
+    line-height: 1.35;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  .receipt {
+    width: 72mm;
+    max-width: 72mm;
+    margin: 0 auto;
+    padding: 2mm;
+    background: #fff !important;
+    color: #000 !important;
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+  .center { text-align: center; }
+  .logo, .logo-svg { display: block; margin: 0 auto 6px; width: 48px; height: 48px; }
+  .logo-svg svg { width: 48px; height: 48px; display: block; margin: 0 auto; }
+  .company { font-size: 14px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.02em; }
+  .meta { font-size: 11px; margin-top: 2px; }
+  .rule { border: none; border-top: 1px dashed #000; margin: 8px 0; }
+  .rule-solid { border: none; border-top: 2px solid #000; margin: 8px 0; }
+  .title { font-weight: 900; font-size: 12px; letter-spacing: 0.04em; }
+  .line { margin-bottom: 6px; }
+  .line-name { font-weight: 700; }
+  .line-row { display: flex; justify-content: space-between; gap: 6px; }
+  .line-sum { font-weight: 700; white-space: nowrap; }
+  .total {
+    font-size: 15px;
+    font-weight: 900;
+    display: flex;
+    justify-content: space-between;
+    margin: 8px 0;
+  }
+  table.vat {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 10px;
+    margin-top: 4px;
+  }
+  table.vat th, table.vat td {
+    border-bottom: 1px solid #000;
+    padding: 3px 2px;
+    vertical-align: top;
+  }
+  table.vat th { font-weight: 900; text-align: left; }
+  .r { text-align: right; white-space: nowrap; }
+  .c { text-align: center; }
+  .small { font-size: 9px; font-weight: 400; }
+  .footer { font-size: 11px; margin-top: 6px; }
+  .footer strong { font-weight: 900; }
+  .legal { font-size: 10px; margin-top: 8px; }
+
+  @media print {
+    @page { size: 80mm auto; margin: 2mm; }
+    html, body {
+      background: #fff !important;
+      color: #000 !important;
+      width: 80mm;
+    }
+    .receipt {
+      width: 72mm;
+      background: #fff !important;
+      color: #000 !important;
+      box-shadow: none !important;
+      text-shadow: none !important;
+      filter: none !important;
+    }
+    * {
+      background: transparent !important;
+      box-shadow: none !important;
+      text-shadow: none !important;
+      color: #000 !important;
+    }
+    .logo-svg svg rect { fill: #000 !important; }
+    .logo-svg svg path { fill: #fff !important; stroke: none !important; }
+    .no-print { display: none !important; }
+  }
+</style>
+</head>
+<body>
+  <div class="receipt">
+    <div class="center">
+      ${logoBlock}
+      <div class="company">${company}</div>
+      <div class="meta">${address}</div>
+      <div class="meta">IČO: ${ico}</div>
+      ${dicRaw ? `<div class="meta">DIČ: ${dic}</div>` : ''}
+      <div class="meta"><strong>${vatStatus}</strong></div>
+      <div class="meta">Otevírací doba: ${hours}</div>
+    </div>
+
+    <hr class="rule-solid"/>
+    <div class="center title">ZJEDNODUŠENÝ DAŇOVÝ DOKLAD</div>
+    ${opts.tableLabel ? `<div class="center meta">Stůl: ${escapeHtml(opts.tableLabel)}</div>` : ''}
+    ${opts.projectName ? `<div class="center meta">Akce: ${escapeHtml(opts.projectName)}</div>` : ''}
+    <hr class="rule"/>
+
+    ${itemsHtml || '<div class="center">(prázdný košík)</div>'}
+
+    <hr class="rule"/>
+    <div class="total">
+      <span>CELKEM K ÚHRADĚ</span>
+      <span>${escapeHtml(formatKcPlain(totalGross))}</span>
+    </div>
+    <hr class="rule"/>
+
+    <div class="center title">ROZPIS DPH</div>
+    <table class="vat">
+      <thead>
+        <tr>
+          <th class="c">Sazba</th>
+          <th class="r">Základ</th>
+          <th class="r">Daň</th>
+          <th class="r">Celkem</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${vatHtml || '<tr><td colspan="4" class="c">—</td></tr>'}
+      </tbody>
+    </table>
+
+    <hr class="rule-solid"/>
+    <div class="footer center">
+      <div><strong>Číslo dokladu:</strong> ${docNo}</div>
+      <div><strong>Datum a čas:</strong> ${printedAt}</div>
+      <div><strong>Způsob úhrady:</strong> ${payLabel}</div>
+    </div>
+    <hr class="rule"/>
+    <div class="legal center">
+      Děkujeme za Vaši návštěvu!<br/>
+      Účtenka slouží jako zjednodušený daňový doklad.
+    </div>
+  </div>
+  <script>
+    window.onload = function () {
+      setTimeout(function () { window.print(); }, 220);
+    };
+  </script>
+</body>
+</html>`
+}
+
+function escapeHtml(s: string): string {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
+function escapeAttr(s: string): string {
+  return escapeHtml(s).replace(/'/g, '&#39;')
 }
 
 /** Route print jobs to role-assigned printers and open 80mm print windows. */
@@ -198,6 +489,10 @@ export function dispatchPrintJobs(opts: {
   totalVat: number
   paymentLabel: string
   printCustomerReceipt: boolean
+  /** Full venue profile for statutory ZDD header (preferred). */
+  profile?: CustomerReceiptProfile | null
+  paymentMethod?: POSPaymentMethod
+  projectSequence?: number
 }): { jobs: Array<{ role: PrinterRole; printerName: string; ok: boolean }> } {
   const printers = Array.isArray(opts.printers) ? opts.printers : []
   const { kitchen, bar } = splitCartByStation(opts.lines)
@@ -213,6 +508,16 @@ export function dispatchPrintJobs(opts: {
     jobs.push({ role, printerName: name, ok: Boolean(printer?.paired ?? true) })
   }
 
+  const sendHtml = (role: PrinterRole, html: string, hasContent: boolean) => {
+    if (!hasContent) return
+    const printer =
+      printers.find((p) => p.role === role && p.paired) ||
+      printers.find((p) => p.role === role)
+    const name = printer?.name || roleLabel(role)
+    openThermalHtmlPrintWindow(html, name)
+    jobs.push({ role, printerName: name, ok: Boolean(printer?.paired ?? true) })
+  }
+
   send(
     'kitchen',
     formatKitchenTicket({
@@ -222,7 +527,7 @@ export function dispatchPrintJobs(opts: {
       lines: kitchen,
       station: 'kitchen',
     }),
-    kitchen.length > 0
+    kitchen.length > 0,
   )
 
   send(
@@ -234,28 +539,39 @@ export function dispatchPrintJobs(opts: {
       lines: bar,
       station: 'bar',
     }),
-    bar.length > 0
+    bar.length > 0,
   )
 
   if (opts.printCustomerReceipt) {
-    send(
-      'receipt',
-      formatCustomerReceipt80mm({
-        companyName: opts.companyName,
-        projectName: opts.projectName,
-        receiptNumber: opts.receiptNumber,
-        lines: opts.lines,
-        totalGross: opts.totalGross,
-        totalVat: opts.totalVat,
-        paymentLabel: opts.paymentLabel,
-      }),
-      true
-    )
+    const profile: CustomerReceiptProfile = opts.profile ?? {
+      companyName: opts.companyName || 'EventFlow',
+      ico: '',
+      dic: '',
+      street: '',
+      city: '',
+      zip: '',
+      logoUrl: null,
+    }
+    const receiptOpts: CustomerReceiptOpts = {
+      profile: {
+        ...profile,
+        companyName: profile.companyName || opts.companyName || 'EventFlow',
+      },
+      projectName: opts.projectName,
+      tableLabel: opts.tableLabel,
+      receiptNumber: opts.receiptNumber,
+      projectSequence: opts.projectSequence,
+      lines: opts.lines,
+      paymentMethod: opts.paymentMethod,
+      paymentLabel: opts.paymentLabel,
+    }
+    sendHtml('receipt', buildCustomerReceiptHtml(receiptOpts), true)
   }
 
   return { jobs }
 }
 
+/** Plain-text thermal popup (kitchen / bar / closure). */
 export function openThermalPrintWindow(content: string, title: string) {
   const win = window.open('', '_blank', 'noopener,noreferrer,width=360,height=640')
   if (!win) return
@@ -263,13 +579,37 @@ export function openThermalPrintWindow(content: string, title: string) {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-  win.document.write(`<!doctype html><html><head><title>${title}</title>
+  win.document.write(`<!doctype html><html lang="cs"><head><meta charset="utf-8"/><title>${escapeHtml(title)}</title>
 <style>
+  :root { color-scheme: only light; }
   @page { size: 80mm auto; margin: 2mm; }
-  body { font-family: ui-monospace, Menlo, monospace; font-size: 12px; color: #000; background: #fff; width: 72mm; margin: 0 auto; white-space: pre-wrap; }
-  h1 { font-size: 13px; margin: 0 0 8px; }
-</style></head><body><h1>${title}</h1><pre>${safe}</pre>
+  html, body {
+    font-family: "Courier New", ui-monospace, Menlo, monospace;
+    font-size: 12px;
+    color: #000 !important;
+    background: #fff !important;
+    width: 72mm;
+    margin: 0 auto;
+    white-space: pre-wrap;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  h1 { font-size: 13px; margin: 0 0 8px; text-align: center; color: #000 !important; }
+  @media print {
+    html, body { background: #fff !important; color: #000 !important; box-shadow: none !important; }
+    * { box-shadow: none !important; text-shadow: none !important; }
+  }
+</style></head><body><h1>${escapeHtml(title)}</h1><pre>${safe}</pre>
 <script>window.onload=function(){setTimeout(function(){window.print()},200)}</script>
 </body></html>`)
+  win.document.close()
+}
+
+/** Statutory customer receipt HTML print (ZDD). */
+export function openThermalHtmlPrintWindow(html: string, _title: string) {
+  const win = window.open('', '_blank', 'noopener,noreferrer,width=380,height=720')
+  if (!win) return
+  win.document.open()
+  win.document.write(html)
   win.document.close()
 }

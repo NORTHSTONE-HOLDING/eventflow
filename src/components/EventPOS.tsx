@@ -706,6 +706,17 @@ export function EventPOS({ mode = 'admin' }: EventPOSProps) {
         totalVat: result.method === 'all_inclusive' ? 0 : payTotals.totalVat,
         paymentLabel: paymentMethodLabel(result.method),
         printCustomerReceipt: printCustomer,
+        profile: {
+          companyName: profile.companyName,
+          ico: profile.ico,
+          dic: profile.dic,
+          street: profile.street,
+          city: profile.city,
+          zip: profile.zip,
+          logoUrl: profile.logoUrl ?? null,
+        },
+        paymentMethod: result.method,
+        projectSequence: project.documents?.sequence,
       })
 
       const tx = buildLocalReceiptSnapshot(payLines, result.method, receiptNumber, {

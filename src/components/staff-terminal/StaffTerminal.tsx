@@ -28,8 +28,9 @@ import { useDailySpecialStore } from '../../store/useDailySpecialStore'
 import { useProductImageStore, productNameKey } from '../../store/useProductImageStore'
 import { PosProductTile } from '../pos/PosProductTile'
 import { AdvancedCheckout, type CheckoutResult } from '../pos/AdvancedCheckout'
-import { ShiftClosureModal } from './ShiftClosureModal'
+import { ShiftClosureHub } from '../ShiftClosureHub'
 import { PosShiftExpressInput } from '../pos/PosShiftExpressInput'
+import { ManagerPinKeypadModal } from './ManagerPinKeypadModal'
 import { POS_CATEGORIES, filterPosMenu } from '../../lib/posCategories'
 import { buildVenueMasterCatalog, mergeCatalogs } from '../../lib/venueCatalog'
 import { mergeHybridPosCatalog } from '../../lib/inventoryPosBridge'
@@ -81,10 +82,12 @@ export function StaffTerminal() {
 
   const waiters = usePosSessionStore((s) => s.waiters)
   const activeWaiterId = usePosSessionStore((s) => s.activeWaiterId)
+  const waiterLoggedOut = usePosSessionStore((s) => s.waiterLoggedOut)
   const setActiveWaiter = usePosSessionStore((s) => s.setActiveWaiter)
   const getActiveWaiter = usePosSessionStore((s) => s.getActiveWaiter)
   const getWorkspaceTableId = usePosSessionStore((s) => s.getWorkspaceTableId)
   const setWorkspaceTableId = usePosSessionStore((s) => s.setWorkspaceTableId)
+  const logoutWaiterSession = usePosSessionStore((s) => s.logoutWaiterSession)
   const readyAlerts = usePosSessionStore((s) => s.readyAlerts)
   const pushReadyAlert = usePosSessionStore((s) => s.pushReadyAlert)
   const dismissReadyAlert = usePosSessionStore((s) => s.dismissReadyAlert)
@@ -110,13 +113,15 @@ export function StaffTerminal() {
   const [checkoutOpen, setCheckoutOpen] = useState(false)
   const [quickSale, setQuickSale] = useState(false)
   const [quickLines, setQuickLines] = useState<POSCartLine[]>([])
-  const [closureOpen, setClosureOpen] = useState(false)
   const [showShifts, setShowShifts] = useState(false)
   const [flashReady, setFlashReady] = useState<string | null>(null)
   const [emergency, setEmergency] = useState<string | null>(null)
   const [voidTarget, setVoidTarget] = useState<POSCartLine | null>(null)
   /** After Odeslat — stay on space map until waiter taps a table again */
   const [mapFocus, setMapFocus] = useState(false)
+  /** PIN-gated Uzávěrka & Směna inside /pos-terminal */
+  const [closurePinOpen, setClosurePinOpen] = useState(false)
+  const [closureUnlocked, setClosureUnlocked] = useState(false)
 
   useEffect(() => {
     void bootstrapInventory()
@@ -262,7 +267,26 @@ export function StaffTerminal() {
     if (project) updateProject(project.id, { activeTableId: null })
   }, [project, setWorkspaceTableId, updateProject])
 
+  const resetTerminalAfterClosure = useCallback(() => {
+    // ShiftFinance startNewShift already ran inside embedded hub close protocol
+    setClosureUnlocked(false)
+    setClosurePinOpen(false)
+    setQuickSale(false)
+    setQuickLines([])
+    setCheckoutOpen(false)
+    setShowShifts(false)
+    setMapFocus(true)
+    setWorkspaceTableId(null)
+    if (project) updateProject(project.id, { activeTableId: null })
+    logoutWaiterSession()
+  }, [project, updateProject, setWorkspaceTableId, logoutWaiterSession])
+
   const addItem = (item: CateringItem) => {
+    if (waiterLoggedOut) {
+      tapFeedback('alert')
+      setToast('Nejdřív vyberte obsluhu pro novou směnu')
+      return
+    }
     if (ordersLocked) {
       tapFeedback('alert')
       setToast('Směna uzavřena — zahajte novou směnu v Uzávěrka & Směna')
@@ -414,6 +438,10 @@ export function StaffTerminal() {
 
   const sendOrder = () => {
     tapFeedback('kds')
+    if (waiterLoggedOut) {
+      setToast('Nejdřív vyberte obsluhu pro novou směnu')
+      return
+    }
     if (ordersLocked) {
       setToast('Směna uzavřena — nové objednávky jsou uzamčeny')
       return
@@ -556,8 +584,50 @@ export function StaffTerminal() {
     )
   }
 
+  if (closureUnlocked) {
+    return (
+      <div className="staff-terminal staff-terminal-closure">
+        <ShiftClosureHub
+          embedded
+          onBack={() => {
+            tapFeedback()
+            setClosureUnlocked(false)
+          }}
+          onClosedComplete={resetTerminalAfterClosure}
+        />
+      </div>
+    )
+  }
+
   return (
     <div className="staff-terminal">
+      {waiterLoggedOut && (
+        <div className="st-waiter-login-gate panel" role="dialog" aria-modal="true">
+          <h2 className="gold-text" style={{ marginTop: 0 }}>
+            Výběr obsluhy — nová směna
+          </h2>
+          <p style={{ color: 'var(--text-muted)', marginBottom: 16 }}>
+            Předchozí směna byla uzavřena. Vyberte obsluhu pro čistý start terminálu.
+          </p>
+          <div className="st-waiter-login-grid">
+            {waiters.map((w) => (
+              <button
+                key={w.id}
+                type="button"
+                className="btn btn-gold"
+                style={{ minHeight: 64, fontWeight: 900 }}
+                onClick={() => {
+                  tapFeedback('success')
+                  setActiveWaiter(w.id)
+                  setToast(`Přihlášen(a): ${w.name}`)
+                }}
+              >
+                <UserRound size={18} /> {w.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       {ordersLocked && (
         <div className="st-shift-locked-banner" role="status">
           <span>
@@ -609,7 +679,9 @@ export function StaffTerminal() {
             <button
               key={w.id}
               type="button"
-              className={activeWaiterId === w.id ? 'btn btn-gold' : 'btn btn-ghost'}
+              className={
+                !waiterLoggedOut && activeWaiterId === w.id ? 'btn btn-gold' : 'btn btn-ghost'
+              }
               style={{ minHeight: 44 }}
               onClick={() => {
                 tapFeedback()
@@ -668,14 +740,14 @@ export function StaffTerminal() {
           </button>
           <button
             type="button"
-            className="btn btn-gold"
-            style={{ minHeight: 48 }}
+            className="btn btn-gold st-closure-nav-btn"
+            style={{ minHeight: 52, fontWeight: 900 }}
             onClick={() => {
               tapFeedback()
-              setClosureOpen(true)
+              setClosurePinOpen(true)
             }}
           >
-            <Flag size={15} /> 🏁 Uzavřít / Předat směnu
+            <Flag size={15} /> 🏁 Uzávěrka & Směna
           </button>
         </div>
       </header>
@@ -992,16 +1064,18 @@ export function StaffTerminal() {
         onCancel={() => setVoidTarget(null)}
       />
 
-      <ShiftClosureModal
-        open={closureOpen}
-        project={project}
-        waiterId={waiter?.id || ''}
-        waiterName={waiter?.name || 'Obsluha'}
-        onClose={() => setClosureOpen(false)}
-        onClosed={() => {
-          setClosureOpen(false)
-          setToast('Směna uzavřena a archivována')
+      <ManagerPinKeypadModal
+        open={closurePinOpen}
+        title="Zadejte Manažerský PIN pro přístup k uzávěrce"
+        subtitle="Uzávěrka & Směna je chráněna. Po autorizaci se otevře kompletní finanční dashboard směny."
+        expectedPin={profile.managerPin}
+        confirmLabel="Odemknout uzávěrku"
+        onSuccess={() => {
+          setClosurePinOpen(false)
+          setClosureUnlocked(true)
+          setToast('Uzávěrka odemčena — Manažerský PIN ověřen')
         }}
+        onCancel={() => setClosurePinOpen(false)}
       />
     </div>
   )

@@ -33,6 +33,8 @@ export interface SecurityFlashAlert {
 interface PosSessionState {
   waiters: PosWaiterProfile[]
   activeWaiterId: string
+  /** After uzávěrka — waiter must re-select before taking orders */
+  waiterLoggedOut: boolean
   workspaces: Record<string, PosWaiterWorkspace>
   readyAlerts: WaiterReadyAlert[]
   securityAlerts: SecurityFlashAlert[]
@@ -50,6 +52,11 @@ interface PosSessionState {
   pushSecurityAlert: (alert: Omit<SecurityFlashAlert, 'id' | 'createdAt' | 'seen'>) => void
   dismissSecurityAlert: (id: string) => void
   setOperationMode: (mode: PosOperationMode) => void
+  /**
+   * Force-logout after Uzavřít směnu — clears active table workspace,
+   * alerts buffer, and requires waiter re-selection.
+   */
+  logoutWaiterSession: () => void
 }
 
 function ensureWorkspace(
@@ -73,6 +80,7 @@ export const usePosSessionStore = create<PosSessionState>()(
     (set, get) => ({
       waiters: DEFAULT_WAITERS,
       activeWaiterId: DEFAULT_WAITERS[0].id,
+      waiterLoggedOut: false,
       workspaces: {},
       readyAlerts: [],
       securityAlerts: [],
@@ -81,6 +89,12 @@ export const usePosSessionStore = create<PosSessionState>()(
 
       getActiveWaiter: () => {
         const s = get()
+        if (s.waiterLoggedOut) {
+          return (
+            s.waiters[0] ||
+            DEFAULT_WAITERS[0]
+          )
+        }
         return (
           s.waiters.find((w) => w.id === s.activeWaiterId) ||
           s.waiters[0] ||
@@ -91,6 +105,7 @@ export const usePosSessionStore = create<PosSessionState>()(
       setActiveWaiter: (waiterId) => {
         set((s) => ({
           activeWaiterId: waiterId,
+          waiterLoggedOut: false,
           workspaces: ensureWorkspace(s.workspaces, waiterId),
         }))
       },
@@ -161,12 +176,32 @@ export const usePosSessionStore = create<PosSessionState>()(
         })),
 
       setOperationMode: (mode) => set({ operationMode: mode }),
+
+      logoutWaiterSession: () => {
+        const s = get()
+        const clearedWorkspaces: Record<string, PosWaiterWorkspace> = {}
+        for (const w of s.waiters) {
+          clearedWorkspaces[w.id] = {
+            waiterId: w.id,
+            activeTableId: null,
+            orderLogIds: [],
+            updatedAt: new Date().toISOString(),
+          }
+        }
+        set({
+          waiterLoggedOut: true,
+          workspaces: clearedWorkspaces,
+          readyAlerts: [],
+          securityAlerts: [],
+        })
+      },
     }),
     {
       name: 'eventflow-pos-session',
       partialize: (s) => ({
         waiters: s.waiters,
         activeWaiterId: s.activeWaiterId,
+        waiterLoggedOut: s.waiterLoggedOut,
         workspaces: s.workspaces,
         deviceId: s.deviceId,
         operationMode: s.operationMode,

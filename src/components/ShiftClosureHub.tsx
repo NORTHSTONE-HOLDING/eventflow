@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import {
+  ArrowLeft,
   Banknote,
   CreditCard,
   Flag,
@@ -30,10 +31,25 @@ import { formatCzechDateTime } from '../lib/czechDate'
 import { tapFeedback } from '../lib/touchFeedback'
 import type { ShiftCashExpenseKind } from '../types'
 
+export interface ShiftClosureHubProps {
+  /** Embedded inside /pos-terminal after Manager PIN */
+  embedded?: boolean
+  onBack?: () => void
+  /**
+   * After successful Uzavřít směnu — parent should logout waiter,
+   * start new shift UI, and return to fresh POS map.
+   */
+  onClosedComplete?: () => void
+}
+
 /**
  * 🏁 Uzávěrka & Směna — live revenue, cash expense ledger, thermal close.
  */
-export function ShiftClosureHub() {
+export function ShiftClosureHub({
+  embedded = false,
+  onBack,
+  onClosedComplete,
+}: ShiftClosureHubProps = {}) {
   const activeRaw = useAppStore(selectActiveProject)
   const project = useMemo(() => migrateProject(activeRaw), [activeRaw])
   const profile = useAppStore((s) => s.profile)
@@ -131,7 +147,9 @@ export function ShiftClosureHub() {
     }
     if (
       !window.confirm(
-        'Uzavřít směnu? KDS historie se přesune do archivu, terminál se uzamkne pro nové objednávky a vytiskne se uzávěrka.',
+        embedded
+          ? 'Uzavřít směnu z terminálu? Vytiskne se 80mm uzávěrka, KDS historie se archivuje a obsluha bude odhlášena pro novou směnu.'
+          : 'Uzavřít směnu? KDS historie se přesune do archivu, terminál se uzamkne pro nové objednávky a vytiskne se uzávěrka.',
       )
     ) {
       return
@@ -153,8 +171,17 @@ export function ShiftClosureHub() {
         setToast(res.error || 'Uzávěrka selhala')
         return
       }
+      // Bar-tablet protocol: unlock next morning shift immediately after archive+print
+      if (embedded) {
+        startNewShift()
+      }
       tapFeedback('success')
-      setToast('Směna uzavřena · KDS historie archivována · uzávěrka odeslána na tisk')
+      setToast(
+        embedded
+          ? 'Směna uzavřena · tisk odeslán · KDS archivována · obsluha odhlášena'
+          : 'Směna uzavřena · KDS historie archivována · uzávěrka odeslána na tisk',
+      )
+      onClosedComplete?.()
     } finally {
       setBusy(false)
     }
@@ -167,9 +194,22 @@ export function ShiftClosureHub() {
   }
 
   return (
-    <div className="closure-hub">
+    <div className={`closure-hub ${embedded ? 'closure-hub-embedded' : ''}`}>
       <header className="closure-hub-head">
         <div>
+          {embedded && onBack && (
+            <button
+              type="button"
+              className="btn btn-ghost"
+              style={{ minHeight: 44, marginBottom: 8 }}
+              onClick={() => {
+                tapFeedback()
+                onBack()
+              }}
+            >
+              <ArrowLeft size={16} /> Zpět na terminál
+            </button>
+          )}
           <h1 className="gold-text" style={{ margin: 0, fontSize: 'clamp(1.6rem, 3vw, 2.2rem)' }}>
             🏁 Uzávěrka & Směna
           </h1>
@@ -376,9 +416,11 @@ export function ShiftClosureHub() {
               <span>− Výplaty</span>
               <strong>{formatCurrency(balance.payouts)}</strong>
             </div>
-            <div className="closure-balance-final">
+            <div className="closure-balance-final closure-balance-hero">
               <span>Konečný stav pokladny (Hotovost k předání)</span>
-              <strong className="gold-text">{formatCurrency(balance.finalCash)}</strong>
+              <strong className="gold-text closure-balance-hero-val">
+                {formatCurrency(balance.finalCash)}
+              </strong>
             </div>
           </div>
 
@@ -394,8 +436,9 @@ export function ShiftClosureHub() {
           </button>
 
           <p style={{ fontSize: '0.78rem', color: '#94a3b8', marginTop: 10 }}>
-            Uzávěrka zamkne POS, přesune vydané KDS tickety do archivu dokumentů a spustí
-            tisk 80mm (window.print).
+            {embedded
+              ? 'Tisk 80mm · archivace KDS historie · odhlášení obsluhy · čistý terminál pro novou směnu.'
+              : 'Uzávěrka zamkne POS, přesune vydané KDS tickety do archivu dokumentů a spustí tisk 80mm (window.print).'}
           </p>
         </section>
       </div>

@@ -14,6 +14,7 @@ import {
   MonitorSmartphone,
   Warehouse,
   Cctv,
+  Flag,
 } from 'lucide-react'
 import { Logo } from './Logo'
 import { useAppStore, normalizeAppView } from '../store/useAppStore'
@@ -31,6 +32,7 @@ const NAV: Array<{
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'planner', label: 'AI Planner', icon: Sparkles },
   { id: 'pos', label: 'Event POS / Kasa', icon: MonitorSmartphone, minTier: 'BUSINESS' },
+  { id: 'closure', label: '🏁 Uzávěrka & Směna', icon: Flag, minTier: 'BUSINESS' },
   { id: 'cctv', label: 'AI Kamerový dohled', icon: Cctv, minTier: 'BUSINESS' },
   { id: 'inventory', label: 'Sklad & Inventura', icon: Warehouse, minTier: 'BUSINESS' },
   { id: 'scanner', label: 'AI Vision Scan', icon: Camera, minTier: 'BUSINESS' },

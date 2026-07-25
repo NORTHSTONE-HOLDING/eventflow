@@ -92,6 +92,7 @@ const APP_VIEWS: AppView[] = [
   'pos',
   'inventory',
   'cctv',
+  'closure',
 ]
 
 export function normalizeAppView(view: unknown): AppView {
@@ -291,6 +292,8 @@ interface AppState {
   setKdsTicketStatus: (ticketId: string, status: KdsTicketStatus) => void
   addKdsTickets: (tickets: KdsTicket[]) => void
   voidKdsLineByCartLineId: (lineId: string) => void
+  /** Wipe all active KDS tickets (called on Uzavřít směnu). */
+  clearAllKdsTickets: () => void
   updatePosOrderStatus: (
     orderId: string,
     status: PosOrder['status']
@@ -1048,6 +1051,15 @@ export const useAppStore = create<AppState>()(
         set((s) => ({
           kdsTickets: applyKdsLineVoid(s.kdsTickets ?? [], lineId),
         }))
+      },
+
+      clearAllKdsTickets: () => {
+        set({ kdsTickets: [] })
+        try {
+          localStorage.setItem('eventflow-kds-tickets', JSON.stringify([]))
+        } catch {
+          // ignore
+        }
       },
 
       renameTable: (projectId, tableId, label) => {

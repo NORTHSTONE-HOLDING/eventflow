@@ -22,6 +22,7 @@ import {
 import { useInventoryStore } from '../../store/useInventoryStore'
 import { usePosSessionStore } from '../../store/usePosSessionStore'
 import { usePosSpaceStore } from '../../store/usePosSpaceStore'
+import { useShiftFinanceStore } from '../../store/useShiftFinanceStore'
 import { useCctvStore } from '../../store/useCctvStore'
 import { useDailySpecialStore } from '../../store/useDailySpecialStore'
 import { useProductImageStore, productNameKey } from '../../store/useProductImageStore'
@@ -96,6 +97,8 @@ export function StaffTerminal() {
   const setActiveSpace = usePosSpaceStore((s) => s.setActiveSpace)
   const addSpace = usePosSpaceStore((s) => s.addSpace)
   const getSpaceName = usePosSpaceStore((s) => s.getSpaceName)
+  const ordersLocked = useShiftFinanceStore((s) => s.ordersLocked)
+  const startNewShift = useShiftFinanceStore((s) => s.startNewShift)
   const cctvGlobalAlert = useCctvStore((s) => s.globalAlert)
   const resolveCctvAlert = useCctvStore((s) => s.resolveGlobalAlert)
 
@@ -260,6 +263,11 @@ export function StaffTerminal() {
   }, [project, setWorkspaceTableId, updateProject])
 
   const addItem = (item: CateringItem) => {
+    if (ordersLocked) {
+      tapFeedback('alert')
+      setToast('Směna uzavřena — zahajte novou směnu v Uzávěrka & Směna')
+      return
+    }
     tapFeedback('success')
     const line: POSCartLine = {
       cateringId: item.id,
@@ -406,6 +414,10 @@ export function StaffTerminal() {
 
   const sendOrder = () => {
     tapFeedback('kds')
+    if (ordersLocked) {
+      setToast('Směna uzavřena — nové objednávky jsou uzamčeny')
+      return
+    }
     if (!project || !activeTable || !waiter) {
       setToast('Vyberte stůl a obsluhu')
       return
@@ -449,6 +461,10 @@ export function StaffTerminal() {
 
   const onCheckout = async (result: CheckoutResult) => {
     tapFeedback('success')
+    if (ordersLocked) {
+      setToast('Směna uzavřena — platby jsou uzamčeny do nové směny')
+      return
+    }
     if (quickSale) {
       if (!project) {
         setToast('Pro Rychlý prodej aktivujte projekt v Admin Dashboardu')
@@ -542,6 +558,25 @@ export function StaffTerminal() {
 
   return (
     <div className="staff-terminal">
+      {ordersLocked && (
+        <div className="st-shift-locked-banner" role="status">
+          <span>
+            🔒 Směna uzavřena — terminál nepřijímá nové objednávky. KDS historie je v archivu.
+          </span>
+          <button
+            type="button"
+            className="btn btn-gold"
+            style={{ minHeight: 44 }}
+            onClick={() => {
+              tapFeedback('success')
+              startNewShift()
+              setToast('Nová směna zahájena')
+            }}
+          >
+            Zahájit novou směnu
+          </button>
+        </div>
+      )}
       {(emergency || mySecurity[0]) && (
         <div className="st-emergency-banner" role="alert">
           {emergency || mySecurity[0]?.message}

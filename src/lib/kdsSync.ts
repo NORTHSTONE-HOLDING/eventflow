@@ -27,12 +27,20 @@ export type KdsVoidLinePayload = {
   reason?: string
 }
 
+export type ShiftClosedPayload = {
+  closureId: string
+  shiftId: string
+  closedAt: string
+}
+
 export type PosBroadcastMessage =
   | { type: 'customer_display'; payload: CustomerDisplayState }
   | { type: 'kds_upsert'; payload: KdsTicket }
   | { type: 'kds_status'; payload: { id: string; status: KdsTicketStatus } }
   | { type: 'kds_snapshot'; payload: KdsTicket[] }
   | { type: 'kds_void_line'; payload: KdsVoidLinePayload }
+  | { type: 'kds_clear'; payload: { closureId: string; shiftId: string } }
+  | { type: 'shift_closed'; payload: ShiftClosedPayload }
   | { type: 'waiter_ready'; payload: WaiterReadyPayload }
   | { type: 'security_alert'; payload: CctvWalkoutAlert }
   | {
@@ -97,6 +105,34 @@ export function publishKdsVoidLine(payload: KdsVoidLinePayload) {
   try {
     localStorage.setItem(
       'eventflow-kds-void',
+      JSON.stringify({ ...payload, ts: Date.now() }),
+    )
+  } catch {
+    // ignore
+  }
+}
+
+/** Wipe active KDS boards after shift closure (historie → archiv). */
+export function publishKdsClear(payload: { closureId: string; shiftId: string }) {
+  const ch = getPosChannel()
+  ch?.postMessage({ type: 'kds_clear', payload } satisfies PosBroadcastMessage)
+  try {
+    localStorage.setItem('eventflow-kds-tickets', JSON.stringify([]))
+    localStorage.setItem(
+      'eventflow-kds-clear',
+      JSON.stringify({ ...payload, ts: Date.now() }),
+    )
+  } catch {
+    // ignore
+  }
+}
+
+export function publishShiftClosed(payload: ShiftClosedPayload) {
+  const ch = getPosChannel()
+  ch?.postMessage({ type: 'shift_closed', payload } satisfies PosBroadcastMessage)
+  try {
+    localStorage.setItem(
+      'eventflow-shift-closed',
       JSON.stringify({ ...payload, ts: Date.now() }),
     )
   } catch {

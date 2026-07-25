@@ -391,22 +391,66 @@ export interface KdsTicket {
   ticketValue?: number
 }
 
+/** Cash outflow logged during an active shift (odepis z tržby) */
+export type ShiftCashExpenseKind = 'goods_cash' | 'staff_advance' | 'staff_payout'
+
+export interface ShiftCashExpense {
+  id: string
+  shiftId: string
+  kind: ShiftCashExpenseKind
+  amount: number
+  staffId?: string | null
+  staffName?: string | null
+  note: string
+  createdAt: string
+}
+
 /** End-of-shift / denní uzávěrka archive row */
 export interface ShiftClosureRecord {
   id: string
   createdAt: string
+  shiftId: string
   waiterId: string
   waiterName: string
+  managerName: string
+  venueName: string
   projectId: string | null
   projectName: string
+  revenueKitchen: number
+  revenueBar: number
   revenueCard: number
   revenueCash: number
   revenueTotal: number
   deductionGoods: number
+  deductionAdvances: number
+  deductionPayouts: number
+  /** @deprecated use deductionAdvances + deductionPayouts */
   deductionWages: number
   netCashDrawer: number
+  expenses: ShiftCashExpense[]
+  kdsTicketCount: number
   notes: string
   thermalText: string
+}
+
+/** KDS ticket permanently archived after Uzavřít směnu */
+export interface ArchivedKdsTicket extends KdsTicket {
+  archivedAt: string
+  closureId: string
+  shiftId: string
+}
+
+/** Locked documents container — shift closures + KDS historie */
+export interface ShiftDocumentArchive {
+  id: string
+  createdAt: string
+  shiftId: string
+  closureId: string
+  kind: 'shift_closure'
+  title: string
+  thermalText: string
+  kdsTickets: ArchivedKdsTicket[]
+  closure: ShiftClosureRecord
 }
 
 /** Independent POS order payload (multi-waiter / KDS) */
@@ -721,3 +765,4 @@ export type AppView =
   | 'pos'
   | 'inventory'
   | 'cctv'
+  | 'closure'

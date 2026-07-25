@@ -1,8 +1,6 @@
-import { useMemo, useRef, useState } from 'react'
-import { motion } from 'framer-motion'
+import { useRef, useState } from 'react'
 import {
   Camera,
-  CheckCircle2,
   Loader2,
   Sparkles,
   Upload,
@@ -11,10 +9,12 @@ import {
 } from 'lucide-react'
 import { useInventoryStore } from '../../store/useInventoryStore'
 import { analyzeInvoiceImage } from '../../lib/invoiceVision'
-import { formatCurrency } from '../../lib/documentIds'
-import { formatCzechDate } from '../../lib/czechDate'
 import type { InvoiceVisionResult } from '../../types'
 import { useAppStore } from '../../store/useAppStore'
+import {
+  AiVerificationDashboard,
+  type AiVerifyCommitMode,
+} from './AiVerificationDashboard'
 
 export function MobileInvoiceRestock() {
   const loading = useInventoryStore((s) => s.loading)
@@ -27,16 +27,6 @@ export function MobileInvoiceRestock() {
   const [scanning, setScanning] = useState(false)
   const [draft, setDraft] = useState<InvoiceVisionResult | null>(null)
   const [scanError, setScanError] = useState<string | null>(null)
-
-  const totalLines = draft?.items?.length ?? 0
-  const totalValue = useMemo(
-    () =>
-      (draft?.items ?? []).reduce(
-        (s, i) => s + i.quantity * i.purchase_price_ex_vat,
-        0
-      ),
-    [draft]
-  )
 
   const onPick = async (file: File | null) => {
     if (!file) return
@@ -55,18 +45,45 @@ export function MobileInvoiceRestock() {
     }
   }
 
-  const confirmRestock = async () => {
-    if (!draft) return
-    const res = await applyInvoiceRestock(draft)
+  const handleCommit = async (
+    verified: InvoiceVisionResult,
+    mode: AiVerifyCommitMode,
+  ) => {
+    const res = await applyInvoiceRestock(verified, {
+      activatePos: mode === 'pos',
+    })
     if (!res.ok) {
       setToast(res.error || 'Naskladnění selhalo')
       return
     }
-    setToast(
-      `Naskladněno · nové ${res.created} · aktualizováno ${res.updated} položek`
-    )
+    if (mode === 'pos') {
+      setToast(
+        `Schváleno do Kasy · nové ${res.created} · aktualizováno ${res.updated} · dlaždice v /pos-terminal`,
+      )
+    } else {
+      setToast(
+        `Uloženo pouze do skladu · nové ${res.created} · aktualizováno ${res.updated} (mimo kasu)`,
+      )
+    }
     setDraft(null)
     setPreview(null)
+  }
+
+  if (draft && preview) {
+    return (
+      <AiVerificationDashboard
+        imageUrl={preview}
+        draft={draft}
+        busy={loading}
+        title="Ověřovací okno — faktura / dodák"
+        subtitle="Levý sloupec: fotka s pinch-zoom. Pravý sloupec: editovatelná tabulka AI. Nic se neuloží, dokud neschválíte."
+        onCancel={() => {
+          setDraft(null)
+          setPreview(null)
+        }}
+        onCommit={handleCommit}
+      />
+    )
   }
 
   return (
@@ -76,7 +93,7 @@ export function MobileInvoiceRestock() {
         <div>
           <h2 style={{ fontSize: '1.35rem', margin: 0 }}>📸 Mobilní naskladnění faktury/dodáku</h2>
           <p style={{ margin: '4px 0 0', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-            Vyfoťte dodací list — AI Vision (gpt-4o-mini) vytěží položky a naskladní sklad.
+            Vyfoťte dodací list — AI Vision vytěží položky a otevře ověřovací dashboard před zápisem.
           </p>
         </div>
       </div>
@@ -126,74 +143,8 @@ export function MobileInvoiceRestock() {
         {scanning && (
           <div className="inv-alert emerald" style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
             <Loader2 size={18} className="spin" />
-            AI auditor čte českou fakturu…
+            AI auditor čte českou fakturu — poté otevře ověřovací okno…
           </div>
-        )}
-
-        {draft && (
-          <motion.div
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="panel"
-            style={{ borderColor: 'var(--emerald-border)', background: 'var(--emerald-subtle)' }}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
-              <div>
-                <div className="label">Dodavatel</div>
-                <div style={{ fontWeight: 600 }}>{draft.supplier_name}</div>
-                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                  IČO {draft.ico} · {formatCzechDate(draft.date)}
-                </div>
-              </div>
-              <div style={{ textAlign: 'right' }}>
-                <div className="label">Položky / bez DPH</div>
-                <div className="gold-text" style={{ fontFamily: 'var(--font-display)', fontSize: '1.4rem' }}>
-                  {totalLines} · {formatCurrency(totalValue)}
-                </div>
-              </div>
-            </div>
-
-            <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 260, overflowY: 'auto' }}>
-              {draft.items.map((it, idx) => (
-                <div
-                  key={`${it.name}-${idx}`}
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: '1fr auto',
-                    gap: 8,
-                    padding: '0.55rem 0',
-                    borderBottom: '1px solid var(--border)',
-                  }}
-                >
-                  <div>
-                    <div style={{ fontWeight: 500 }}>{it.name}</div>
-                    <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
-                      {it.quantity} {it.unit} · DPH {it.vat_rate}%
-                      {it.barcode ? ` · EAN ${it.barcode}` : ''}
-                    </div>
-                  </div>
-                  <div style={{ color: 'var(--gold)', fontWeight: 600 }}>
-                    {formatCurrency(it.purchase_price_ex_vat)}
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <button
-              type="button"
-              className="btn btn-emerald"
-              style={{ width: '100%', marginTop: 14, minHeight: 52 }}
-              disabled={loading}
-              onClick={confirmRestock}
-            >
-              {loading ? <Loader2 size={16} className="spin" /> : <CheckCircle2 size={16} />}
-              Potvrdit naskladnění do skladu
-            </button>
-            <p style={{ marginTop: 8, fontSize: '0.75rem', color: 'var(--text-dim)' }}>
-              Existující položky (název/EAN) se navýší · nové se založí · log typu{' '}
-              <strong>naskladneni</strong>.
-            </p>
-          </motion.div>
         )}
 
         {!draft && !scanning && (

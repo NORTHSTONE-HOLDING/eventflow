@@ -2,22 +2,29 @@ import { useCallback, useRef, useState } from 'react'
 import { Camera, Upload, Loader2, Lock, FileDown } from 'lucide-react'
 import { useAppStore, selectActiveProject } from '../store/useAppStore'
 import { hasFeature } from '../lib/subscriptions'
-import { scanMenuFromImage, readImageAsDataUrl } from '../lib/visionScan'
+import { analyzeInvoiceImage } from '../lib/invoiceVision'
 import { formatCurrency } from '../lib/documentIds'
 import { formatCzechDate } from '../lib/czechDate'
-import type { PrintDesign, PrintFormat } from '../types'
+import type { InvoiceVisionResult, PrintDesign, PrintFormat } from '../types'
 import { exportMenuPdf } from '../lib/printExport'
+import { useInventoryStore } from '../store/useInventoryStore'
+import {
+  AiVerificationDashboard,
+  type AiVerifyCommitMode,
+} from './inventory/AiVerificationDashboard'
 
 export function AIVisionScanner() {
   const subscription = useAppStore((s) => s.profile.subscription)
   const project = useAppStore(selectActiveProject)
-  const addCateringItems = useAppStore((s) => s.addCateringItems)
   const setView = useAppStore((s) => s.setView)
   const setToast = useAppStore((s) => s.setToast)
+  const applyInvoiceRestock = useInventoryStore((s) => s.applyInvoiceRestock)
+  const inventoryLoading = useInventoryStore((s) => s.loading)
   const [dragging, setDragging] = useState(false)
   const [preview, setPreview] = useState<string | null>(null)
   const [scanning, setScanning] = useState(false)
-  const [lastCount, setLastCount] = useState(0)
+  const [draft, setDraft] = useState<InvoiceVisionResult | null>(null)
+  const [lastSummary, setLastSummary] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const unlocked = hasFeature(subscription, 'BUSINESS')
@@ -25,45 +32,82 @@ export function AIVisionScanner() {
 
   const processFile = useCallback(
     async (file: File) => {
-      if (!project) {
-        setToast('Nejdřív vytvořte projekt v AI Planneru')
-        return
-      }
       if (!unlocked) {
         setToast('AI Scanner vyžaduje tarif BUSINESS+')
         return
       }
       if (!visionUnlocked && file.type.startsWith('image/')) {
-        // BUSINESS can use text scan simulation; ENTERPRISE gets full vision
-        setToast('Photo Menu Scan vyžaduje ENTERPRISE — simulace textového skenu…')
+        setToast('Photo Menu Scan vyžaduje ENTERPRISE — běží ověřovací simulace…')
       }
       setScanning(true)
+      setDraft(null)
+      setLastSummary(null)
       try {
-        const url = await readImageAsDataUrl(file)
+        const url = URL.createObjectURL(file)
         setPreview(url)
-        const items = await scanMenuFromImage(file)
-        addCateringItems(project.id, items)
-        setLastCount(items.length)
-        setToast(`Extrahováno ${items.length} položek do cateringu`)
+        const result = await analyzeInvoiceImage(file)
+        setDraft(result)
+        setToast(`AI vytěžila ${result.items.length} položek — ověřte před zápisem`)
+      } catch (e) {
+        setToast(e instanceof Error ? e.message : 'Skenování selhalo')
       } finally {
         setScanning(false)
       }
     },
-    [project, unlocked, visionUnlocked, addCateringItems, setToast]
+    [unlocked, visionUnlocked, setToast],
   )
+
+  const handleCommit = async (
+    verified: InvoiceVisionResult,
+    mode: AiVerifyCommitMode,
+  ) => {
+    const res = await applyInvoiceRestock(verified, {
+      activatePos: mode === 'pos',
+    })
+    if (!res.ok) {
+      setToast(res.error || 'Uložení selhalo')
+      return
+    }
+    const summary =
+      mode === 'pos'
+        ? `Aktivováno v Kase · ${res.created} nových · ${res.updated} aktualizovaných · dlaždice v /pos-terminal`
+        : `Uloženo pouze do skladu · ${res.created} nových · ${res.updated} aktualizovaných`
+    setLastSummary(summary)
+    setToast(summary)
+    setDraft(null)
+  }
 
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault()
     setDragging(false)
     const file = e.dataTransfer.files[0]
-    if (file) processFile(file)
+    if (file) void processFile(file)
+  }
+
+  if (draft && preview) {
+    return (
+      <div style={{ animation: 'fadeUp 0.4s ease' }}>
+        <AiVerificationDashboard
+          imageUrl={preview}
+          draft={draft}
+          busy={inventoryLoading}
+          title="Ověřovací okno — AI skenování lístků"
+          subtitle="Ruční lístek, ceník nebo účtenka. Opravte žluté řádky a zvolte zápis do skladu nebo okamžitou aktivaci v Kase."
+          onCancel={() => {
+            setDraft(null)
+          }}
+          onCommit={handleCommit}
+        />
+      </div>
+    )
   }
 
   return (
     <div style={{ animation: 'fadeUp 0.4s ease', position: 'relative' }}>
       <h1 className="section-title gold-text">📸 AI Skenování lístků z fotky</h1>
       <p className="section-sub">
-        Nahrajte fotografii ručního zápisu nebo ceníku distributora — AI Vision extrahuje položky do cateringu.
+        Nahrajte fotografii ručního zápisu, ceníku nebo účtenky — AI Vision otevře ověřovací dashboard
+        (split-screen) před zápisem do skladu / kasy.
       </p>
 
       {!unlocked && (
@@ -106,7 +150,7 @@ export function AIVisionScanner() {
               hidden
               onChange={(e) => {
                 const f = e.target.files?.[0]
-                if (f) processFile(f)
+                if (f) void processFile(f)
               }}
             />
             {scanning ? (
@@ -128,42 +172,41 @@ export function AIVisionScanner() {
             </div>
           </div>
 
-          {preview && (
-            <div style={{ display: 'grid', gridTemplateColumns: '240px 1fr', gap: 16, marginBottom: 20 }}>
+          {preview && !draft && (
+            <div
+              style={{
+                borderRadius: 12,
+                overflow: 'hidden',
+                border: '1px solid var(--border)',
+                maxWidth: 420,
+                marginBottom: 16,
+              }}
+            >
               <img
                 src={preview}
                 alt="Nahraná fotka"
-                style={{ width: '100%', borderRadius: 12, border: '1px solid var(--border)' }}
+                style={{ width: '100%', display: 'block', maxHeight: 240, objectFit: 'cover' }}
               />
-              <div className="panel">
-                <h3 style={{ marginBottom: 8 }}>Výsledek skenu</h3>
-                <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-                  Přidáno <strong style={{ color: 'var(--gold)' }}>{lastCount}</strong> položek do digitálního
-                  catering stavu aktivního projektu.
-                </p>
-                {project && (
-                  <div style={{ marginTop: 12 }}>
-                    {project.catering.slice(0, lastCount || 5).map((c) => (
-                      <div
-                        key={c.id}
-                        style={{
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          padding: '8px 0',
-                          borderBottom: '1px solid var(--border)',
-                          fontSize: '0.9rem',
-                        }}
-                      >
-                        <span>{c.name}</span>
-                        <span style={{ color: 'var(--gold)' }}>{formatCurrency(c.foodCost)}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <button className="btn btn-ghost" style={{ marginTop: 14 }} onClick={() => setView('print')}>
-                  Otevřít tiskové layouty
+            </div>
+          )}
+
+          {lastSummary && (
+            <div className="panel" style={{ borderColor: 'var(--gold)', marginBottom: 16 }}>
+              <h3 style={{ marginBottom: 8 }}>Poslední schválení</h3>
+              <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', margin: 0 }}>{lastSummary}</p>
+              <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button className="btn btn-gold" onClick={() => setView('inventory')}>
+                  Otevřít Sklad
+                </button>
+                <button className="btn btn-ghost" onClick={() => setView('print')}>
+                  Tiskové layouty
                 </button>
               </div>
+              {project && (
+                <p style={{ marginTop: 10, fontSize: '0.78rem', color: 'var(--text-dim)' }}>
+                  Aktivní projekt: {project.name} — položky jsou ve skladu / kase (ne automaticky v cateringu).
+                </p>
+              )}
             </div>
           )}
         </>
@@ -172,9 +215,6 @@ export function AIVisionScanner() {
       <style>{`
         .spin { animation: spin 1s linear infinite; }
         @keyframes spin { to { transform: rotate(360deg); } }
-        @media (max-width: 700px) {
-          div[style*="grid-template-columns: 240px"] { grid-template-columns: 1fr !important; }
-        }
       `}</style>
     </div>
   )

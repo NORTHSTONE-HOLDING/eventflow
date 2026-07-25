@@ -16,6 +16,7 @@ import {
   DEFAULT_USER_ID,
   inventuraVarianceValue,
   matchInventoryItem,
+  normalizeName,
   seedDefaultInventory,
   weightedAveragePrice,
   normalizeUnit,
@@ -47,7 +48,9 @@ import {
 } from '../lib/gastroImporter'
 import { runInventoryAiCommand } from '../lib/inventoryAiCopilot'
 import { uid } from '../lib/documentIds'
+import { findCategoryDef } from '../lib/inventoryCategories'
 import { useProductImageStore } from './useProductImageStore'
+import { useCategoryRegistryStore } from './useCategoryRegistryStore'
 
 function normalizeStoredItem(item: InventoryItem): InventoryItem {
   return createEmptyInventoryItem({
@@ -114,7 +117,8 @@ interface InventoryState {
   syncRecipesFromProjects: (projects: EventProject[]) => Promise<void>
 
   applyInvoiceRestock: (
-    invoice: InvoiceVisionResult
+    invoice: InvoiceVisionResult,
+    options?: { activatePos?: boolean },
   ) => Promise<{ ok: boolean; created: number; updated: number; error?: string }>
 
   applyPosSaleDeduction: (
@@ -352,7 +356,7 @@ export const useInventoryStore = create<InventoryState>()(
         await get().refreshSyncStatus()
       },
 
-      applyInvoiceRestock: async (invoice) => {
+      applyInvoiceRestock: async (invoice, options) => {
         set({ loading: true, error: null })
         try {
           let items = [...get().items]
@@ -360,6 +364,31 @@ export const useInventoryStore = create<InventoryState>()(
           let created = 0
           let updated = 0
           const supplier = invoice.supplier_name || ''
+          const activatePos = Boolean(options?.activatePos)
+          const imageTargets: InventoryItem[] = []
+          const registry = useCategoryRegistryStore.getState()
+
+          const resolveLineTaxonomy = (line: InvoiceVisionResult['items'][number]) => {
+            const categoryId = registry.resolveCategoryId(line.category || 'Jídlo')
+            const all = registry.getAllCategories()
+            const parent = findCategoryDef(all, categoryId)
+            const subRaw = String(line.subcategory || 'Ostatní').trim() || 'Ostatní'
+            const subKey = normalizeName(subRaw)
+            const existingSub = parent?.subs.find(
+              (s) =>
+                s.id === subRaw ||
+                normalizeName(s.id) === subKey ||
+                normalizeName(s.label) === subKey,
+            )
+            if (existingSub) {
+              return { categoryId, subcategoryId: existingSub.id }
+            }
+            const added = registry.addCustomSubcategory(categoryId, subRaw)
+            return {
+              categoryId,
+              subcategoryId: added.subcategory?.id || 'ostatni',
+            }
+          }
 
           for (const line of invoice.items ?? []) {
             const existing = matchInventoryItem(items, {
@@ -370,6 +399,13 @@ export const useInventoryStore = create<InventoryState>()(
             const qty = Number(line.quantity) || 0
             const price = Number(line.purchase_price_ex_vat) || 0
             if (qty <= 0) continue
+            const sale =
+              line.sale_price != null && Number(line.sale_price) > 0
+                ? Number(line.sale_price)
+                : price > 0
+                  ? Math.round(price * 1.8 * 100) / 100
+                  : 0
+            const { categoryId, subcategoryId } = resolveLineTaxonomy(line)
 
             if (existing) {
               const nextQty = existing.current_quantity + qty
@@ -377,17 +413,22 @@ export const useInventoryStore = create<InventoryState>()(
                 existing.current_quantity,
                 existing.average_price,
                 qty,
-                price
+                price,
               )
               const updatedItem: InventoryItem = {
                 ...existing,
                 current_quantity: Math.round(nextQty * 1000) / 1000,
                 purchase_price: price,
                 average_price: avg,
+                sale_price: sale > 0 ? sale : existing.sale_price,
                 vat_rate: line.vat_rate ?? existing.vat_rate,
                 supplier: supplier || existing.supplier,
                 barcode: line.barcode || existing.barcode,
                 unit: normalizeUnit(line.unit || existing.unit),
+                category: categoryId || existing.category,
+                subcategory: subcategoryId || existing.subcategory,
+                pos_visible: activatePos ? true : existing.pos_visible,
+                is_raw_material: activatePos ? false : existing.is_raw_material,
                 updated_at: new Date().toISOString(),
               }
               items = items.map((i) => (i.id === existing.id ? updatedItem : i))
@@ -395,39 +436,48 @@ export const useInventoryStore = create<InventoryState>()(
                 item_id: existing.id,
                 type: 'naskladneni',
                 quantity_changed: qty,
-                note: `Faktura ${invoice.ico} · ${supplier}`,
+                note: activatePos
+                  ? `AI ověření → Kasa · ${invoice.ico} · ${supplier}`
+                  : `AI ověření → Sklad · ${invoice.ico} · ${supplier}`,
                 unit_price: price,
               })
               newLogs.push(log)
               await persistItem(updatedItem)
               await persistLog(log)
+              if (activatePos) imageTargets.push(updatedItem)
               updated += 1
             } else {
               const neu = createEmptyInventoryItem({
                 name: line.name,
                 barcode: line.barcode ?? null,
-                category: 'raw',
-                subcategory: 'ostatni',
+                category: categoryId,
+                subcategory: subcategoryId,
                 supplier,
                 purchase_price: price,
                 average_price: price,
+                sale_price: sale,
                 vat_rate: line.vat_rate || 12,
                 unit: normalizeUnit(line.unit),
                 current_quantity: qty,
                 minimum_quantity: 0,
                 warehouse_section: 'Příjem zboží',
+                pos_visible: activatePos,
+                is_raw_material: activatePos ? false : undefined,
               })
               items = [...items, neu]
               const log = createInventoryLog({
                 item_id: neu.id,
                 type: 'naskladneni',
                 quantity_changed: qty,
-                note: `Nová položka · faktura ${invoice.ico}`,
+                note: activatePos
+                  ? `Nová položka · AI → Kasa · ${invoice.ico}`
+                  : `Nová položka · AI → Sklad · ${invoice.ico}`,
                 unit_price: price,
               })
               newLogs.push(log)
               await persistItem(neu)
               await persistLog(log)
+              imageTargets.push(neu)
               created += 1
             }
           }
@@ -438,6 +488,9 @@ export const useInventoryStore = create<InventoryState>()(
             loading: false,
             lastSyncedAt: new Date().toISOString(),
           })
+          for (const target of imageTargets) {
+            void provisionAiImageForItem(target)
+          }
           await get().refreshSyncStatus()
           return { ok: true, created, updated }
         } catch (e) {

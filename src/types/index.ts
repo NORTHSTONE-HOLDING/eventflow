@@ -485,13 +485,24 @@ export interface InventoryLog {
   unit_price?: number
 }
 
+/** AI OCR confidence — high = green, low = amber double-check */
+export type AiScanConfidence = 'high' | 'low'
+
 export interface InvoiceVisionLine {
   name: string
   quantity: number
   unit: string
   purchase_price_ex_vat: number
+  /** Suggested sell price (POS) when activating in Kasa */
+  sale_price?: number
   vat_rate: number
   barcode?: string | null
+  /** Inventory category id or Czech label (Jídlo/Pití/…) */
+  category?: string
+  subcategory?: string
+  confidence?: AiScanConfidence
+  /** 0–100 simulated/returned AI certainty */
+  confidence_score?: number
 }
 
 export interface InvoiceVisionResult {
@@ -499,6 +510,8 @@ export interface InvoiceVisionResult {
   date: string
   ico: string
   items: InvoiceVisionLine[]
+  /** invoice | menu | receipt */
+  source_kind?: 'invoice' | 'menu' | 'receipt'
 }
 
 export interface InventuraCountRow {

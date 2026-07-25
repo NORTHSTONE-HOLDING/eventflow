@@ -114,7 +114,7 @@ function toAppCategory(label: GastroImportCategory): string {
   return registerCategoryFromImportLabel(label)
 }
 
-function classifyCategory(name: string, rawCat: string): GastroImportCategory {
+export function classifyCategory(name: string, rawCat: string): GastroImportCategory {
   const blob = `${name} ${rawCat}`.toLowerCase()
   const key = normalizeName(rawCat)
   const categories = getRegistryCategories()

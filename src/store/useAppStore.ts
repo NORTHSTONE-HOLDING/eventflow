@@ -240,7 +240,15 @@ interface AppState {
     opts?: { tableId?: string | null; waiterId?: string; waiterName?: string }
   ) => void
   renameTable: (projectId: string, tableId: string, label: string) => void
-  addTable: (projectId: string, label: string) => string | null
+  addTable: (
+    projectId: string,
+    label: string,
+    opts?: { spaceId?: string | null },
+  ) => string | null
+  removeTable: (projectId: string, tableId: string) => {
+    ok: boolean
+    error?: string
+  }
   sendTableOrderToKds: (opts: {
     projectId: string
     tableId: string
@@ -839,7 +847,7 @@ export const useAppStore = create<AppState>()(
         get().updateProject(projectId, { posTables: tables })
       },
 
-      addTable: (projectId, label) => {
+      addTable: (projectId, label, opts) => {
         const p = migrateProject(get().projects.find((x) => x.id === projectId))
         if (!p) return null
         const tables = ensurePosTables(p.posTables)
@@ -850,12 +858,36 @@ export const useAppStore = create<AppState>()(
           status: 'open',
           updatedAt: new Date().toISOString(),
           billingKind: 'restaurant',
+          spaceId: opts?.spaceId || 'space_main',
         }
         get().updateProject(projectId, {
           posTables: [...tables, neu],
           activeTableId: neu.id,
         })
         return neu.id
+      },
+
+      removeTable: (projectId, tableId) => {
+        const p = migrateProject(get().projects.find((x) => x.id === projectId))
+        if (!p) return { ok: false, error: 'Projekt nenalezen' }
+        const tables = ensurePosTables(p.posTables)
+        const target = tables.find((t) => t.id === tableId)
+        if (!target) return { ok: false, error: 'Stůl nenalezen' }
+        if ((target.lines ?? []).length > 0) {
+          return {
+            ok: false,
+            error: 'Nelze smazat stůl s otevřeným účtem — nejdřív vyúčtujte.',
+          }
+        }
+        if (tables.length <= 1) {
+          return { ok: false, error: 'Musí zůstat alespoň jeden stůl.' }
+        }
+        const next = tables.filter((t) => t.id !== tableId)
+        get().updateProject(projectId, {
+          posTables: next,
+          activeTableId: resolveActiveTableId(next, p.activeTableId),
+        })
+        return { ok: true }
       },
 
       upsertPrinter: (printer) =>
@@ -883,9 +915,30 @@ export const useAppStore = create<AppState>()(
         const state = get()
         const ticket = (state.kdsTickets ?? []).find((t) => t.id === ticketId)
         if (!ticket || ticket.status === status) return
+        const nowIso = new Date().toISOString()
+        let prepDurationSec = ticket.prepDurationSec ?? null
+        let preparingAt = ticket.preparingAt ?? null
+        let completedAt = ticket.completedAt ?? null
+        if (status === 'preparing' && !preparingAt) preparingAt = nowIso
+        if (status === 'done') {
+          completedAt = nowIso
+          const startMs = new Date(preparingAt || ticket.createdAt).getTime()
+          prepDurationSec = Math.max(
+            0,
+            Math.round((Date.now() - startMs) / 1000),
+          )
+        }
         set({
           kdsTickets: (state.kdsTickets ?? []).map((t) =>
-            t.id === ticketId ? { ...t, status } : t
+            t.id === ticketId
+              ? {
+                  ...t,
+                  status,
+                  preparingAt,
+                  completedAt,
+                  prepDurationSec,
+                }
+              : t,
           ),
         })
         publishKdsStatus(ticketId, status)
@@ -898,7 +951,8 @@ export const useAppStore = create<AppState>()(
           if (ticket.orderId) {
             get().updatePosOrderStatus(ticket.orderId, 'ready')
           }
-          const message = `⚠️ Objednávka ${ticket.receiptNumber} pro ${ticket.tableLabel} je PŘIPRAVENA K ODNESENÍ!`
+          const mins = prepDurationSec != null ? Math.round(prepDurationSec / 60) : 0
+          const message = `⚠️ Objednávka ${ticket.receiptNumber} pro ${ticket.tableLabel} je PŘIPRAVENA K ODNESENÍ! (${mins} min)`
           publishWaiterReady({
             ticketId: ticket.id,
             orderNumber: ticket.receiptNumber,

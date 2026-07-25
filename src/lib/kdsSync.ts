@@ -118,6 +118,14 @@ export function buildKdsTicketsFromCart(opts: {
   const tickets: KdsTicket[] = []
   const stamp = new Date().toISOString()
 
+  const sumValue = (rows: POSCartLine[]) =>
+    Math.round(
+      rows.reduce(
+        (s, l) => s + (Number(l.unitPrice) || 0) * (Number(l.qty) || 0),
+        0,
+      ),
+    )
+
   if (kitchen.length) {
     tickets.push({
       id: uid('kds'),
@@ -133,6 +141,10 @@ export function buildKdsTicketsFromCart(opts: {
       waiterName: opts.waiterName,
       orderId: opts.orderId,
       tableId: opts.tableId,
+      ticketValue: sumValue(kitchen),
+      preparingAt: null,
+      completedAt: null,
+      prepDurationSec: null,
     })
   }
   if (bar.length) {
@@ -150,6 +162,10 @@ export function buildKdsTicketsFromCart(opts: {
       waiterName: opts.waiterName,
       orderId: opts.orderId,
       tableId: opts.tableId,
+      ticketValue: sumValue(bar),
+      preparingAt: null,
+      completedAt: null,
+      prepDurationSec: null,
     })
   }
   return tickets
@@ -157,7 +173,13 @@ export function buildKdsTicketsFromCart(opts: {
 
 /** Open / focus a secondary display window (Window Management API when available). */
 export async function openPosDisplayWindow(
-  path: '/pos/customer' | '/pos/kds' | '/pos/kds/kitchen' | '/pos/kds/bar',
+  path:
+    | '/pos/customer'
+    | '/pos/kds'
+    | '/pos/kds/kitchen'
+    | '/pos/kds/bar'
+    | '/kds-kitchen'
+    | '/kds-bar',
   preferredScreenIndex = 1
 ): Promise<Window | null> {
   const url = `${window.location.origin}${path}`

@@ -9,6 +9,8 @@ export const DEFAULT_TABLE_LABELS = [
   { label: 'Terasa', billingKind: 'restaurant' as const },
 ] as const
 
+const DEFAULT_SPACE_CYCLE = ['space_salon', 'space_garden', 'space_main'] as const
+
 export function createDefaultTables(): PosTableTab[] {
   const now = new Date().toISOString()
   return DEFAULT_TABLE_LABELS.map((row, i) => ({
@@ -18,6 +20,7 @@ export function createDefaultTables(): PosTableTab[] {
     status: 'open' as const,
     updatedAt: now,
     billingKind: row.billingKind,
+    spaceId: DEFAULT_SPACE_CYCLE[i % DEFAULT_SPACE_CYCLE.length],
   }))
 }
 
@@ -30,6 +33,7 @@ export function ensurePosTables(
       lines: Array.isArray(t.lines) ? t.lines : [],
       status: t.status === 'paid' ? 'paid' : 'open',
       updatedAt: t.updatedAt || new Date().toISOString(),
+      spaceId: t.spaceId || DEFAULT_SPACE_CYCLE[i % DEFAULT_SPACE_CYCLE.length],
       billingKind:
         t.billingKind ||
         ( /vip|event|salon/i.test(t.label) || i === 2
@@ -38,6 +42,13 @@ export function ensurePosTables(
     }))
   }
   return createDefaultTables()
+}
+
+export function tablesInSpace(
+  tables: PosTableTab[] | null | undefined,
+  spaceId: string,
+): PosTableTab[] {
+  return ensurePosTables(tables).filter((t) => (t.spaceId || 'space_main') === spaceId)
 }
 
 /** Resolve a valid table id — never keep orphaned activeTableId. */

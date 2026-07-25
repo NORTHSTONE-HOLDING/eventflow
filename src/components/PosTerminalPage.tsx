@@ -1,15 +1,25 @@
 import { useEffect, useState } from 'react'
 import { useBlocker, useNavigate } from 'react-router-dom'
 import { Lock, LogOut } from 'lucide-react'
-import { EventPOS } from './EventPOS'
+import { StaffTerminal } from './staff-terminal/StaffTerminal'
 import { ManagerPinGate } from './ManagerPinGate'
 import { CctvSecurityBanner } from './cctv/CctvSecurityBanner'
 import { useAppStore } from '../store/useAppStore'
 import { useStaffLockStore } from '../store/useStaffLockStore'
+import { tapFeedback } from '../lib/touchFeedback'
+
+function isKdsOrCustomerPath(pathname: string): boolean {
+  return (
+    pathname.startsWith('/pos/kds') ||
+    pathname === '/kds-kitchen' ||
+    pathname === '/kds-bar' ||
+    pathname === '/pos/customer'
+  )
+}
 
 /**
  * Isolated staff POS terminal at /pos-terminal.
- * No sidebar, no analytics, no admin navigation — Manager PIN required to leave.
+ * Multi-zone StaffTerminal · Manager PIN required to leave (except KDS displays).
  */
 export function PosTerminalPage() {
   const navigate = useNavigate()
@@ -36,8 +46,7 @@ export function PosTerminalPage() {
       staffTerminalLocked &&
       currentLocation.pathname === '/pos-terminal' &&
       nextLocation.pathname !== '/pos-terminal' &&
-      !nextLocation.pathname.startsWith('/pos/kds') &&
-      nextLocation.pathname !== '/pos/customer'
+      !isKdsOrCustomerPath(nextLocation.pathname),
   )
 
   useEffect(() => {
@@ -48,7 +57,6 @@ export function PosTerminalPage() {
     }
   }, [blocker, setPendingPath])
 
-  // Hard guard: address-bar / history jumps to admin shell
   useEffect(() => {
     const onPop = () => {
       if (!useStaffLockStore.getState().staffTerminalLocked) return
@@ -63,12 +71,14 @@ export function PosTerminalPage() {
   }, [navigate])
 
   const requestAdminExit = () => {
+    tapFeedback()
     setExitTarget('/')
     setPendingPath('/')
     setPinOpen(true)
   }
 
   const handlePinSuccess = () => {
+    tapFeedback('success')
     setPinOpen(false)
     if (blocker.state === 'blocked') {
       blocker.proceed?.()
@@ -79,6 +89,7 @@ export function PosTerminalPage() {
   }
 
   const handlePinCancel = () => {
+    tapFeedback()
     setPinOpen(false)
     if (blocker.state === 'blocked') {
       blocker.reset?.()
@@ -87,74 +98,25 @@ export function PosTerminalPage() {
   }
 
   return (
-    <div
-      className="pos-terminal-shell"
-      style={{
-        minHeight: '100vh',
-        background: '#070a0e',
-        color: '#e8ecf1',
-        touchAction: 'manipulation',
-      }}
-    >
+    <div className="pos-terminal-shell staff-terminal-page">
       <CctvSecurityBanner />
-      <div className="gradient-mesh" style={{ opacity: 0.28 }} />
-      <div
-        style={{
-          position: 'sticky',
-          top: 0,
-          zIndex: 40,
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          gap: 12,
-          padding: '0.75rem 1rem',
-          background: 'rgba(15, 23, 42, 0.94)',
-          borderBottom: '1px solid #334155',
-          backdropFilter: 'blur(10px)',
-        }}
-      >
+      <div className="gradient-mesh" style={{ opacity: 0.22 }} />
+      <div className="st-page-header">
         <div>
-          <div
-            style={{
-              color: '#D4AF37',
-              fontWeight: 900,
-              fontSize: '1.05rem',
-              letterSpacing: '0.04em',
-            }}
-          >
-            EVENTFLOW · PERSONÁLNÍ TERMINÁL
-          </div>
-          <div style={{ color: '#94a3b8', fontSize: '0.75rem', fontWeight: 600 }}>
-            Izolovaná kasa · RBAC staff · KDS notifikace aktivní
+          <div className="st-page-brand">EVENTFLOW · PERSONÁLNÍ TERMINÁL</div>
+          <div className="st-page-sub">
+            Multi-zónová kasa · prostory · KDS · dělení účtu · uzávěrka směny
           </div>
         </div>
-        <button
-          type="button"
-          onClick={requestAdminExit}
-          style={{
-            minHeight: 48,
-            minWidth: 48,
-            padding: '0.65rem 1rem',
-            borderRadius: 12,
-            border: '1px solid #475569',
-            background: '#1e293b',
-            color: '#e2e8f0',
-            fontWeight: 800,
-            touchAction: 'manipulation',
-            cursor: 'pointer',
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 8,
-          }}
-        >
+        <button type="button" className="st-admin-exit" onClick={requestAdminExit}>
           <Lock size={16} color="#D4AF37" />
           <LogOut size={16} />
           Admin (PIN)
         </button>
       </div>
 
-      <div style={{ position: 'relative', zIndex: 2, padding: '1rem', maxWidth: 1600, margin: '0 auto' }}>
-        <EventPOS mode="staff" />
+      <div className="st-page-body">
+        <StaffTerminal />
       </div>
 
       <ManagerPinGate

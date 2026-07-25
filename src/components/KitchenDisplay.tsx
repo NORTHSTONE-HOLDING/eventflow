@@ -8,27 +8,60 @@ import {
   publishKdsSnapshot,
   type PosBroadcastMessage,
 } from '../lib/kdsSync'
+import { formatCurrency } from '../lib/documentIds'
+import { tapFeedback } from '../lib/touchFeedback'
+import { toDateKey } from '../lib/czechHolidays'
 import type { KdsTicket, KdsTicketStatus } from '../types'
 
 type StationFilter = 'all' | 'kitchen' | 'bar'
 
+function formatStopwatch(totalSec: number): string {
+  const s = Math.max(0, Math.floor(totalSec))
+  const m = Math.floor(s / 60)
+  const r = s % 60
+  return `${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}`
+}
+
+function LiveStopwatch({ createdAt }: { createdAt: string }) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(id)
+  }, [])
+  const sec = Math.max(0, Math.floor((now - new Date(createdAt).getTime()) / 1000))
+  const urgent = sec >= 8 * 60
+  return (
+    <span style={{ color: urgent ? '#fca5a5' : '#94a3b8', fontWeight: 800 }}>
+      <Clock3 size={14} style={{ marginRight: 4, display: 'inline' }} />
+      {formatStopwatch(sec)}
+    </span>
+  )
+}
+
 export function KitchenDisplayPage() {
   const location = useLocation()
-  const pathFilter: StationFilter = location.pathname.endsWith('/kitchen')
-    ? 'kitchen'
-    : location.pathname.endsWith('/bar')
-      ? 'bar'
-      : 'all'
+  const pathFilter: StationFilter =
+    location.pathname.includes('kitchen') || location.pathname.endsWith('/kds-kitchen')
+      ? 'kitchen'
+      : location.pathname.includes('bar') || location.pathname.endsWith('/kds-bar')
+        ? 'bar'
+        : 'all'
 
   const storeTickets = useAppStore((s) => s.kdsTickets)
   const setKdsTicketStatus = useAppStore((s) => s.setKdsTicketStatus)
   const addKdsTickets = useAppStore((s) => s.addKdsTickets)
   const [filter, setFilter] = useState<StationFilter>(pathFilter)
   const [flashId, setFlashId] = useState<string | null>(null)
+  const [tick, setTick] = useState(0)
 
   useEffect(() => {
     setFilter(pathFilter)
   }, [pathFilter])
+
+  useEffect(() => {
+    const id = window.setInterval(() => setTick((t) => t + 1), 1000)
+    return () => window.clearInterval(id)
+  }, [])
 
   useEffect(() => {
     const ch = getPosChannel()
@@ -37,6 +70,7 @@ export function KitchenDisplayPage() {
       if (ev.data?.type === 'kds_upsert' && ev.data.payload) {
         addKdsTickets([ev.data.payload])
         setFlashId(ev.data.payload.id)
+        tapFeedback('kds')
         window.setTimeout(() => setFlashId(null), 2500)
       }
       if (ev.data?.type === 'kds_status') {
@@ -48,19 +82,30 @@ export function KitchenDisplayPage() {
     }
     ch.addEventListener('message', onMsg)
     publishKdsSnapshot(
-      (useAppStore.getState().kdsTickets ?? []).filter((t) => t.status !== 'done')
+      (useAppStore.getState().kdsTickets ?? []).filter((t) => t.status !== 'done'),
     )
     return () => ch.removeEventListener('message', onMsg)
   }, [addKdsTickets, setKdsTicketStatus])
 
   const tickets = useMemo(() => {
+    void tick
     const list = Array.isArray(storeTickets) ? [...storeTickets] : []
     return list
       .filter((t) => (filter === 'all' ? true : t.station === filter))
       .filter((t) => t.status !== 'done')
       .sort(
-        (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+        (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
       )
+  }, [storeTickets, filter, tick])
+
+  const todayRevenue = useMemo(() => {
+    const today = toDateKey(new Date())
+    return Math.round(
+      (storeTickets ?? [])
+        .filter((t) => (filter === 'all' ? true : t.station === filter))
+        .filter((t) => toDateKey(t.createdAt) === today)
+        .reduce((s, t) => s + (Number(t.ticketValue) || 0), 0),
+    )
   }, [storeTickets, filter])
 
   const title =
@@ -70,7 +115,11 @@ export function KitchenDisplayPage() {
         ? 'Displej BAR'
         : 'Kitchen Display System'
 
+  const revenueLabel =
+    filter === 'bar' ? 'Dnešní obrat baru' : 'Dnešní obrat kuchyně'
+
   const setStatus = (ticket: KdsTicket, status: KdsTicketStatus) => {
+    tapFeedback(status === 'done' ? 'success' : 'kds')
     setKdsTicketStatus(ticket.id, status)
   }
 
@@ -109,10 +158,36 @@ export function KitchenDisplayPage() {
               {title}
             </h1>
             <p style={{ color: '#8b95a5', fontSize: '0.9rem' }}>
-              Aktivní tickety dle času · Přípravuji · Hotovo / Vydáno
+              Stůl · obsluha · čas objednávky · živá časomíra · Příprava / Hotovo
             </p>
           </div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <div
+            style={{
+              padding: '0.75rem 1.1rem',
+              borderRadius: 14,
+              border: '1px solid rgba(212,175,55,0.45)',
+              background: 'rgba(212,175,55,0.12)',
+              minWidth: 220,
+            }}
+          >
+            <div style={{ fontSize: '0.75rem', color: '#94a3b8', fontWeight: 700 }}>
+              {revenueLabel}
+            </div>
+            <div
+              style={{
+                fontSize: '1.55rem',
+                fontWeight: 900,
+                color: '#D4AF37',
+                fontVariantNumeric: 'tabular-nums',
+              }}
+            >
+              {formatCurrency(todayRevenue)}
+            </div>
+          </div>
+        </div>
+
+        {pathFilter === 'all' && (
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 16 }}>
             {(
               [
                 ['all', 'Vše'],
@@ -123,10 +198,12 @@ export function KitchenDisplayPage() {
               <button
                 key={id}
                 type="button"
-                onClick={() => setFilter(id)}
+                onClick={() => {
+                  tapFeedback()
+                  setFilter(id)
+                }}
                 style={{
                   minHeight: 48,
-                  minWidth: 48,
                   padding: '0.7rem 1rem',
                   borderRadius: 12,
                   border: `1px solid ${filter === id ? '#D4AF37' : '#334155'}`,
@@ -145,7 +222,7 @@ export function KitchenDisplayPage() {
               </button>
             ))}
           </div>
-        </div>
+        )}
 
         <div
           style={{
@@ -155,12 +232,17 @@ export function KitchenDisplayPage() {
           }}
         >
           {tickets.map((ticket) => {
-            const ageMin = Math.max(
+            const ageSec = Math.max(
               0,
-              Math.floor((Date.now() - new Date(ticket.createdAt).getTime()) / 60000)
+              Math.floor((Date.now() - new Date(ticket.createdAt).getTime()) / 1000),
             )
             const preparing = ticket.status === 'preparing'
-            const urgent = ageMin >= 8
+            const urgent = ageSec >= 8 * 60
+            const orderTime = new Date(ticket.createdAt).toLocaleTimeString('cs-CZ', {
+              hour: '2-digit',
+              minute: '2-digit',
+              second: '2-digit',
+            })
             return (
               <motion.div
                 key={ticket.id}
@@ -179,23 +261,29 @@ export function KitchenDisplayPage() {
                   textAlign: 'left',
                   color: 'inherit',
                   border: `2px solid ${
-                    preparing
-                      ? '#f59e0b'
-                      : urgent
-                        ? 'rgba(239,68,68,0.55)'
-                        : '#334155'
+                    preparing ? '#f59e0b' : urgent ? 'rgba(239,68,68,0.55)' : '#334155'
                   }`,
                   background: '#1e293b',
                   borderRadius: 16,
                   padding: '1rem',
-                  minHeight: 220,
+                  minHeight: 240,
                   touchAction: 'manipulation',
                 }}
               >
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8, gap: 8 }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    marginBottom: 8,
+                    gap: 8,
+                  }}
+                >
                   <span
                     style={{
-                      background: ticket.station === 'kitchen' ? 'rgba(212,175,55,0.2)' : 'rgba(96,165,250,0.2)',
+                      background:
+                        ticket.station === 'kitchen'
+                          ? 'rgba(212,175,55,0.2)'
+                          : 'rgba(96,165,250,0.2)',
                       color: ticket.station === 'kitchen' ? '#D4AF37' : '#93c5fd',
                       borderRadius: 999,
                       padding: '0.25rem 0.65rem',
@@ -205,23 +293,13 @@ export function KitchenDisplayPage() {
                   >
                     {ticket.station === 'kitchen' ? 'Kuchyň' : 'Bar'}
                   </span>
-                  <span
-                    style={{
-                      fontSize: '0.8rem',
-                      color: urgent ? '#fca5a5' : '#94a3b8',
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 4,
-                    }}
-                  >
-                    <Clock3 size={14} /> {ageMin} min
-                  </span>
+                  <LiveStopwatch createdAt={ticket.createdAt} />
                 </div>
 
                 <div
                   style={{
                     fontFamily: 'var(--font-display)',
-                    fontSize: '1.4rem',
+                    fontSize: '1.45rem',
                     fontWeight: 700,
                     color: '#fff',
                     marginBottom: 4,
@@ -229,9 +307,12 @@ export function KitchenDisplayPage() {
                 >
                   {ticket.tableLabel}
                 </div>
-                <div style={{ fontSize: '0.82rem', color: '#94a3b8', marginBottom: 8 }}>
-                  {ticket.receiptNumber} · {ticket.projectName}
-                  {ticket.waiterName ? ` · ${ticket.waiterName}` : ''}
+                <div style={{ fontSize: '0.82rem', color: '#94a3b8', marginBottom: 6 }}>
+                  Obsluha: <strong style={{ color: '#e2e8f0' }}>{ticket.waiterName || '—'}</strong>
+                </div>
+                <div style={{ fontSize: '0.78rem', color: '#94a3b8', marginBottom: 8 }}>
+                  Objednáno {orderTime} · {ticket.receiptNumber}
+                  {ticket.ticketValue ? ` · ${formatCurrency(ticket.ticketValue)}` : ''}
                 </div>
 
                 <div
@@ -242,12 +323,14 @@ export function KitchenDisplayPage() {
                     padding: '0.3rem 0.7rem',
                     fontSize: '0.75rem',
                     fontWeight: 800,
-                    background: preparing ? 'rgba(245,158,11,0.2)' : 'rgba(148,163,184,0.15)',
+                    background: preparing
+                      ? 'rgba(245,158,11,0.2)'
+                      : 'rgba(148,163,184,0.15)',
                     color: preparing ? '#fbbf24' : '#cbd5e1',
                     border: `1px solid ${preparing ? '#f59e0b' : '#64748b'}`,
                   }}
                 >
-                  {preparing ? 'Přípravuji' : 'Nová objednávka'}
+                  {preparing ? 'Příprava' : 'Nová objednávka'}
                 </div>
 
                 <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -273,7 +356,7 @@ export function KitchenDisplayPage() {
                     type="button"
                     onClick={() => setStatus(ticket, 'preparing')}
                     style={{
-                      minHeight: 52,
+                      minHeight: 56,
                       borderRadius: 12,
                       border: '2px solid #f59e0b',
                       background: preparing ? '#f59e0b' : 'rgba(245,158,11,0.15)',
@@ -284,13 +367,13 @@ export function KitchenDisplayPage() {
                       cursor: 'pointer',
                     }}
                   >
-                    Přípravuji
+                    Příprava
                   </button>
                   <button
                     type="button"
                     onClick={() => setStatus(ticket, 'done')}
                     style={{
-                      minHeight: 52,
+                      minHeight: 56,
                       borderRadius: 12,
                       border: '2px solid #D4AF37',
                       background: '#D4AF37',

@@ -103,6 +103,22 @@ const router = createBrowserRouter([
           </ErrorBoundary>
         ),
       },
+      {
+        path: 'kds-kitchen',
+        element: (
+          <ErrorBoundary fallbackTitle="Chyba KDS Kuchyň">
+            <KitchenDisplayPage />
+          </ErrorBoundary>
+        ),
+      },
+      {
+        path: 'kds-bar',
+        element: (
+          <ErrorBoundary fallbackTitle="Chyba KDS Bar">
+            <KitchenDisplayPage />
+          </ErrorBoundary>
+        ),
+      },
       // Nested alias kept for older bookmarks; still renders clean wall (no shell)
       {
         path: 'cctv-wall',

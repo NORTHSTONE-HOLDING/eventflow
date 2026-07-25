@@ -14,6 +14,7 @@ import { cartTotals, paymentMethodLabel } from '../../lib/posEngine'
 import { formatCurrency } from '../../lib/documentIds'
 import { calcCashChange } from '../../lib/tableTabs'
 import { runTerminalHandshake } from '../../lib/terminalHandshake'
+import { tapFeedback } from '../../lib/touchFeedback'
 
 export interface CheckoutResult {
   method: POSPaymentMethod
@@ -100,6 +101,7 @@ export function AdvancedCheckout({
   if (!open) return null
 
   const setPickQty = (key: string, qty: number) => {
+    tapFeedback()
     setPicks((prev) =>
       prev.map((p) => {
         if (p.key !== key) return p
@@ -110,10 +112,12 @@ export function AdvancedCheckout({
   }
 
   const selectAllSplit = () => {
+    tapFeedback()
     setPicks((prev) => prev.map((p) => ({ ...p, selectedQty: p.line.qty })))
   }
 
   const clearSplit = () => {
+    tapFeedback()
     setPicks((prev) => prev.map((p) => ({ ...p, selectedQty: 0 })))
   }
 
@@ -130,6 +134,7 @@ export function AdvancedCheckout({
   }
 
   const handlePay = async () => {
+    tapFeedback('success')
     if (!payableLines.length) {
       setError('Vyberte položky k úhradě')
       return
@@ -223,7 +228,10 @@ export function AdvancedCheckout({
             className="btn btn-ghost"
             style={{ padding: 6 }}
             disabled={waiting}
-            onClick={onClose}
+            onClick={() => {
+              tapFeedback()
+              onClose()
+            }}
           >
             <X size={16} />
           </button>
@@ -233,7 +241,10 @@ export function AdvancedCheckout({
           <button
             type="button"
             className={payMode === 'full' ? 'btn btn-gold' : 'btn btn-ghost'}
-            onClick={() => setPayMode('full')}
+            onClick={() => {
+              tapFeedback()
+              setPayMode('full')
+            }}
             disabled={waiting}
           >
             Celý účet
@@ -241,7 +252,10 @@ export function AdvancedCheckout({
           <button
             type="button"
             className={payMode === 'split' ? 'btn btn-gold' : 'btn btn-ghost'}
-            onClick={() => setPayMode('split')}
+            onClick={() => {
+              tapFeedback()
+              setPayMode('split')
+            }}
             disabled={waiting}
           >
             <Split size={14} /> Platit zvlášť
@@ -354,7 +368,10 @@ export function AdvancedCheckout({
                     minHeight: 48,
                     gridColumn: id === 'all_inclusive' ? '1 / -1' : undefined,
                   }}
-                  onClick={() => setPayType(id)}
+                  onClick={() => {
+                    tapFeedback()
+                    setPayType(id)
+                  }}
                 >
                   <Icon size={15} /> {label}
                 </button>
@@ -391,7 +408,10 @@ export function AdvancedCheckout({
                       type="button"
                       className="btn btn-ghost"
                       style={{ padding: '0.35rem 0.7rem', fontSize: '0.8rem' }}
-                      onClick={() => setTendered(String(n))}
+                      onClick={() => {
+                        tapFeedback()
+                        setTendered(String(n))
+                      }}
                     >
                       {n.toLocaleString('cs-CZ')} Kč
                     </button>

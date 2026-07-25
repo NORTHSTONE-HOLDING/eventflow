@@ -277,6 +277,14 @@ export interface POSCartLine {
   is_daily_special?: boolean
 }
 
+/** Venue floor space / zone for dynamic table map */
+export interface PosSpace {
+  id: string
+  name: string
+  sort: number
+  createdAt: string
+}
+
 export interface PosTableTab {
   id: string
   label: string
@@ -284,6 +292,8 @@ export interface PosTableTab {
   status: 'open' | 'paid'
   updatedAt: string
   note?: string
+  /** Floor space id (Salonek / Zahrádka / Hlavní sál) */
+  spaceId?: string | null
   /** Waiter who last touched this table */
   assignedWaiterId?: string | null
   assignedWaiterName?: string | null
@@ -334,6 +344,32 @@ export interface KdsTicket {
   waiterName?: string
   orderId?: string
   tableId?: string
+  /** When preparation started */
+  preparingAt?: string | null
+  /** When marked Hotovo */
+  completedAt?: string | null
+  /** Total prep duration in seconds */
+  prepDurationSec?: number | null
+  /** Estimated ticket value for daily station revenue (Kč) */
+  ticketValue?: number
+}
+
+/** End-of-shift / denní uzávěrka archive row */
+export interface ShiftClosureRecord {
+  id: string
+  createdAt: string
+  waiterId: string
+  waiterName: string
+  projectId: string | null
+  projectName: string
+  revenueCard: number
+  revenueCash: number
+  revenueTotal: number
+  deductionGoods: number
+  deductionWages: number
+  netCashDrawer: number
+  notes: string
+  thermalText: string
 }
 
 /** Independent POS order payload (multi-waiter / KDS) */

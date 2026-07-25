@@ -21,8 +21,10 @@ export function ProfileSettings() {
   const [showGdpr, setShowGdpr] = useState(false)
   const [errors, setErrors] = useState<string[]>([])
 
-  const set = (key: keyof AgencyProfile, value: string | boolean | SubscriptionTier) =>
-    setForm((f) => ({ ...f, [key]: value }))
+  const set = (
+    key: keyof AgencyProfile,
+    value: string | boolean | SubscriptionTier | null,
+  ) => setForm((f) => ({ ...f, [key]: value }))
 
   const handleRegister = () => {
     const errs: string[] = []
@@ -148,6 +150,75 @@ export function ProfileSettings() {
           <p style={{ fontSize: '0.78rem', color: 'var(--text-dim)', marginTop: 6 }}>
             Personál na terminálu nemůže opustit kasu bez tohoto PIN (výchozí 2580).
           </p>
+        </div>
+
+        <div
+          style={{
+            marginTop: 24,
+            paddingTop: 20,
+            borderTop: '1px solid var(--border)',
+            display: 'grid',
+            gap: 14,
+          }}
+        >
+          <h4 style={{ margin: 0, fontSize: '1.05rem', color: 'var(--gold)' }}>
+            Branding tiskových lístků
+          </h4>
+          <div>
+            <label className="label">Podtitulek menu (pod názvem provozovny)</label>
+            <input
+              className="input"
+              value={String(form.menuSubtitle ?? '')}
+              onChange={(e) => set('menuSubtitle', e.target.value)}
+              placeholder="např. Fine dining · Praha 1"
+            />
+          </div>
+          <div>
+            <label className="label">Logo URL (https nebo data URL)</label>
+            <input
+              className="input"
+              value={String(form.logoUrl ?? '')}
+              onChange={(e) => set('logoUrl', e.target.value || null)}
+              placeholder="https://…/logo.png"
+            />
+            {form.logoUrl ? (
+              <img
+                src={String(form.logoUrl)}
+                alt="Logo náhled"
+                style={{
+                  marginTop: 10,
+                  maxHeight: 64,
+                  objectFit: 'contain',
+                  borderRadius: 8,
+                  border: '1px solid var(--border)',
+                  background: '#fff',
+                  padding: 6,
+                }}
+              />
+            ) : null}
+          </div>
+          <div>
+            <label className="label">Uvítací text pro uzavřenou akci</label>
+            <textarea
+              className="input"
+              rows={3}
+              value={String(form.eventWelcomeMessage ?? '')}
+              onChange={(e) => set('eventWelcomeMessage', e.target.value)}
+              placeholder="Vážení hosté, vítejte na naší svatbě…"
+              style={{ resize: 'vertical', minHeight: 80 }}
+            />
+          </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={Boolean(form.showEventPrices)}
+              onChange={(e) => set('showEventPrices', e.target.checked)}
+              style={{ accentColor: 'var(--gold)' }}
+            />
+            <span style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>
+              Zobrazit ceny i v režimu uzavřené akce (jinak se skryjí)
+            </span>
+          </label>
         </div>
 
         <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>

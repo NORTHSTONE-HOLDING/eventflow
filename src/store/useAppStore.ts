@@ -64,6 +64,10 @@ const defaultProfile: AgencyProfile = {
   gdprAccepted: false,
   registeredAt: null,
   managerPin: '2580',
+  logoUrl: null,
+  menuSubtitle: '',
+  eventWelcomeMessage: '',
+  showEventPrices: false,
 }
 
 const APP_VIEWS: AppView[] = [

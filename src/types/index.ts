@@ -29,6 +29,14 @@ export interface AgencyProfile {
   registeredAt: string | null
   /** Manager PIN to unlock Admin Dashboard from /pos-terminal (digits). */
   managerPin?: string
+  /** Brand logo for printable menus (https / data URL) */
+  logoUrl?: string | null
+  /** Subtitle under venue name on menu header */
+  menuSubtitle?: string | null
+  /** Welcome copy for closed-event (raut/svatba) menus */
+  eventWelcomeMessage?: string | null
+  /** When false, event mode hides unit prices */
+  showEventPrices?: boolean
 }
 
 export interface TimelineItem {
@@ -420,8 +428,49 @@ export interface POSLiveMetrics {
   lowStockCount: number
 }
 
-export type PrintDesign = 'modern' | 'elegant' | 'corporate'
-export type PrintFormat = 'A4' | 'A5'
+/** 6 luxury print themes (+ legacy aliases remapped in printMenuEngine) */
+export type PrintDesign =
+  | 'elegant_gold'
+  | 'minimalist_nordic'
+  | 'classic_vintage'
+  | 'cyberpunk_slate'
+  | 'rustic_eco'
+  | 'grand_hotel'
+  /** @deprecated legacy aliases */
+  | 'modern'
+  | 'elegant'
+  | 'corporate'
+
+export type PrintFormat = 'A4' | 'A5' | 'DL'
+
+/** Restaurant à-la-carte vs closed event banquet */
+export type PrintOperationMode = 'restaurant' | 'event'
+
+/** Food card vs beverage card */
+export type PrintMenuKind = 'food' | 'beverage'
+
+export type PrintMenuSource = 'sklad' | 'project' | 'vision'
+
+export interface PrintMenuItem {
+  id: string
+  name: string
+  description?: string
+  sectionId: string
+  sectionLabel: string
+  /** e.g. 180 g / 0,33 l / 1 porce */
+  portionLabel: string
+  /** Unit sell price in Kč */
+  unitPrice: number
+  /** EU allergen numeric codes 1–14 */
+  allergenCodes: number[]
+  category: 'food' | 'beverage' | 'other'
+}
+
+export interface PrintMenuSection {
+  id: string
+  label: string
+  items: PrintMenuItem[]
+}
 
 export type InventoryUnit = 'kg' | 'l' | 'ks' | 'ml' | 'g' | 'porce'
 

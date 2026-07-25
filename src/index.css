@@ -994,3 +994,457 @@ a:hover {
   .app-topbar { padding-left: 3.5rem !important; }
   .cloud-sync-badge span { max-width: 180px; }
 }
+
+/* ── Print Menu & Beverage Card Engine ── */
+.print-control-bar {
+  display: grid;
+  gap: 1.1rem;
+  margin-bottom: 1.5rem;
+}
+
+.print-control-group {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.print-segment {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.print-theme-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 8px;
+}
+
+.print-dropzone {
+  margin-top: 8px;
+  padding: 0.7rem 0.9rem;
+  border: 1px dashed rgba(212, 175, 55, 0.4);
+  border-radius: 10px;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(212, 175, 55, 0.04);
+}
+
+.print-export-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+}
+
+.print-ink-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin-right: 8px;
+}
+
+.print-source-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+.print-source-hint code {
+  color: var(--gold-light);
+  font-size: 0.75rem;
+}
+
+.print-preview-stage {
+  display: flex;
+  justify-content: center;
+  padding: 1rem 0 2.5rem;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.print-menu-sheet {
+  --pm-bg: #0f1218;
+  --pm-fg: #e8ecf1;
+  --pm-muted: rgba(232, 236, 241, 0.65);
+  --pm-accent: #d4af37;
+  --pm-line: rgba(212, 175, 55, 0.35);
+  --pm-card: rgba(255, 255, 255, 0.03);
+  --pm-font-display: 'Cormorant Garamond', Georgia, 'Times New Roman', serif;
+  --pm-font-body: 'Outfit', 'Helvetica Neue', Arial, sans-serif;
+  background: var(--pm-bg);
+  color: var(--pm-fg);
+  font-family: var(--pm-font-body);
+  padding: 2.2rem 2rem 1.8rem;
+  border-radius: 4px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+  min-height: 420px;
+}
+
+.print-format-dl {
+  padding: 1.2rem 0.85rem 1rem;
+}
+
+.print-menu-header {
+  text-align: center;
+  margin-bottom: 1.4rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--pm-line);
+}
+
+.print-menu-logo {
+  max-height: 72px;
+  max-width: 180px;
+  object-fit: contain;
+  margin: 0 auto 0.75rem;
+  display: block;
+}
+
+.print-menu-brand {
+  font-family: var(--pm-font-display);
+  font-size: clamp(1.7rem, 3vw, 2.35rem);
+  letter-spacing: 0.06em;
+  color: var(--pm-accent);
+  line-height: 1.15;
+}
+
+.print-menu-subtitle {
+  margin-top: 0.35rem;
+  font-size: 0.95rem;
+  color: var(--pm-muted);
+  letter-spacing: 0.04em;
+}
+
+.print-menu-meta {
+  margin-top: 0.45rem;
+  font-size: 0.72rem;
+  color: var(--pm-muted);
+  opacity: 0.9;
+}
+
+.print-menu-kind-label {
+  margin-top: 0.65rem;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--pm-accent);
+}
+
+.print-section {
+  margin-bottom: 1.15rem;
+}
+
+.print-section-title {
+  font-family: var(--pm-font-display);
+  font-size: 1.25rem;
+  color: var(--pm-accent);
+  margin: 0 0 0.55rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid var(--pm-line);
+  letter-spacing: 0.04em;
+}
+
+.print-rows {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.print-row {
+  padding: 0.35rem 0;
+}
+
+.print-row-top {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 0.55rem;
+  align-items: baseline;
+}
+
+.print-portion {
+  font-size: 0.72rem;
+  color: var(--pm-muted);
+  font-variant-numeric: tabular-nums;
+  min-width: 3.2rem;
+}
+
+.print-item-name {
+  font-weight: 600;
+  font-size: 0.98rem;
+  line-height: 1.3;
+}
+
+.print-item-price {
+  font-weight: 700;
+  color: var(--pm-accent);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.print-item-desc {
+  margin: 0.15rem 0 0 3.75rem;
+  font-size: 0.78rem;
+  color: var(--pm-muted);
+}
+
+.print-item-allergens {
+  margin: 0.12rem 0 0 3.75rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--pm-fg);
+  opacity: 0.85;
+}
+
+.print-event-block {
+  margin-bottom: 1.25rem;
+  padding: 0.9rem 1rem;
+  background: var(--pm-card);
+  border: 1px solid var(--pm-line);
+  border-radius: 8px;
+}
+
+.print-welcome {
+  font-size: 0.95rem;
+  line-height: 1.55;
+  color: var(--pm-muted);
+  margin: 0 0 0.85rem;
+}
+
+.print-milestones {
+  list-style: none;
+  display: grid;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--pm-fg);
+}
+
+.print-empty {
+  text-align: center;
+  padding: 2rem 1rem;
+  color: var(--pm-muted);
+  font-size: 0.9rem;
+}
+
+.print-allergen-footer {
+  margin-top: 1.5rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid var(--pm-line);
+}
+
+.print-allergen-title {
+  font-family: var(--pm-font-display);
+  font-size: 0.95rem;
+  color: var(--pm-accent);
+  margin-bottom: 0.55rem;
+}
+
+.print-allergen-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 0.35rem 0.75rem;
+  font-size: 0.72rem;
+}
+
+.print-allergen-cell {
+  display: grid;
+  grid-template-columns: 1.4rem 1fr;
+  gap: 0.35rem;
+  color: var(--pm-muted);
+}
+
+.print-allergen-cell strong {
+  color: var(--pm-accent);
+}
+
+.print-allergen-empty,
+.print-footer-note {
+  font-size: 0.7rem;
+  color: var(--pm-muted);
+  margin-top: 0.45rem;
+}
+
+/* Theme 1 — Elegant Gold */
+.print-theme-elegant_gold {
+  --pm-bg: linear-gradient(165deg, #0f1218 0%, #141a24 55%, #0c1016 100%);
+  background: var(--pm-bg);
+  --pm-fg: #e8ecf1;
+  --pm-muted: rgba(232, 236, 241, 0.62);
+  --pm-accent: #d4af37;
+  --pm-line: rgba(212, 175, 55, 0.4);
+  border: 2px solid #d4af37;
+  box-shadow: 0 0 40px rgba(212, 175, 55, 0.18), 0 18px 50px rgba(0, 0, 0, 0.5);
+}
+
+/* Theme 2 — Minimalist Nordic */
+.print-theme-minimalist_nordic {
+  --pm-bg: #ffffff;
+  --pm-fg: #1a1a1a;
+  --pm-muted: #5a5a5a;
+  --pm-accent: #222222;
+  --pm-line: #d0d0d0;
+  --pm-card: #f5f5f5;
+  --pm-font-display: 'Outfit', 'Helvetica Neue', Arial, sans-serif;
+  --pm-font-body: 'Outfit', 'Helvetica Neue', Arial, sans-serif;
+  background: #fff;
+  border: 1px solid #222;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+}
+.print-theme-minimalist_nordic .print-menu-brand {
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  font-size: 1.35rem;
+  font-weight: 500;
+}
+.print-theme-minimalist_nordic .print-section-title {
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.16em;
+  font-family: var(--pm-font-body);
+}
+
+/* Theme 3 — Classic Vintage */
+.print-theme-classic_vintage {
+  --pm-bg: #f3e6d0;
+  --pm-fg: #3b2a1a;
+  --pm-muted: #6b5340;
+  --pm-accent: #8b5a2b;
+  --pm-line: #c4a574;
+  --pm-card: #efe0c4;
+  --pm-font-display: 'Cormorant Garamond', Georgia, serif;
+  background: #f3e6d0;
+  border: 3px double #8b5a2b;
+  box-shadow: inset 0 0 0 6px #f8efe0, 0 12px 28px rgba(80, 50, 20, 0.18);
+}
+.print-theme-classic_vintage .print-menu-header {
+  border-bottom-style: double;
+  border-bottom-width: 3px;
+}
+
+/* Theme 4 — Cyberpunk Slate */
+.print-theme-cyberpunk_slate {
+  --pm-bg: #050508;
+  --pm-fg: #e8f7ff;
+  --pm-muted: #7dd3fc;
+  --pm-accent: #22d3ee;
+  --pm-line: rgba(34, 211, 238, 0.35);
+  --pm-card: rgba(34, 211, 238, 0.06);
+  --pm-font-display: 'Outfit', 'Helvetica Neue', Arial, sans-serif;
+  background:
+    linear-gradient(rgba(34, 211, 238, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(34, 211, 238, 0.05) 1px, transparent 1px),
+    #050508;
+  background-size: 22px 22px, 22px 22px, auto;
+  border: 1px solid #22d3ee;
+  box-shadow: 0 0 28px rgba(34, 211, 238, 0.25);
+}
+.print-theme-cyberpunk_slate .print-item-price {
+  text-shadow: 0 0 10px rgba(34, 211, 238, 0.55);
+}
+
+/* Theme 5 — Rustic Eco */
+.print-theme-rustic_eco {
+  --pm-bg: #f4efe4;
+  --pm-fg: #1f3324;
+  --pm-muted: #4d6b55;
+  --pm-accent: #2f6b4f;
+  --pm-line: rgba(47, 107, 79, 0.35);
+  --pm-card: #ebe3d2;
+  background: linear-gradient(180deg, #f7f2e8 0%, #efe6d4 100%);
+  border: 1px solid #2f6b4f;
+  border-radius: 14px;
+  box-shadow: 0 12px 28px rgba(40, 70, 40, 0.12);
+}
+.print-theme-rustic_eco .print-row {
+  background: rgba(255, 255, 255, 0.35);
+  border-radius: 10px;
+  padding: 0.5rem 0.65rem;
+}
+
+/* Theme 6 — Grand Hotel / Royal */
+.print-theme-grand_hotel {
+  --pm-bg: #faf8f2;
+  --pm-fg: #1a1520;
+  --pm-muted: #5c5360;
+  --pm-accent: #6b4c2a;
+  --pm-line: #c9a66b;
+  --pm-card: #f3eee4;
+  --pm-font-display: 'Cormorant Garamond', Georgia, serif;
+  background: #faf8f2;
+  border: 2px solid #6b4c2a;
+  box-shadow: inset 0 0 0 5px #faf8f2, inset 0 0 0 7px #c9a66b, 0 14px 36px rgba(40, 30, 20, 0.16);
+  text-align: center;
+}
+.print-theme-grand_hotel .print-menu-header,
+.print-theme-grand_hotel .print-section,
+.print-theme-grand_hotel .print-allergen-footer {
+  text-align: center;
+}
+.print-theme-grand_hotel .print-row-top {
+  grid-template-columns: 1fr;
+  justify-items: center;
+  gap: 0.15rem;
+}
+.print-theme-grand_hotel .print-item-desc,
+.print-theme-grand_hotel .print-item-allergens {
+  margin-left: 0;
+  text-align: center;
+}
+.print-theme-grand_hotel .print-portion {
+  order: 2;
+  font-style: italic;
+}
+.print-theme-grand_hotel .print-item-name {
+  order: 1;
+  font-family: var(--pm-font-display);
+  font-size: 1.15rem;
+}
+.print-theme-grand_hotel .print-item-price {
+  order: 3;
+}
+
+/* Ink-saving high-contrast print variant */
+.print-menu-sheet.print-ink-save {
+  --pm-bg: #ffffff !important;
+  --pm-fg: #000000 !important;
+  --pm-muted: #222222 !important;
+  --pm-accent: #000000 !important;
+  --pm-line: #000000 !important;
+  --pm-card: #f3f3f3 !important;
+  background: #fff !important;
+  border-color: #000 !important;
+  box-shadow: none !important;
+  text-shadow: none !important;
+}
+.print-menu-sheet.print-ink-save .print-item-price,
+.print-menu-sheet.print-ink-save .print-menu-brand,
+.print-menu-sheet.print-ink-save .print-section-title {
+  color: #000 !important;
+  text-shadow: none !important;
+}
+
+@media (max-width: 900px) {
+  .print-control-bar .btn {
+    min-height: 44px;
+  }
+  .print-menu-sheet {
+    padding: 1.35rem 1rem;
+  }
+  .print-item-desc,
+  .print-item-allergens {
+    margin-left: 0;
+  }
+  .print-row-top {
+    grid-template-columns: 1fr auto;
+  }
+  .print-portion {
+    grid-column: 1 / -1;
+  }
+}

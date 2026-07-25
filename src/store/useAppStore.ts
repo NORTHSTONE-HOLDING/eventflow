@@ -296,7 +296,6 @@ interface AppState {
     status: PosOrder['status']
   ) => void
 
-  posAuditLog: PosAuditEntry[]
   appendPosAudit: (entry: Omit<PosAuditEntry, 'id' | 'createdAt'> & { id?: string; createdAt?: string }) => void
 
   runLegalAudit: (text: string) => Promise<void>

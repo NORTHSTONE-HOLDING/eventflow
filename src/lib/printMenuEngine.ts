@@ -284,19 +284,37 @@ export function buildSectionsFromItems(
     .filter((s) => s.items.length > 0)
 }
 
+/** Fingerprint inventory for reactive print subscriptions (Do kasy / price / name). */
+export function inventoryPrintRevision(items: InventoryItem[] | null | undefined): string {
+  return (items ?? [])
+    .map(
+      (i) =>
+        `${i.id}|${i.pos_visible ? 1 : 0}|${i.is_raw_material ? 1 : 0}|${i.sale_price}|${i.name}|${i.category}|${i.subcategory}|${i.unit}|${i.pack_volume ?? ''}`,
+    )
+    .join(';')
+}
+
 export function collectMenuItems(opts: {
   kind: PrintMenuKind
   source: 'sklad' | 'project' | 'vision'
   inventory: InventoryItem[]
   project: EventProject | null | undefined
   visionItems: PrintMenuItem[]
+  /** When set (Live Sklad), only these inventory IDs are printed */
+  selectedInventoryIds?: Set<string> | string[] | null
 }): PrintMenuItem[] {
   if (opts.source === 'vision') {
     return opts.visionItems.filter((i) => matchesKind(i.category, opts.kind))
   }
   if (opts.source === 'sklad') {
+    const selected = opts.selectedInventoryIds
+      ? opts.selectedInventoryIds instanceof Set
+        ? opts.selectedInventoryIds
+        : new Set(opts.selectedInventoryIds)
+      : null
     return (opts.inventory ?? [])
-      .filter((i) => i.pos_visible && !i.is_raw_material)
+      .filter((i) => !i.is_raw_material)
+      .filter((i) => (selected ? selected.has(i.id) : Boolean(i.pos_visible)))
       .map((i) => inventoryToPrintItem(i, opts.kind))
       .filter((i) => matchesKind(i.category, opts.kind))
   }
@@ -367,28 +385,6 @@ export function themeClassName(design: PrintDesign): string {
   return `print-theme-${normalizePrintDesign(design)}`
 }
 
-/** Flat rows for Excel export */
-export function sectionsToExcelRows(
-  sections: PrintMenuSection[],
-  opts: { showPrices: boolean; kind: PrintMenuKind; mode: PrintOperationMode },
-): Array<Record<string, string | number>> {
-  const rows: Array<Record<string, string | number>> = []
-  for (const section of sections) {
-    for (const item of section.items) {
-      rows.push({
-        Druh: opts.kind === 'beverage' ? 'Nápojový lístek' : 'Jídelní lístek',
-        Režim: opts.mode === 'event' ? 'Uzavřená akce' : 'Běžný provoz',
-        Sekce: section.label,
-        Název: item.name,
-        Popis: item.description || '',
-        Porce: item.portionLabel,
-        'Cena (Kč)': opts.showPrices ? item.unitPrice : '',
-        Alergeny: formatAllergenCodes(item.allergenCodes),
-      })
-    }
-  }
-  return rows
-}
 
 /** Ensure category registry labels stay available for custom subs. */
 export function resolveSectionLabel(categoryId: string, subcategoryId: string): string {

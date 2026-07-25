@@ -1,11 +1,12 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Camera,
   Download,
-  FileSpreadsheet,
+  FileText,
   Lock,
   Loader2,
   Printer,
+  ShoppingCart,
   Upload,
   UtensilsCrossed,
   Wine,
@@ -25,14 +26,18 @@ import {
   formatAllergenLine,
   formatMenuPrice,
   formatPreviewWidthPx,
+  inventoryPrintRevision,
   normalizePrintDesign,
   shouldShowPrices,
   themeClassName,
   venueHeaderFromProfile,
 } from '../lib/printMenuEngine'
-import { exportMenuExcel, exportMenuPdf, printMenuNative } from '../lib/printExport'
+import { inventoryCategoryToPos } from '../lib/inventoryPosBridge'
+import { exportMenuPdf, exportMenuWord, printMenuNative } from '../lib/printExport'
 import { scanPrintMenuFromImage } from '../lib/printMenuVision'
+import { formatCurrency } from '../lib/documentIds'
 import type {
+  InventoryItem,
   PrintDesign,
   PrintFormat,
   PrintMenuItem,
@@ -41,13 +46,24 @@ import type {
   PrintOperationMode,
 } from '../types'
 
+/** Re-export helper used by print engine for kind filter in Live Sklad list */
+function itemMatchesKind(item: InventoryItem, kind: PrintMenuKind): boolean {
+  const cat = inventoryCategoryToPos(item.category)
+  if (kind === 'beverage') return cat === 'beverage'
+  return cat !== 'beverage'
+}
+
 export function PrintMenuEngine() {
   const subscription = useAppStore((s) => s.profile.subscription)
   const profile = useAppStore((s) => s.profile)
   const project = useAppStore(selectActiveProject)
   const setView = useAppStore((s) => s.setView)
   const setToast = useAppStore((s) => s.setToast)
+
+  // Reactive inventory subscription — fingerprint forces re-render on Do kasy / price / name
+  const inventoryRevision = useInventoryStore((s) => inventoryPrintRevision(s.items))
   const inventory = useInventoryStore((s) => s.items)
+  const togglePosVisible = useInventoryStore((s) => s.togglePosVisible)
 
   const [design, setDesign] = useState<PrintDesign>('elegant_gold')
   const [format, setFormat] = useState<PrintFormat>('A4')
@@ -58,6 +74,9 @@ export function PrintMenuEngine() {
   const [scanning, setScanning] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [inkSave, setInkSave] = useState(true)
+  const [togglingId, setTogglingId] = useState<string | null>(null)
+  /** Explicit Live Sklad selection — synced from pos_visible, editable via checkboxes */
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const printRef = useRef<HTMLDivElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -66,18 +85,40 @@ export function PrintMenuEngine() {
   const header = venueHeaderFromProfile(profile)
   const showPrices = shouldShowPrices(mode, profile)
   const milestones = eventMilestones(project)
+  const menuTitle = kind === 'beverage' ? 'Nápojový lístek' : 'Jídelní lístek'
 
-  const items = useMemo(
-    () =>
-      collectMenuItems({
-        kind,
-        source,
-        inventory,
-        project,
-        visionItems,
-      }),
-    [kind, source, inventory, project, visionItems],
-  )
+  const liveCandidates = useMemo(() => {
+    void inventoryRevision
+    return (inventory ?? [])
+      .filter((i) => !i.is_raw_material)
+      .filter((i) => itemMatchesKind(i, kind))
+      .slice()
+      .sort((a, b) => {
+        if (a.pos_visible !== b.pos_visible) return a.pos_visible ? -1 : 1
+        return a.name.localeCompare(b.name, 'cs')
+      })
+  }, [inventory, inventoryRevision, kind])
+
+  // Mirror Do kasy / Aktivovat → print selection immediately
+  useEffect(() => {
+    const next = new Set<string>()
+    for (const item of liveCandidates) {
+      if (item.pos_visible) next.add(item.id)
+    }
+    setSelectedIds(next)
+  }, [inventoryRevision, liveCandidates])
+
+  const items = useMemo(() => {
+    void inventoryRevision
+    return collectMenuItems({
+      kind,
+      source,
+      inventory,
+      project,
+      visionItems,
+      selectedInventoryIds: source === 'sklad' ? selectedIds : null,
+    })
+  }, [kind, source, inventory, inventoryRevision, project, visionItems, selectedIds])
 
   const sections = useMemo(() => buildSectionsFromItems(items, kind), [items, kind])
 
@@ -129,19 +170,36 @@ export function PrintMenuEngine() {
     requestAnimationFrame(() => printMenuNative(format))
   }
 
-  const handleExcel = () => {
+  const handleWord = () => {
     const base =
       kind === 'beverage'
         ? `${header.title}-napojovy-listek`
         : `${header.title}-jidelni-listek`
-    exportMenuExcel(sections, {
+    exportMenuWord(sections, {
       filename: base,
       kind,
-      mode,
       showPrices,
       venueName: header.title,
     })
-    setToast('Excel (.xlsx) exportován')
+    setToast('Word (.docx) exportován')
+  }
+
+  const onToggleLiveItem = async (item: InventoryItem) => {
+    setTogglingId(item.id)
+    try {
+      const res = await togglePosVisible(item.id)
+      if (!res.ok) {
+        setToast(res.error || 'Přepnutí Do kasy selhalo')
+        return
+      }
+      setToast(
+        res.item?.pos_visible
+          ? `„${item.name}“ aktivováno v Kase a na lístku`
+          : `„${item.name}“ odebráno z Kasy a lístku`,
+      )
+    } finally {
+      setTogglingId(null)
+    }
   }
 
   if (!unlocked) {
@@ -150,7 +208,7 @@ export function PrintMenuEngine() {
         <h1 className="section-title gold-text">Print Menu & Beverage Card Engine</h1>
         <div className="locked-overlay" style={{ position: 'relative', minHeight: 300 }}>
           <Lock size={32} color="var(--gold)" />
-          <div>Tiskové layouty, PDF a Excel export vyžadují ENTERPRISE</div>
+          <div>Tiskové layouty, PDF a Word export vyžadují ENTERPRISE</div>
           <button className="btn btn-gold" onClick={() => setView('profile')}>
             Upgradovat na ENTERPRISE
           </button>
@@ -163,7 +221,7 @@ export function PrintMenuEngine() {
     <div style={{ animation: 'fadeUp 0.4s ease' }}>
       <h1 className="section-title gold-text">Print Menu & Beverage Card Engine</h1>
       <p className="section-sub">
-        Profesionální jídelní a nápojové lístky — 6 luxusních témat, A4 / A5 / DL Slim, PDF i Excel,
+        Profesionální jídelní a nápojové lístky — 6 luxusních témat, A4 / A5 / DL Slim, PDF i Word,
         alergenový index dle EU 1169/2011.
       </p>
 
@@ -189,7 +247,7 @@ export function PrintMenuEngine() {
         </div>
 
         <div className="print-control-group">
-          <div className="label">Režim provozu</div>
+          <div className="label">Režim provozu (pouze náhled — nepatří do tisku)</div>
           <div className="print-segment">
             <button
               type="button"
@@ -254,6 +312,59 @@ export function PrintMenuEngine() {
           </div>
         </div>
 
+        {source === 'sklad' && (
+          <div className="print-control-group">
+            <div className="label">
+              Live Sklad — výběr položek ({selectedIds.size} aktivních na lístku)
+            </div>
+            <div className="print-live-picker">
+              {liveCandidates.length === 0 && (
+                <div className="print-live-empty">
+                  Žádné prodejné položky pro {menuTitle.toLowerCase()}. Přidejte zboží ve Skladu a
+                  aktivujte zeleným Do kasy.
+                </div>
+              )}
+              {liveCandidates.map((item) => {
+                const checked = selectedIds.has(item.id) || item.pos_visible
+                const busy = togglingId === item.id
+                return (
+                  <label
+                    key={`${item.id}-${item.pos_visible ? 'on' : 'off'}-${inventoryRevision.slice(0, 12)}`}
+                    className={`print-live-row ${checked ? 'is-on' : ''}`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      disabled={busy}
+                      onChange={() => void onToggleLiveItem(item)}
+                    />
+                    <span className="print-live-name">{item.name}</span>
+                    <span className="print-live-price">{formatCurrency(item.sale_price || 0)}</span>
+                    <button
+                      type="button"
+                      className={item.pos_visible ? 'btn btn-emerald' : 'btn btn-ghost'}
+                      style={{ minHeight: 40, padding: '0 10px' }}
+                      disabled={busy}
+                      onClick={(e) => {
+                        e.preventDefault()
+                        void onToggleLiveItem(item)
+                      }}
+                      title={item.pos_visible ? 'Deaktivovat v Kase' : 'Do kasy — Aktivovat'}
+                    >
+                      {busy ? (
+                        <Loader2 size={14} className="spin" />
+                      ) : (
+                        <ShoppingCart size={14} />
+                      )}
+                      {item.pos_visible ? 'V kase' : 'Do kasy'}
+                    </button>
+                  </label>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
         <div className="print-control-group">
           <div className="label">Luxusní šablona (6 stylů)</div>
           <div className="print-theme-grid">
@@ -309,8 +420,8 @@ export function PrintMenuEngine() {
           <button type="button" className="btn btn-ghost" onClick={handlePrint}>
             <Printer size={16} /> Okamžitý tisk
           </button>
-          <button type="button" className="btn btn-emerald" onClick={handleExcel}>
-            <FileSpreadsheet size={16} /> 📊 Exportovat do Excelu (.xlsx)
+          <button type="button" className="btn btn-emerald" onClick={handleWord}>
+            <FileText size={16} /> 📄 Exportovat do Wordu (.docx)
           </button>
         </div>
 
@@ -318,7 +429,8 @@ export function PrintMenuEngine() {
           <Sparkles size={14} color="var(--gold)" />
           {source === 'sklad' && (
             <span>
-              Načteno {items.length} aktivních položek ze skladu (<code>pos_visible: true</code>).
+              Live Sklad · {items.length} položek na lístku · změny Do kasy se propsí okamžitě
+              (revize {inventoryRevision.length}).
             </span>
           )}
           {source === 'project' && (
@@ -354,17 +466,7 @@ export function PrintMenuEngine() {
               <img src={header.logoUrl} alt={header.title} className="print-menu-logo" />
             )}
             <div className="print-menu-brand">{header.title}</div>
-            <div className="print-menu-subtitle">{header.subtitle}</div>
-            <div className="print-menu-meta">
-              {header.meta}
-              {project && mode === 'event'
-                ? ` · ${project.name} · ${formatCzechDate(project.date)} · ${project.guests} hostů`
-                : ''}
-            </div>
-            <div className="print-menu-kind-label">
-              {kind === 'beverage' ? 'Nápojový lístek' : 'Jídelní lístek'}
-              {mode === 'event' ? ' · Uzavřená akce' : ' · Běžný provoz'}
-            </div>
+            <h1 className="print-menu-doc-title">{menuTitle}</h1>
           </header>
 
           {mode === 'event' && (
@@ -392,13 +494,18 @@ export function PrintMenuEngine() {
                   </ul>
                 </>
               )}
+              {project && (
+                <div className="print-event-meta no-print">
+                  {project.name} · {formatCzechDate(project.date)} · {project.guests} hostů
+                </div>
+              )}
             </section>
           )}
 
           {sections.length === 0 && (
             <div className="print-empty">
-              Žádné položky pro tento lístek. Aktivujte produkty ve skladu (Do kasy), načtěte catering
-              projektu, nebo nahrajte fotku přes AI Vision.
+              Žádné položky pro tento lístek. Ve výběru Live Sklad zaškrtněte produkty (Do kasy),
+              načtěte catering projektu, nebo nahrajte fotku přes AI Vision.
             </div>
           )}
 
@@ -449,8 +556,7 @@ export function PrintMenuEngine() {
               </div>
             )}
             <div className="print-footer-note">
-              Ceny uvedeny v Kč{showPrices ? '' : ' (skryté v režimu uzavřené akce)'} · Informace o
-              alergenech poskytne obsluha na vyžádání.
+              Ceny uvedeny v Kč · Informace o alergenech poskytne obsluha na vyžádání.
             </div>
           </footer>
         </div>

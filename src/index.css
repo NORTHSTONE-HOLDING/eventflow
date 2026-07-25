@@ -1448,3 +1448,104 @@ a:hover {
     grid-column: 1 / -1;
   }
 }
+
+/* Live Sklad picker + clean print title */
+.print-live-picker {
+  display: grid;
+  gap: 8px;
+  max-height: 280px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid rgba(212, 175, 55, 0.28);
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.22);
+  -webkit-overflow-scrolling: touch;
+}
+
+.print-live-row {
+  display: grid;
+  grid-template-columns: 28px 1fr auto auto;
+  gap: 10px;
+  align-items: center;
+  min-height: 48px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.print-live-row.is-on {
+  border-color: rgba(16, 185, 129, 0.55);
+  background: rgba(16, 185, 129, 0.1);
+}
+
+.print-live-row input[type='checkbox'] {
+  width: 20px;
+  height: 20px;
+  accent-color: #d4af37;
+}
+
+.print-live-name {
+  font-weight: 600;
+  font-size: 0.92rem;
+}
+
+.print-live-price {
+  color: var(--gold);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.88rem;
+}
+
+.print-live-empty {
+  padding: 1rem;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.print-menu-doc-title {
+  margin: 0.55rem 0 0;
+  text-align: center;
+  font-family: var(--pm-font-display, 'Cormorant Garamond', Georgia, serif);
+  font-size: clamp(1.85rem, 3.4vw, 2.6rem);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--pm-fg, #e8ecf1);
+  line-height: 1.15;
+}
+
+.print-theme-elegant_gold .print-menu-doc-title,
+.print-theme-cyberpunk_slate .print-menu-doc-title {
+  color: var(--pm-accent);
+}
+
+.print-theme-minimalist_nordic .print-menu-doc-title {
+  font-size: 1.45rem;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  font-family: var(--pm-font-body);
+}
+
+.print-theme-grand_hotel .print-menu-doc-title {
+  font-size: 2.4rem;
+}
+
+.print-event-meta {
+  margin-top: 0.75rem;
+  font-size: 0.75rem;
+  color: var(--pm-muted);
+}
+
+/* Hide operational / internal labels from printed output */
+@media print {
+  .print-menu-subtitle,
+  .print-menu-meta,
+  .print-menu-kind-label,
+  .print-ops-label,
+  .print-event-meta,
+  .print-source-hint {
+    display: none !important;
+  }
+}

@@ -12,6 +12,7 @@ import type {
   MetricSnapshot,
   POSCartLine,
   POSPaymentMethod,
+  PosAuditEntry,
   PosOrder,
   PosPrinter,
   PosTableTab,
@@ -35,12 +36,21 @@ import {
 } from '../lib/posEngine'
 import { DEFAULT_PRINTERS } from '../lib/printerHardware'
 import {
+  applyKdsLineVoid,
   buildKdsTicketsFromCart,
   publishKdsTicket,
   publishKdsStatus,
+  publishKdsVoidLine,
   publishWaiterReady,
 } from '../lib/kdsSync'
-import { ensurePosTables, mergeCartLine, resolveActiveTableId, subtractPaidLines } from '../lib/tableTabs'
+import {
+  ensurePosTables,
+  isSentCartLine,
+  mergeCartLine,
+  resolveActiveTableId,
+  subtractPaidLines,
+} from '../lib/tableTabs'
+import { verifyManagerPin } from './useStaffLockStore'
 import { syncProjectShiftsAndBudget } from '../lib/shiftScheduler'
 import { useInventoryStore } from './useInventoryStore'
 import { useDailySpecialStore } from './useDailySpecialStore'
@@ -239,6 +249,25 @@ interface AppState {
     line: POSCartLine,
     opts?: { tableId?: string | null; waiterId?: string; waiterName?: string }
   ) => void
+  /** Instant unrestricted delete of a draft / nepotvrzené line */
+  removeDraftCartLine: (opts: {
+    projectId: string
+    tableId: string
+    lineId: string
+    waiterId?: string
+    waiterName?: string
+  }) => { ok: boolean; error?: string }
+  /** Manager-PIN void of a locked Sent line — removes from table + KDS + audit */
+  voidSentCartLine: (opts: {
+    projectId: string
+    tableId: string
+    lineId: string
+    managerPin: string
+    expectedPin?: string
+    waiterId?: string
+    waiterName?: string
+    reason?: string
+  }) => { ok: boolean; error?: string }
   renameTable: (projectId: string, tableId: string, label: string) => void
   addTable: (
     projectId: string,
@@ -254,16 +283,20 @@ interface AppState {
     tableId: string
     waiterId: string
     waiterName: string
-  }) => { ok: boolean; orderId?: string; ticketIds?: string[]; error?: string }
+  }) => { ok: boolean; orderId?: string; ticketIds?: string[]; error?: string; dispatchedAt?: string }
 
   upsertPrinter: (printer: PosPrinter) => void
   removePrinter: (printerId: string) => void
   setKdsTicketStatus: (ticketId: string, status: KdsTicketStatus) => void
   addKdsTickets: (tickets: KdsTicket[]) => void
+  voidKdsLineByCartLineId: (lineId: string) => void
   updatePosOrderStatus: (
     orderId: string,
     status: PosOrder['status']
   ) => void
+
+  posAuditLog: PosAuditEntry[]
+  appendPosAudit: (entry: Omit<PosAuditEntry, 'id' | 'createdAt'> & { id?: string; createdAt?: string }) => void
 
   runLegalAudit: (text: string) => Promise<void>
   getActiveProject: () => EventProject | null
@@ -287,6 +320,7 @@ export const useAppStore = create<AppState>()(
       printers: DEFAULT_PRINTERS,
       kdsTickets: [],
       posOrders: [],
+      posAuditLog: [],
 
       setView: (view) => {
         const next = normalizeAppView(view)
@@ -731,6 +765,10 @@ export const useAppStore = create<AppState>()(
           waiterId: opts?.waiterId || line.waiterId,
           waiterName: opts?.waiterName || line.waiterName,
           lineId: line.lineId || uid('line'),
+          cartState: 'draft',
+          sentToKds: false,
+          sentAt: null,
+          kdsTicketIds: [],
         }
         const next = tables.map((t) => {
           if (t.id !== activeId) return t
@@ -749,6 +787,126 @@ export const useAppStore = create<AppState>()(
         })
       },
 
+      removeDraftCartLine: ({ projectId, tableId, lineId, waiterId, waiterName }) => {
+        const state = get()
+        const project = migrateProject(state.projects.find((p) => p.id === projectId))
+        if (!project) return { ok: false, error: 'Projekt nenalezen' }
+        const tables = ensurePosTables(project.posTables)
+        const table = tables.find((t) => t.id === tableId)
+        if (!table) return { ok: false, error: 'Stůl nenalezen' }
+        const line = (table.lines ?? []).find((l) => l.lineId === lineId)
+        if (!line) return { ok: false, error: 'Položka nenalezena' }
+        if (isSentCartLine(line)) {
+          return {
+            ok: false,
+            error: 'Odeslanou položku nelze smazat bez Manažerského PIN (Storno)',
+          }
+        }
+        const nextLines = (table.lines ?? []).filter((l) => l.lineId !== lineId)
+        get().updateProject(projectId, {
+          posTables: tables.map((t) =>
+            t.id === tableId
+              ? { ...t, lines: nextLines, updatedAt: new Date().toISOString() }
+              : t,
+          ),
+        })
+        get().appendPosAudit({
+          action: 'remove_draft_line',
+          projectId,
+          projectName: project.name,
+          tableId,
+          tableLabel: table.label,
+          lineId,
+          lineName: line.name,
+          qty: line.qty,
+          unitPrice: line.unitPrice,
+          waiterId,
+          waiterName,
+          managerAuthorized: false,
+          details: `Smazána rozpracovaná položka „${line.name}“ (${line.qty}×) ze stolu ${table.label}`,
+        })
+        return { ok: true }
+      },
+
+      voidSentCartLine: ({
+        projectId,
+        tableId,
+        lineId,
+        managerPin,
+        expectedPin,
+        waiterId,
+        waiterName,
+        reason,
+      }) => {
+        if (!verifyManagerPin(managerPin, expectedPin || get().profile.managerPin)) {
+          return { ok: false, error: 'Nesprávný Manažerský PIN' }
+        }
+        const state = get()
+        const project = migrateProject(state.projects.find((p) => p.id === projectId))
+        if (!project) return { ok: false, error: 'Projekt nenalezen' }
+        const tables = ensurePosTables(project.posTables)
+        const table = tables.find((t) => t.id === tableId)
+        if (!table) return { ok: false, error: 'Stůl nenalezen' }
+        const line = (table.lines ?? []).find((l) => l.lineId === lineId)
+        if (!line) return { ok: false, error: 'Položka nenalezena' }
+        if (!isSentCartLine(line)) {
+          return { ok: false, error: 'Položka ještě nebyla odeslána — použijte běžné smazání' }
+        }
+
+        const nextLines = (table.lines ?? []).filter((l) => l.lineId !== lineId)
+        const ticketIds = line.kdsTicketIds ?? []
+        const nextTickets = applyKdsLineVoid(state.kdsTickets ?? [], lineId)
+
+        set({
+          kdsTickets: nextTickets,
+          projects: state.projects.map((p) =>
+            p.id === projectId
+              ? {
+                  ...project,
+                  posTables: tables.map((t) =>
+                    t.id === tableId
+                      ? {
+                          ...t,
+                          lines: nextLines,
+                          updatedAt: new Date().toISOString(),
+                        }
+                      : t,
+                  ),
+                }
+              : p,
+          ),
+        })
+
+        publishKdsVoidLine({
+          lineId,
+          ticketIds,
+          tableId,
+          reason: reason || 'Storno manažerem',
+        })
+
+        get().appendPosAudit({
+          action: 'void_sent_line',
+          projectId,
+          projectName: project.name,
+          tableId,
+          tableLabel: table.label,
+          lineId,
+          lineName: line.name,
+          qty: line.qty,
+          unitPrice: line.unitPrice,
+          waiterId,
+          waiterName,
+          managerAuthorized: true,
+          kdsTicketIds: ticketIds,
+          details:
+            reason ||
+            `STORNO odeslané položky „${line.name}“ (${line.qty}×) · stůl ${table.label} · autorizováno PIN`,
+        })
+
+        get().setToast(`Storno: ${line.name} odstraněno z účtu i KDS`)
+        return { ok: true }
+      },
+
       sendTableOrderToKds: ({ projectId, tableId, waiterId, waiterName }) => {
         const state = get()
         const project = migrateProject(state.projects.find((p) => p.id === projectId))
@@ -756,11 +914,13 @@ export const useAppStore = create<AppState>()(
         const tables = ensurePosTables(project.posTables)
         const table = tables.find((t) => t.id === tableId)
         if (!table) return { ok: false, error: 'Stůl nenalezen' }
-        const pending = (table.lines ?? []).filter((l) => !l.sentToKds)
+        const pending = (table.lines ?? []).filter((l) => !isSentCartLine(l))
         if (!pending.length) {
-          return { ok: false, error: 'Žádné nové položky k odeslání na KDS' }
+          return { ok: false, error: 'Žádné rozpracované položky k odeslání' }
         }
 
+        // Exact millisecond of Odeslat click — KDS stopwatch origin
+        const dispatchedAt = new Date().toISOString()
         const receiptNumber = `OBJ-${Date.now().toString(36).toUpperCase()}`
         const orderId = uid('order')
         const tickets = buildKdsTicketsFromCart({
@@ -773,22 +933,34 @@ export const useAppStore = create<AppState>()(
           waiterName,
           orderId,
           tableId: table.id,
+          dispatchedAt,
         })
 
         for (const ticket of tickets) {
           publishKdsTicket(ticket)
         }
 
-        const markedLines = (table.lines ?? []).map((l) =>
-          l.sentToKds
-            ? l
-            : {
-                ...l,
-                sentToKds: true,
-                waiterId: l.waiterId || waiterId,
-                waiterName: l.waiterName || waiterName,
-              }
-        )
+        const kitchenIds = tickets.filter((t) => t.station === 'kitchen').map((t) => t.id)
+        const barIds = tickets.filter((t) => t.station === 'bar').map((t) => t.id)
+
+        const markedLines = (table.lines ?? []).map((l) => {
+          if (isSentCartLine(l)) return l
+          const stationIds =
+            l.category === 'beverage'
+              ? barIds
+              : l.category === 'food'
+                ? kitchenIds
+                : tickets.map((t) => t.id)
+          return {
+            ...l,
+            cartState: 'sent' as const,
+            sentToKds: true,
+            sentAt: dispatchedAt,
+            kdsTicketIds: stationIds.length ? stationIds : tickets.map((t) => t.id),
+            waiterId: l.waiterId || waiterId,
+            waiterName: l.waiterName || waiterName,
+          }
+        })
 
         const order: PosOrder = {
           id: orderId,
@@ -797,8 +969,15 @@ export const useAppStore = create<AppState>()(
           tableLabel: table.label,
           waiterId,
           waiterName,
-          lines: pending.map((l) => ({ ...l, waiterId, waiterName })),
-          createdAt: new Date().toISOString(),
+          lines: pending.map((l) => ({
+            ...l,
+            cartState: 'sent',
+            sentToKds: true,
+            sentAt: dispatchedAt,
+            waiterId,
+            waiterName,
+          })),
+          createdAt: dispatchedAt,
           status: 'sent',
           kdsTicketIds: tickets.map((t) => t.id),
           receiptNumber,
@@ -818,24 +997,57 @@ export const useAppStore = create<AppState>()(
                           lines: markedLines,
                           assignedWaiterId: waiterId,
                           assignedWaiterName: waiterName,
-                          updatedAt: new Date().toISOString(),
+                          updatedAt: dispatchedAt,
                         }
                       : t
                   ),
-                  activeTableId: table.id,
+                  // Clear active table so UI returns to space/table map
+                  activeTableId: null,
                 }
               : p
           ),
         })
 
+        get().appendPosAudit({
+          action: 'send_order',
+          projectId,
+          projectName: project.name,
+          tableId: table.id,
+          tableLabel: table.label,
+          waiterId,
+          waiterName,
+          managerAuthorized: false,
+          kdsTicketIds: tickets.map((t) => t.id),
+          details: `Odeslána objednávka ${receiptNumber} · ${pending.length} položek · ${table.label} · ${dispatchedAt}`,
+        })
+
         get().setToast(
-          `Odesláno na KDS · ${tickets.length} ticket(y) · ${table.label} · ${waiterName}`
+          `🔥 Objednávka odeslána · ${tickets.length} ticket(y) · ${table.label}`,
         )
         return {
           ok: true,
           orderId,
           ticketIds: tickets.map((t) => t.id),
+          dispatchedAt,
         }
+      },
+
+      appendPosAudit: (entry) => {
+        const row: PosAuditEntry = {
+          ...entry,
+          id: entry.id || uid('audit'),
+          createdAt: entry.createdAt || new Date().toISOString(),
+        }
+        set((s) => ({
+          posAuditLog: [row, ...(s.posAuditLog ?? [])].slice(0, 500),
+        }))
+      },
+
+      voidKdsLineByCartLineId: (lineId) => {
+        if (!lineId) return
+        set((s) => ({
+          kdsTickets: applyKdsLineVoid(s.kdsTickets ?? [], lineId),
+        }))
       },
 
       renameTable: (projectId, tableId, label) => {
@@ -1023,6 +1235,7 @@ export const useAppStore = create<AppState>()(
         printers: s.printers,
         kdsTickets: s.kdsTickets,
         posOrders: s.posOrders,
+        posAuditLog: s.posAuditLog,
       }),
       onRehydrateStorage: () => (state) => {
         queueMicrotask(() => {
@@ -1047,6 +1260,9 @@ export const useAppStore = create<AppState>()(
             kdsTickets: Array.isArray(state?.kdsTickets) ? state!.kdsTickets : [],
             posOrders: Array.isArray((state as AppState | undefined)?.posOrders)
               ? (state as AppState).posOrders
+              : [],
+            posAuditLog: Array.isArray((state as AppState | undefined)?.posAuditLog)
+              ? (state as AppState).posAuditLog
               : [],
           })
         })

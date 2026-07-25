@@ -257,6 +257,9 @@ export type POSPaymentMethod =
   | 'cash'
   | 'combined'
 
+/** Draft = waiter's unsent cart; Sent = locked after Odeslat to KDS */
+export type PosCartLineState = 'draft' | 'sent'
+
 export interface POSCartLine {
   cateringId: string
   name: string
@@ -271,10 +274,37 @@ export interface POSCartLine {
   lineId?: string
   waiterId?: string
   waiterName?: string
+  /** Legacy flag — prefer cartState === 'sent' */
   sentToKds?: boolean
+  /** Explicit draft vs sent lock state */
+  cartState?: PosCartLineState
+  /** Exact ISO timestamp when waiter clicked Odeslat (KDS stopwatch origin) */
+  sentAt?: string | null
+  /** KDS ticket id(s) this line was dispatched into */
+  kdsTicketIds?: string[]
   /** Direct inventory link for hybrid 1:1 deduction */
   inventory_item_id?: string | null
   is_daily_special?: boolean
+}
+
+/** Permanent POS / KDS audit trail (storno, odeslání, …) */
+export interface PosAuditEntry {
+  id: string
+  createdAt: string
+  action: 'send_order' | 'void_sent_line' | 'remove_draft_line'
+  projectId: string
+  projectName?: string
+  tableId?: string
+  tableLabel?: string
+  lineId?: string
+  lineName?: string
+  qty?: number
+  unitPrice?: number
+  waiterId?: string
+  waiterName?: string
+  managerAuthorized: boolean
+  details: string
+  kdsTicketIds?: string[]
 }
 
 /** Venue floor space / zone for dynamic table map */
@@ -328,6 +358,10 @@ export interface KdsTicketLine {
   name: string
   qty: number
   note?: string
+  /** Matches POS cart lineId for precise storno sync */
+  lineId?: string
+  unitPrice?: number
+  voided?: boolean
 }
 
 export interface KdsTicket {
@@ -337,7 +371,10 @@ export interface KdsTicket {
   receiptNumber: string
   station: 'kitchen' | 'bar'
   tableLabel: string
+  /** Millisecond-precise dispatch time — stopwatch starts here, not on cart tap */
   createdAt: string
+  /** Alias of createdAt at Odeslat click (explicit for KDS sync) */
+  dispatchedAt?: string
   status: KdsTicketStatus
   lines: KdsTicketLine[]
   waiterId?: string

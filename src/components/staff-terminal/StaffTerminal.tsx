@@ -6,11 +6,11 @@ import {
   Map as MapIcon,
   Minus,
   Plus,
-  Send,
   ShoppingCart,
   Trash2,
   Utensils,
   Wine,
+  X,
   Zap,
   UserRound,
 } from 'lucide-react'
@@ -34,7 +34,7 @@ import { buildVenueMasterCatalog, mergeCatalogs } from '../../lib/venueCatalog'
 import { mergeHybridPosCatalog } from '../../lib/inventoryPosBridge'
 import {
   ensurePosTables,
-  resolveActiveTableId,
+  isSentCartLine,
   tableOpenTotal,
   tablesInSpace,
 } from '../../lib/tableTabs'
@@ -47,6 +47,7 @@ import {
   type PosBroadcastMessage,
 } from '../../lib/kdsSync'
 import { tapFeedback } from '../../lib/touchFeedback'
+import { StornoPinModal } from './StornoPinModal'
 import type { CateringItem, POSCartLine, POSSubcategory, PosTableTab } from '../../types'
 
 /**
@@ -61,9 +62,12 @@ export function StaffTerminal() {
   const addLineToActiveTable = useAppStore((s) => s.addLineToActiveTable)
   const setTableLines = useAppStore((s) => s.setTableLines)
   const setActiveTable = useAppStore((s) => s.setActiveTable)
+  const updateProject = useAppStore((s) => s.updateProject)
   const addTable = useAppStore((s) => s.addTable)
   const removeTable = useAppStore((s) => s.removeTable)
   const sendTableOrderToKds = useAppStore((s) => s.sendTableOrderToKds)
+  const removeDraftCartLine = useAppStore((s) => s.removeDraftCartLine)
+  const voidSentCartLine = useAppStore((s) => s.voidSentCartLine)
   const completePosSale = useAppStore((s) => s.completePosSale)
   const ensureProjectPosReady = useAppStore((s) => s.ensureProjectPosReady)
 
@@ -107,6 +111,9 @@ export function StaffTerminal() {
   const [showShifts, setShowShifts] = useState(false)
   const [flashReady, setFlashReady] = useState<string | null>(null)
   const [emergency, setEmergency] = useState<string | null>(null)
+  const [voidTarget, setVoidTarget] = useState<POSCartLine | null>(null)
+  /** After Odeslat — stay on space map until waiter taps a table again */
+  const [mapFocus, setMapFocus] = useState(false)
 
   useEffect(() => {
     void bootstrapInventory()
@@ -120,13 +127,24 @@ export function StaffTerminal() {
   )
 
   const activeTableId = useMemo(() => {
-    const fromWaiter = getWorkspaceTableId()
-    return resolveActiveTableId(tables, fromWaiter || project?.activeTableId)
-  }, [tables, project, getWorkspaceTableId, activeWaiterId])
+    if (mapFocus && !quickSale) return null
+    const preferred = getWorkspaceTableId() || project?.activeTableId || null
+    if (!preferred) return null
+    return tables.some((t) => t.id === preferred) ? preferred : null
+  }, [tables, project, getWorkspaceTableId, activeWaiterId, mapFocus, quickSale])
 
   const activeTable = useMemo(
     () => tables.find((t) => t.id === activeTableId) || null,
     [tables, activeTableId],
+  )
+
+  const draftLines = useMemo(
+    () => (quickSale ? quickLines : (activeTable?.lines ?? []).filter((l) => !isSentCartLine(l))),
+    [quickSale, quickLines, activeTable],
+  )
+  const sentLines = useMemo(
+    () => (quickSale ? [] : (activeTable?.lines ?? []).filter((l) => isSentCartLine(l))),
+    [quickSale, activeTable],
   )
 
   const spaceTables = useMemo(
@@ -228,11 +246,18 @@ export function StaffTerminal() {
     (tableId: string) => {
       tapFeedback()
       setQuickSale(false)
+      setMapFocus(false)
       setWorkspaceTableId(tableId)
       if (project) setActiveTable(project.id, tableId)
     },
     [project, setActiveTable, setWorkspaceTableId],
   )
+
+  const returnToTableMap = useCallback(() => {
+    setMapFocus(true)
+    setWorkspaceTableId(null)
+    if (project) updateProject(project.id, { activeTableId: null })
+  }, [project, setWorkspaceTableId, updateProject])
 
   const addItem = (item: CateringItem) => {
     tapFeedback('success')
@@ -283,8 +308,12 @@ export function StaffTerminal() {
     })
   }
 
-  const changeQty = (line: POSCartLine, delta: number) => {
+  const changeDraftQty = (line: POSCartLine, delta: number) => {
     tapFeedback()
+    if (isSentCartLine(line)) {
+      setToast('Odeslanou položku nelze měnit — použijte Storno s PIN')
+      return
+    }
     if (quickSale) {
       setQuickLines((prev) =>
         prev
@@ -298,22 +327,91 @@ export function StaffTerminal() {
       )
       return
     }
-    if (!project || !activeTable) return
+    if (!project || !activeTable || !line.lineId) return
+    if (delta < 0 && line.qty + delta <= 0) {
+      removeDraftCartLine({
+        projectId: project.id,
+        tableId: activeTable.id,
+        lineId: line.lineId,
+        waiterId: waiter?.id,
+        waiterName: waiter?.name,
+      })
+      return
+    }
     const next = (activeTable.lines ?? [])
       .map((l) =>
-        (l.lineId && line.lineId && l.lineId === line.lineId) ||
-        (!line.lineId && l.cateringId === line.cateringId)
-          ? { ...l, qty: l.qty + delta, sentToKds: false }
+        l.lineId && line.lineId && l.lineId === line.lineId
+          ? { ...l, qty: l.qty + delta, cartState: 'draft' as const, sentToKds: false }
           : l,
       )
       .filter((l) => l.qty > 0)
     setTableLines(project.id, activeTable.id, next)
   }
 
-  const sendKds = () => {
+  const deleteDraftLine = (line: POSCartLine) => {
+    tapFeedback('alert')
+    if (isSentCartLine(line)) {
+      setVoidTarget(line)
+      return
+    }
+    if (quickSale) {
+      setQuickLines((prev) =>
+        prev.filter(
+          (l) =>
+            !(
+              (l.lineId && line.lineId && l.lineId === line.lineId) ||
+              (!line.lineId && l.cateringId === line.cateringId)
+            ),
+        ),
+      )
+      return
+    }
+    if (!project || !activeTable || !line.lineId) return
+    const res = removeDraftCartLine({
+      projectId: project.id,
+      tableId: activeTable.id,
+      lineId: line.lineId,
+      waiterId: waiter?.id,
+      waiterName: waiter?.name,
+    })
+    if (!res.ok) setToast(res.error || 'Smazání selhalo')
+  }
+
+  const requestVoidSent = (line: POSCartLine) => {
+    tapFeedback('alert')
+    setVoidTarget(line)
+  }
+
+  const confirmVoidSent = (pin: string) => {
+    if (!project || !activeTable || !voidTarget?.lineId) {
+      setVoidTarget(null)
+      return
+    }
+    const res = voidSentCartLine({
+      projectId: project.id,
+      tableId: activeTable.id,
+      lineId: voidTarget.lineId,
+      managerPin: pin,
+      expectedPin: profile.managerPin,
+      waiterId: waiter?.id,
+      waiterName: waiter?.name,
+      reason: `Storno manažerem · ${voidTarget.name}`,
+    })
+    if (!res.ok) {
+      setToast(res.error || 'Storno selhalo')
+      return
+    }
+    setVoidTarget(null)
+  }
+
+  const sendOrder = () => {
     tapFeedback('kds')
     if (!project || !activeTable || !waiter) {
       setToast('Vyberte stůl a obsluhu')
+      return
+    }
+    if (!draftLines.length) {
+      setToast('Žádné rozpracované položky k odeslání')
       return
     }
     const res = sendTableOrderToKds({
@@ -322,7 +420,11 @@ export function StaffTerminal() {
       waiterId: waiter.id,
       waiterName: waiter.name,
     })
-    if (!res.ok) setToast(res.error || 'KDS odeslání selhalo')
+    if (!res.ok) {
+      setToast(res.error || 'KDS odeslání selhalo')
+      return
+    }
+    returnToTableMap()
   }
 
   const printSale = (
@@ -490,6 +592,7 @@ export function StaffTerminal() {
             style={{ minHeight: 48 }}
             onClick={() => {
               tapFeedback()
+              setMapFocus(false)
               setQuickSale((v) => !v)
             }}
           >
@@ -710,22 +813,53 @@ export function StaffTerminal() {
         {/* RIGHT — cart locked to table */}
         <aside className="st-right panel">
           <div className="st-cart-header">{cartHeader}</div>
+          {!quickSale && !activeTable && (
+            <div className="st-empty-cat" style={{ padding: '1.5rem 0.75rem' }}>
+              Vyberte stůl na mapě vlevo. Po odeslání objednávky se pohled vrátí sem.
+            </div>
+          )}
           <div className="st-cart-lines">
-            {cartLines.map((line, idx) => (
-              <div key={line.lineId || `${line.cateringId}-${idx}`} className="st-cart-line">
+            {draftLines.length > 0 && (
+              <div className="st-cart-section-label st-cart-section-draft">
+                Rozpracováno / Nepotvrzené
+              </div>
+            )}
+            {draftLines.map((line, idx) => (
+              <div
+                key={line.lineId || `draft-${line.cateringId}-${idx}`}
+                className="st-cart-line st-cart-line-draft"
+              >
                 <div>
                   <div className="st-cart-name">{line.name}</div>
                   <div className="st-cart-price">
-                    {formatCurrency(line.unitPrice)} · {line.sentToKds ? 'KDS ✓' : 'nové'}
+                    {formatCurrency(line.unitPrice)} · Draft
                   </div>
                 </div>
                 <div className="st-cart-qty">
-                  <button type="button" onClick={() => changeQty(line, -1)}>
+                  <button
+                    type="button"
+                    className="st-qty-minus"
+                    aria-label="Snížit množství"
+                    onClick={() => changeDraftQty(line, -1)}
+                  >
                     <Minus size={14} />
                   </button>
                   <span>{line.qty}</span>
-                  <button type="button" onClick={() => changeQty(line, 1)}>
+                  <button
+                    type="button"
+                    aria-label="Zvýšit množství"
+                    onClick={() => changeDraftQty(line, 1)}
+                  >
                     <Plus size={14} />
+                  </button>
+                  <button
+                    type="button"
+                    className="st-draft-delete"
+                    title="Smazat rozpracovanou položku"
+                    aria-label="Smazat"
+                    onClick={() => deleteDraftLine(line)}
+                  >
+                    <X size={16} />
                   </button>
                 </div>
                 <div className="st-cart-sum">
@@ -733,8 +867,48 @@ export function StaffTerminal() {
                 </div>
               </div>
             ))}
-            {cartLines.length === 0 && (
-              <div className="st-empty-cat">Účet je prázdný — klepněte na položku v katalogu.</div>
+
+            {sentLines.length > 0 && (
+              <div className="st-cart-section-label st-cart-section-sent">
+                Odesláno / Uzamčeno
+              </div>
+            )}
+            {sentLines.map((line, idx) => (
+              <div
+                key={line.lineId || `sent-${line.cateringId}-${idx}`}
+                className="st-cart-line st-cart-line-sent"
+              >
+                <div>
+                  <div className="st-cart-name">{line.name}</div>
+                  <div className="st-cart-price">
+                    {formatCurrency(line.unitPrice)} · Odesláno
+                    {line.sentAt
+                      ? ` · ${new Date(line.sentAt).toLocaleTimeString('cs-CZ')}`
+                      : ''}
+                  </div>
+                </div>
+                <div className="st-cart-qty st-cart-qty-locked">
+                  <span className="st-sent-qty">{line.qty}×</span>
+                  <button
+                    type="button"
+                    className="st-sent-void"
+                    title="Storno (Manažerský PIN)"
+                    aria-label="Storno"
+                    onClick={() => requestVoidSent(line)}
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                </div>
+                <div className="st-cart-sum">
+                  {formatCurrency(line.unitPrice * line.qty)}
+                </div>
+              </div>
+            ))}
+
+            {cartLines.length === 0 && (quickSale || activeTable) && (
+              <div className="st-empty-cat">
+                Účet je prázdný — klepněte na položku v katalogu (Draft).
+              </div>
             )}
           </div>
           <div className="st-cart-footer">
@@ -744,12 +918,11 @@ export function StaffTerminal() {
             {!quickSale && (
               <button
                 type="button"
-                className="btn btn-ghost"
-                style={{ minHeight: 52, width: '100%' }}
-                disabled={!cartLines.some((l) => !l.sentToKds)}
-                onClick={sendKds}
+                className="st-send-order-btn"
+                disabled={!activeTable || draftLines.length === 0}
+                onClick={sendOrder}
               >
-                <Send size={16} /> Odeslat na KDS
+                🔥 Odeslat objednávku do kuchyně / baru
               </button>
             )}
             <button
@@ -774,6 +947,14 @@ export function StaffTerminal() {
         tableLabel={quickSale ? 'Rychlý prodej' : activeTable?.label || 'Stůl'}
         onClose={() => setCheckoutOpen(false)}
         onComplete={onCheckout}
+      />
+
+      <StornoPinModal
+        open={Boolean(voidTarget)}
+        itemName={voidTarget?.name || ''}
+        expectedPin={profile.managerPin}
+        onSuccess={confirmVoidSent}
+        onCancel={() => setVoidTarget(null)}
       />
 
       <ShiftClosureModal

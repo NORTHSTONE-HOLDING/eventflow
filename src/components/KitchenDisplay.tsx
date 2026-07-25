@@ -22,13 +22,17 @@ function formatStopwatch(totalSec: number): string {
   return `${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}`
 }
 
-function LiveStopwatch({ createdAt }: { createdAt: string }) {
+/** Stopwatch origin = exact Odeslat dispatch time (not cart tap). */
+function LiveStopwatch({ startedAt }: { startedAt: string }) {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 1000)
     return () => window.clearInterval(id)
-  }, [])
-  const sec = Math.max(0, Math.floor((now - new Date(createdAt).getTime()) / 1000))
+  }, [startedAt])
+  const origin = new Date(startedAt).getTime()
+  const sec = Number.isFinite(origin)
+    ? Math.max(0, Math.floor((now - origin) / 1000))
+    : 0
   const urgent = sec >= 8 * 60
   return (
     <span style={{ color: urgent ? '#fca5a5' : '#94a3b8', fontWeight: 800 }}>
@@ -36,6 +40,10 @@ function LiveStopwatch({ createdAt }: { createdAt: string }) {
       {formatStopwatch(sec)}
     </span>
   )
+}
+
+function ticketStopwatchOrigin(ticket: KdsTicket): string {
+  return ticket.dispatchedAt || ticket.createdAt
 }
 
 export function KitchenDisplayPage() {
@@ -50,6 +58,7 @@ export function KitchenDisplayPage() {
   const storeTickets = useAppStore((s) => s.kdsTickets)
   const setKdsTicketStatus = useAppStore((s) => s.setKdsTicketStatus)
   const addKdsTickets = useAppStore((s) => s.addKdsTickets)
+  const voidKdsLineByCartLineId = useAppStore((s) => s.voidKdsLineByCartLineId)
   const [filter, setFilter] = useState<StationFilter>(pathFilter)
   const [flashId, setFlashId] = useState<string | null>(null)
   const [tick, setTick] = useState(0)
@@ -79,13 +88,32 @@ export function KitchenDisplayPage() {
       if (ev.data?.type === 'kds_snapshot' && Array.isArray(ev.data.payload)) {
         addKdsTickets(ev.data.payload)
       }
+      if (ev.data?.type === 'kds_void_line' && ev.data.payload?.lineId) {
+        voidKdsLineByCartLineId(ev.data.payload.lineId)
+        tapFeedback('alert')
+      }
     }
     ch.addEventListener('message', onMsg)
+
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== 'eventflow-kds-void' || !e.newValue) return
+      try {
+        const payload = JSON.parse(e.newValue) as { lineId?: string }
+        if (payload.lineId) voidKdsLineByCartLineId(payload.lineId)
+      } catch {
+        // ignore
+      }
+    }
+    window.addEventListener('storage', onStorage)
+
     publishKdsSnapshot(
       (useAppStore.getState().kdsTickets ?? []).filter((t) => t.status !== 'done'),
     )
-    return () => ch.removeEventListener('message', onMsg)
-  }, [addKdsTickets, setKdsTicketStatus])
+    return () => {
+      ch.removeEventListener('message', onMsg)
+      window.removeEventListener('storage', onStorage)
+    }
+  }, [addKdsTickets, setKdsTicketStatus, voidKdsLineByCartLineId])
 
   const tickets = useMemo(() => {
     void tick
@@ -232,13 +260,14 @@ export function KitchenDisplayPage() {
           }}
         >
           {tickets.map((ticket) => {
+            const origin = ticketStopwatchOrigin(ticket)
             const ageSec = Math.max(
               0,
-              Math.floor((Date.now() - new Date(ticket.createdAt).getTime()) / 1000),
+              Math.floor((Date.now() - new Date(origin).getTime()) / 1000),
             )
             const preparing = ticket.status === 'preparing'
             const urgent = ageSec >= 8 * 60
-            const orderTime = new Date(ticket.createdAt).toLocaleTimeString('cs-CZ', {
+            const orderTime = new Date(origin).toLocaleTimeString('cs-CZ', {
               hour: '2-digit',
               minute: '2-digit',
               second: '2-digit',
@@ -293,7 +322,7 @@ export function KitchenDisplayPage() {
                   >
                     {ticket.station === 'kitchen' ? 'Kuchyň' : 'Bar'}
                   </span>
-                  <LiveStopwatch createdAt={ticket.createdAt} />
+                  <LiveStopwatch startedAt={origin} />
                 </div>
 
                 <div
@@ -311,7 +340,7 @@ export function KitchenDisplayPage() {
                   Obsluha: <strong style={{ color: '#e2e8f0' }}>{ticket.waiterName || '—'}</strong>
                 </div>
                 <div style={{ fontSize: '0.78rem', color: '#94a3b8', marginBottom: 8 }}>
-                  Objednáno {orderTime} · {ticket.receiptNumber}
+                  Odesláno {orderTime} · {ticket.receiptNumber}
                   {ticket.ticketValue ? ` · ${formatCurrency(ticket.ticketValue)}` : ''}
                 </div>
 

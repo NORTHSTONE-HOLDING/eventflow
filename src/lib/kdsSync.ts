@@ -20,11 +20,19 @@ export type WaiterReadyPayload = {
   message: string
 }
 
+export type KdsVoidLinePayload = {
+  lineId: string
+  ticketIds?: string[]
+  tableId?: string
+  reason?: string
+}
+
 export type PosBroadcastMessage =
   | { type: 'customer_display'; payload: CustomerDisplayState }
   | { type: 'kds_upsert'; payload: KdsTicket }
   | { type: 'kds_status'; payload: { id: string; status: KdsTicketStatus } }
   | { type: 'kds_snapshot'; payload: KdsTicket[] }
+  | { type: 'kds_void_line'; payload: KdsVoidLinePayload }
   | { type: 'waiter_ready'; payload: WaiterReadyPayload }
   | { type: 'security_alert'; payload: CctvWalkoutAlert }
   | {
@@ -82,6 +90,41 @@ export function publishKdsStatus(id: string, status: KdsTicketStatus) {
   ch?.postMessage({ type: 'kds_status', payload: { id, status } } satisfies PosBroadcastMessage)
 }
 
+/** Instantly remove a voided cart line from all KDS ticket boards. */
+export function publishKdsVoidLine(payload: KdsVoidLinePayload) {
+  const ch = getPosChannel()
+  ch?.postMessage({ type: 'kds_void_line', payload } satisfies PosBroadcastMessage)
+  try {
+    localStorage.setItem(
+      'eventflow-kds-void',
+      JSON.stringify({ ...payload, ts: Date.now() }),
+    )
+  } catch {
+    // ignore
+  }
+}
+
+/** Apply void to an in-memory ticket list (shared by store + KDS windows). */
+export function applyKdsLineVoid(
+  tickets: KdsTicket[],
+  lineId: string,
+): KdsTicket[] {
+  if (!lineId) return tickets
+  return (tickets ?? [])
+    .map((t) => {
+      const nextLines = (t.lines ?? []).filter((l) => l.lineId !== lineId)
+      if (nextLines.length === (t.lines ?? []).length) return t
+      const ticketValue = Math.round(
+        nextLines.reduce(
+          (s, l) => s + (Number(l.unitPrice) || 0) * (Number(l.qty) || 0),
+          0,
+        ),
+      )
+      return { ...t, lines: nextLines, ticketValue }
+    })
+    .filter((t) => (t.lines ?? []).length > 0)
+}
+
 export function publishWaiterReady(payload: WaiterReadyPayload) {
   const ch = getPosChannel()
   ch?.postMessage({ type: 'waiter_ready', payload } satisfies PosBroadcastMessage)
@@ -113,10 +156,13 @@ export function buildKdsTicketsFromCart(opts: {
   waiterName?: string
   orderId?: string
   tableId?: string
+  /** Exact Odeslat click timestamp — stopwatch origin */
+  dispatchedAt?: string
 }): KdsTicket[] {
   const { kitchen, bar } = splitCartByStation(opts.lines ?? [])
   const tickets: KdsTicket[] = []
-  const stamp = new Date().toISOString()
+  // Prefer the caller's dispatch stamp so cart.sentAt === ticket.createdAt
+  const stamp = opts.dispatchedAt || new Date().toISOString()
 
   const sumValue = (rows: POSCartLine[]) =>
     Math.round(
@@ -125,6 +171,14 @@ export function buildKdsTicketsFromCart(opts: {
         0,
       ),
     )
+
+  const toTicketLines = (rows: POSCartLine[]) =>
+    rows.map((l) => ({
+      name: l.name,
+      qty: l.qty,
+      lineId: l.lineId,
+      unitPrice: Number(l.unitPrice) || 0,
+    }))
 
   if (kitchen.length) {
     tickets.push({
@@ -135,8 +189,9 @@ export function buildKdsTicketsFromCart(opts: {
       station: 'kitchen',
       tableLabel: opts.tableLabel,
       createdAt: stamp,
+      dispatchedAt: stamp,
       status: 'new',
-      lines: kitchen.map((l) => ({ name: l.name, qty: l.qty })),
+      lines: toTicketLines(kitchen),
       waiterId: opts.waiterId,
       waiterName: opts.waiterName,
       orderId: opts.orderId,
@@ -156,8 +211,9 @@ export function buildKdsTicketsFromCart(opts: {
       station: 'bar',
       tableLabel: opts.tableLabel,
       createdAt: stamp,
+      dispatchedAt: stamp,
       status: 'new',
-      lines: bar.map((l) => ({ name: l.name, qty: l.qty })),
+      lines: toTicketLines(bar),
       waiterId: opts.waiterId,
       waiterName: opts.waiterName,
       orderId: opts.orderId,

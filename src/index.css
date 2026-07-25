@@ -2066,6 +2066,33 @@ a:hover {
   border: 1px solid #1e293b;
 }
 
+.st-cart-line-draft {
+  border-color: rgba(248, 113, 113, 0.35);
+  background: rgba(248, 113, 113, 0.06);
+}
+
+.st-cart-line-sent {
+  border-color: rgba(212, 175, 55, 0.35);
+  background: rgba(212, 175, 55, 0.06);
+}
+
+.st-cart-section-label {
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.35rem 0.2rem 0.1rem;
+}
+
+.st-cart-section-draft {
+  color: #fca5a5;
+}
+
+.st-cart-section-sent {
+  color: #d4af37;
+  margin-top: 0.4rem;
+}
+
 .st-cart-name {
   font-weight: 800;
   font-size: 0.9rem;
@@ -2091,6 +2118,65 @@ a:hover {
   color: #e2e8f0;
   cursor: pointer;
   touch-action: manipulation;
+}
+
+.st-cart-qty .st-qty-minus {
+  border-color: rgba(248, 113, 113, 0.55);
+  color: #fca5a5;
+}
+
+.st-draft-delete {
+  width: 40px !important;
+  height: 40px !important;
+  border-radius: 10px !important;
+  border: 2px solid #ef4444 !important;
+  background: rgba(239, 68, 68, 0.18) !important;
+  color: #fecaca !important;
+}
+
+.st-cart-qty-locked {
+  gap: 8px;
+}
+
+.st-sent-qty {
+  min-width: 36px;
+  text-align: center;
+  font-weight: 900;
+  color: #e2e8f0;
+}
+
+.st-sent-void {
+  width: 42px !important;
+  height: 42px !important;
+  border-radius: 10px !important;
+  border: 2px solid rgba(212, 175, 55, 0.55) !important;
+  background: rgba(15, 23, 42, 0.9) !important;
+  color: #fbbf24 !important;
+}
+
+.st-send-order-btn {
+  width: 100%;
+  min-height: 72px;
+  border-radius: 14px;
+  border: 2px solid #d4af37;
+  background: linear-gradient(180deg, #f0d78c 0%, #d4af37 55%, #b8922a 100%);
+  color: #0b0f14;
+  font-weight: 900;
+  font-size: 1.05rem;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  touch-action: manipulation;
+  box-shadow: 0 8px 24px rgba(212, 175, 55, 0.28);
+}
+
+.st-send-order-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.st-send-order-btn:not(:disabled):active {
+  transform: scale(0.985);
 }
 
 .st-cart-sum {

@@ -69,21 +69,34 @@ export function tableOpenTotal(table: PosTableTab | null | undefined): number {
   )
 }
 
+/** True when line is locked after KDS dispatch. */
+export function isSentCartLine(line: PosTableTab['lines'][number]): boolean {
+  return line.cartState === 'sent' || line.sentToKds === true
+}
+
 export function mergeCartLine(
   lines: PosTableTab['lines'],
   incoming: PosTableTab['lines'][number]
 ): PosTableTab['lines'] {
   const list = Array.isArray(lines) ? [...lines] : []
+  const draftIncoming = {
+    ...incoming,
+    lineId: incoming.lineId || uid('line'),
+    qty: Math.max(1, incoming.qty),
+    cartState: 'draft' as const,
+    sentToKds: false,
+    sentAt: null,
+    kdsTicketIds: [],
+  }
   // Custom items never merge — each is unique
   if (incoming.isCustom) {
-    return [
-      ...list,
-      { ...incoming, lineId: incoming.lineId || uid('line'), qty: Math.max(1, incoming.qty) },
-    ]
+    return [...list, draftIncoming]
   }
+  // Only merge into other DRAFT lines — never unlock / mutate Sent rows
   const idx = list.findIndex(
     (l) =>
       !l.isCustom &&
+      !isSentCartLine(l) &&
       l.cateringId === incoming.cateringId &&
       l.unitPrice === incoming.unitPrice &&
       l.vatRate === incoming.vatRate
@@ -92,14 +105,15 @@ export function mergeCartLine(
     list[idx] = {
       ...list[idx],
       qty: list[idx].qty + incoming.qty,
-      // New qty must go back to KDS; keep latest waiter stamp
+      cartState: 'draft',
       sentToKds: false,
+      sentAt: null,
       waiterId: incoming.waiterId || list[idx].waiterId,
       waiterName: incoming.waiterName || list[idx].waiterName,
     }
     return list
   }
-  return [...list, { ...incoming, lineId: incoming.lineId || uid('line') }]
+  return [...list, draftIncoming]
 }
 
 /**

@@ -3,6 +3,20 @@ import { persist } from 'zustand/middleware'
 
 /** Default manager PIN for unlocking admin dashboard from staff terminal. */
 export const DEFAULT_MANAGER_PIN = '2580'
+/** Demo / mock PIN accepted for storno voids (in addition to configured PIN). */
+export const MOCK_STORNO_PIN = '1234'
+
+/** Verify manager PIN without unlocking the staff terminal session. */
+export function verifyManagerPin(pin: string, expectedPin?: string): boolean {
+  const cleaned = String(pin ?? '').trim()
+  if (!cleaned) return false
+  const expected = (
+    expectedPin ||
+    useStaffLockStore.getState().managerPin ||
+    DEFAULT_MANAGER_PIN
+  ).trim()
+  return cleaned === expected || cleaned === MOCK_STORNO_PIN
+}
 
 interface StaffLockState {
   /** When true, any non-/pos-terminal route requires Manager PIN. */
@@ -16,6 +30,8 @@ interface StaffLockState {
 
   lockStaffTerminal: () => void
   unlockWithPin: (pin: string, expectedPin?: string) => boolean
+  /** Check PIN only — does not unlock admin / terminal lock. */
+  verifyPin: (pin: string, expectedPin?: string) => boolean
   setManagerPin: (pin: string) => void
   setPendingPath: (path: string | null) => void
   clearAdminUnlock: () => void
@@ -36,8 +52,7 @@ export const useStaffLockStore = create<StaffLockState>()(
         }),
 
       unlockWithPin: (pin, expectedPin) => {
-        const expected = (expectedPin || get().managerPin || DEFAULT_MANAGER_PIN).trim()
-        const ok = pin.trim() === expected
+        const ok = verifyManagerPin(pin, expectedPin || get().managerPin)
         if (ok) {
           set({
             staffTerminalLocked: false,
@@ -47,6 +62,9 @@ export const useStaffLockStore = create<StaffLockState>()(
         }
         return ok
       },
+
+      verifyPin: (pin, expectedPin) =>
+        verifyManagerPin(pin, expectedPin || get().managerPin),
 
       setManagerPin: (pin) => {
         const cleaned = pin.replace(/\D/g, '').slice(0, 8)

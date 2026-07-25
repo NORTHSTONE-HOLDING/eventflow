@@ -200,6 +200,7 @@ interface AppState {
   printers: PosPrinter[]
   kdsTickets: KdsTicket[]
   posOrders: PosOrder[]
+  posAuditLog: PosAuditEntry[]
 
   setView: (view: AppView) => void
   enterApp: (targetView?: AppView) => void

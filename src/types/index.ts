@@ -83,6 +83,10 @@ export type OfflineQueueKind =
   | 'inventory_log'
   | 'recipe_upsert'
   | 'document_sequence'
+  | 'staff_shift_upsert'
+  | 'staff_shift_delete'
+  | 'staff_advance_upsert'
+  | 'staff_payroll_upsert'
 
 export interface OfflineQueueEntry {
   id: string
@@ -183,7 +187,59 @@ export interface ShiftBooking {
   laborCost: number
   attendance: 'confirmed' | 'pending' | 'absent'
   tasks: string[]
-  source: 'ai' | 'manual'
+  source: 'ai' | 'manual' | 'pos'
+}
+
+/** Operational shift row — POS express / Staff manager / Supabase staff_shifts */
+export interface StaffShiftRecord {
+  id: string
+  user_id: string
+  staff_id: string
+  staff_name: string
+  role: string
+  /** YYYY-MM-DD */
+  date: string
+  shift_start: string
+  shift_end: string
+  hours: number
+  hourly_wage: number
+  labor_cost: number
+  source: 'pos' | 'manual' | 'ai'
+  project_id: string | null
+  note: string
+  created_at: string
+  updated_at: string
+}
+
+/** Cash advance (záloha) against a payroll month */
+export interface StaffAdvance {
+  id: string
+  user_id: string
+  staff_id: string
+  staff_name: string
+  amount: number
+  /** YYYY-MM */
+  month_key: string
+  note: string
+  created_at: string
+}
+
+/** Monthly payroll lock — marks wage as fully paid */
+export interface StaffPayrollLock {
+  id: string
+  user_id: string
+  staff_id: string
+  staff_name: string
+  role: string
+  /** YYYY-MM */
+  month_key: string
+  hours: number
+  gross_wage: number
+  advances: number
+  payout: number
+  paid: boolean
+  paid_at: string | null
+  updated_at: string
 }
 
 export interface DocumentIds {

@@ -83,6 +83,8 @@ import {
 import { mergeHybridPosCatalog } from '../lib/inventoryPosBridge'
 import { useDailySpecialStore } from '../store/useDailySpecialStore'
 import { DailySpecialBar } from './pos/DailySpecialBar'
+import { PosShiftExpressInput } from './pos/PosShiftExpressInput'
+import { useStaffShiftStore } from '../store/useStaffShiftStore'
 import {
   resolveTableIdFromHint,
 } from '../lib/voicePosEngine'
@@ -163,8 +165,14 @@ export function EventPOS({ mode = 'admin' }: EventPOSProps) {
   const [flashSecurity, setFlashSecurity] = useState<string | null>(null)
   const [flashAmber, setFlashAmber] = useState<string | null>(null)
   const [voiceStatus, setVoiceStatus] = useState<string | null>(null)
+  const [showShiftPanel, setShowShiftPanel] = useState(true)
+  const bootstrapShifts = useStaffShiftStore((s) => s.bootstrap)
 
   const venueCatalog = useMemo(() => buildVenueMasterCatalog(), [])
+
+  useEffect(() => {
+    void bootstrapShifts()
+  }, [bootstrapShifts])
 
   const project = useMemo(() => migrateProject(activeRaw), [activeRaw])
   const posOpen = isPosUnlocked(project)
@@ -911,6 +919,14 @@ export function EventPOS({ mode = 'admin' }: EventPOSProps) {
             <button type="button" className={showMap ? 'btn btn-gold' : 'btn btn-ghost'} onClick={() => setShowMap((v) => !v)} style={{ minHeight: 48 }}>
               <MapIcon size={15} /> {showMap ? 'Skrýt mapu stolů' : 'Mapa Stolů'}
             </button>
+            <button
+              type="button"
+              className={showShiftPanel ? 'btn btn-gold' : 'btn btn-ghost'}
+              onClick={() => setShowShiftPanel((v) => !v)}
+              style={{ minHeight: 48 }}
+            >
+              <UserRound size={15} /> Zadat směnu personálu
+            </button>
             <button type="button" className="btn btn-ghost" onClick={() => setShowPrinters((v) => !v)} style={{ minHeight: 48 }}>
               <Settings2 size={15} /> Tiskárny
             </button>
@@ -937,12 +953,26 @@ export function EventPOS({ mode = 'admin' }: EventPOSProps) {
           <button type="button" className={showMap ? 'btn btn-gold' : 'btn btn-ghost'} onClick={() => setShowMap((v) => !v)} style={{ minHeight: 48 }}>
             <MapIcon size={15} /> {showMap ? 'Skrýt mapu stolů' : 'Mapa Stolů'}
           </button>
+          <button
+            type="button"
+            className={showShiftPanel ? 'btn btn-gold' : 'btn btn-ghost'}
+            onClick={() => setShowShiftPanel((v) => !v)}
+            style={{ minHeight: 48 }}
+          >
+            <UserRound size={15} /> Zadat směnu personálu
+          </button>
           <button type="button" className="btn btn-ghost" onClick={() => openPosDisplayWindow('/pos/kds/kitchen', 2)} style={{ minHeight: 48 }}>
             <ChefHat size={15} /> Displej KUCHYŇ
           </button>
           <button type="button" className="btn btn-ghost" onClick={() => openPosDisplayWindow('/pos/kds/bar', 2)} style={{ minHeight: 48 }}>
             <Wine size={15} /> Displej BAR
           </button>
+        </div>
+      )}
+
+      {showShiftPanel && (
+        <div style={{ marginBottom: 14 }}>
+          <PosShiftExpressInput />
         </div>
       )}
 

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
 import {
   format,
@@ -35,6 +35,10 @@ import {
 import { formatCurrency } from '../lib/documentIds'
 import type { EventProject } from '../types'
 import { migrateProject } from '../store/useAppStore'
+import {
+  mergeShiftsForDate,
+  useStaffShiftStore,
+} from '../store/useStaffShiftStore'
 
 function safeParseDate(value: string | undefined | null): Date | null {
   if (!value) return null
@@ -59,6 +63,12 @@ export function EventCalendarScheduler({
 }: Props) {
   const [month, setMonth] = useState(() => new Date(2026, 6, 1))
   const [selectedDay, setSelectedDay] = useState<Date | null>(null)
+  const opsShifts = useStaffShiftStore((s) => s.shifts)
+  const bootstrapShifts = useStaffShiftStore((s) => s.bootstrap)
+
+  useEffect(() => {
+    void bootstrapShifts()
+  }, [bootstrapShifts])
 
   const safeProjects = useMemo(
     () =>
@@ -97,11 +107,28 @@ export function EventCalendarScheduler({
   const selectedKey = selectedDay ? toDateKey(selectedDay) : ''
   const selectedEvents = selectedKey ? eventsByDay.get(selectedKey) ?? [] : []
   const selectedShifts = selectedKey
-    ? shiftsForDate(safeProjects, selectedKey)
+    ? mergeShiftsForDate(
+        shiftsForDate(safeProjects, selectedKey),
+        opsShifts,
+        selectedKey,
+      )
     : []
   const selectedLabor = sumShiftLaborCost(selectedShifts)
   const selectedHours = sumShiftHours(selectedShifts)
   const selectedHoliday = selectedDay ? getCzechHolidayName(selectedDay) : null
+
+  const shiftsByDay = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const p of safeProjects) {
+      for (const b of p.shiftBookings ?? []) {
+        map.set(b.date, (map.get(b.date) || 0) + 1)
+      }
+    }
+    for (const s of opsShifts) {
+      map.set(s.date, (map.get(s.date) || 0) + 1)
+    }
+    return map
+  }, [safeProjects, opsShifts])
 
   return (
     <>
@@ -201,6 +228,8 @@ export function EventCalendarScheduler({
             const key = toDateKey(day)
             const dayEvents = eventsByDay.get(key) ?? []
             const hasEvent = dayEvents.length > 0
+            const shiftCount = shiftsByDay.get(key) || 0
+            const hasShifts = shiftCount > 0
             const holiday = getCzechHolidayName(day)
             const weekend = isWeekend(day)
             const today = isToday(day)
@@ -217,22 +246,24 @@ export function EventCalendarScheduler({
                   borderRadius: 10,
                   border: today
                     ? '2px solid #D4AF37'
-                    : hasEvent
+                    : hasEvent || hasShifts
                       ? '1px solid rgba(212,175,55,0.55)'
                       : '1px solid #1e293b',
                   background: hasEvent
                     ? 'rgba(212,175,55,0.14)'
-                    : weekend
-                      ? 'rgba(30, 41, 59, 0.55)'
-                      : holiday
-                        ? 'rgba(212,175,55,0.06)'
-                        : '#0f172a',
+                    : hasShifts
+                      ? 'rgba(16,185,129,0.12)'
+                      : weekend
+                        ? 'rgba(30, 41, 59, 0.55)'
+                        : holiday
+                          ? 'rgba(212,175,55,0.06)'
+                          : '#0f172a',
                   boxShadow: hasEvent
                     ? '0 0 14px rgba(212,175,55,0.22)'
                     : weekend
                       ? 'inset 0 0 0 1px rgba(212,175,55,0.06)'
                       : 'none',
-                  color: hasEvent ? '#D4AF37' : '#e2e8f0',
+                  color: hasEvent || hasShifts ? '#D4AF37' : '#e2e8f0',
                   cursor: 'pointer',
                   touchAction: 'manipulation',
                   textAlign: 'left',
@@ -309,6 +340,22 @@ export function EventCalendarScheduler({
                     {dayEvents.length > 1 ? ` +${dayEvents.length - 1}` : ''}
                   </div>
                 )}
+                {hasShifts && (
+                  <div
+                    style={{
+                      marginTop: hasEvent ? 2 : 'auto',
+                      fontSize: '0.55rem',
+                      fontWeight: 800,
+                      color: '#04140e',
+                      background: '#10b981',
+                      borderRadius: 6,
+                      padding: '2px 4px',
+                    }}
+                    title={`${shiftCount} směn`}
+                  >
+                    {shiftCount} směn
+                  </div>
+                )}
               </button>
             )
           })}
@@ -338,6 +385,7 @@ export function EventCalendarScheduler({
           }}
         >
           <span style={{ color: '#D4AF37' }}>● Aktivní akce</span>
+          <span style={{ color: '#34d399' }}>● Směny personálu</span>
           <span>● Víkend</span>
           <span>
             <span
@@ -382,41 +430,42 @@ export function EventCalendarScheduler({
           </div>
         )}
 
-        {selectedEvents.length === 0 ? (
-          <div
-            style={{
-              textAlign: 'center',
-              padding: '2rem 1rem',
-              background: '#0f172a',
-              borderRadius: 14,
-              border: '1px dashed #334155',
-            }}
-          >
-            <p
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {selectedEvents.length === 0 && (
+            <div
               style={{
-                color: '#94a3b8',
-                fontWeight: 700,
-                marginBottom: 16,
-                fontSize: '1rem',
+                textAlign: 'center',
+                padding: '1.5rem 1rem',
+                background: '#0f172a',
+                borderRadius: 14,
+                border: '1px dashed #334155',
               }}
             >
-              Žádné plánované akce na tento den.
-            </p>
-            <button
-              type="button"
-              className="btn btn-gold"
-              style={{ minHeight: 48, fontWeight: 900 }}
-              onClick={() => {
-                setSelectedDay(null)
-                onOpenPlanner()
-              }}
-            >
-              <Sparkles size={16} /> ➕ Vytvořit novou akci
-            </button>
-          </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            {selectedEvents.map((event) => (
+              <p
+                style={{
+                  color: '#94a3b8',
+                  fontWeight: 700,
+                  marginBottom: 16,
+                  fontSize: '1rem',
+                }}
+              >
+                Žádné plánované akce na tento den.
+              </p>
+              <button
+                type="button"
+                className="btn btn-gold"
+                style={{ minHeight: 48, fontWeight: 900 }}
+                onClick={() => {
+                  setSelectedDay(null)
+                  onOpenPlanner()
+                }}
+              >
+                <Sparkles size={16} /> ➕ Vytvořit novou akci
+              </button>
+            </div>
+          )}
+
+          {selectedEvents.map((event) => (
               <motion.div
                 key={event.id}
                 initial={{ opacity: 0, y: 8 }}
@@ -619,12 +668,11 @@ export function EventCalendarScheduler({
                 <span style={{ color: '#D4AF37' }}>{formatCurrency(selectedLabor)}</span>
               </div>
               <p style={{ marginTop: 8, fontSize: '0.75rem', color: '#94a3b8', fontWeight: 600 }}>
-                Náklady se automaticky propsaly do rozpočtu akce (řádek Personál) a grafů marží na
-                Dashboardu.
+                Směny z POS / Personálu se synchronizují v reálném čase · jméno, role, hodiny a denní
+                mzdový náklad.
               </p>
             </div>
-          </div>
-        )}
+        </div>
 
         <style>{`
           @media (max-width: 640px) {

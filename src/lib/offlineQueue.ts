@@ -1,7 +1,15 @@
-import type { OfflineQueueEntry, OfflineQueueKind } from '../types'
+import type {
+  InventoryItem,
+  InventoryLog,
+  OfflineQueueEntry,
+  OfflineQueueKind,
+  RecipeIngredientRecord,
+  StaffAdvance,
+  StaffPayrollLock,
+  StaffShiftRecord,
+} from '../types'
 import { uid } from './documentIds'
 import { getInventorySyncMode, getSupabase, probeSupabaseConnection } from './supabase'
-import type { InventoryItem, InventoryLog, RecipeIngredientRecord } from '../types'
 
 const QUEUE_KEY = 'eventflow-offline-queue'
 
@@ -137,6 +145,74 @@ async function flushOne(entry: OfflineQueueEntry): Promise<{ ok: boolean; error?
         year: payload.year,
         last_sequence: payload.last_sequence,
         updated_at: new Date().toISOString(),
+      })
+      if (error) return { ok: false, error: error.message }
+      return { ok: true }
+    }
+
+    if (entry.kind === 'staff_shift_upsert') {
+      const s = entry.payload as StaffShiftRecord
+      const { error } = await sb.from('staff_shifts').upsert({
+        id: s.id,
+        user_id: s.user_id,
+        staff_id: s.staff_id,
+        staff_name: s.staff_name,
+        role: s.role,
+        date: s.date,
+        shift_start: s.shift_start,
+        shift_end: s.shift_end,
+        hours: s.hours,
+        hourly_wage: s.hourly_wage,
+        labor_cost: s.labor_cost,
+        source: s.source,
+        project_id: s.project_id,
+        note: s.note,
+        created_at: s.created_at,
+        updated_at: s.updated_at,
+      })
+      if (error) return { ok: false, error: error.message }
+      return { ok: true }
+    }
+
+    if (entry.kind === 'staff_shift_delete') {
+      const payload = entry.payload as { id: string }
+      const { error } = await sb.from('staff_shifts').delete().eq('id', payload.id)
+      if (error) return { ok: false, error: error.message }
+      return { ok: true }
+    }
+
+    if (entry.kind === 'staff_advance_upsert') {
+      const a = entry.payload as StaffAdvance
+      const { error } = await sb.from('staff_advances').upsert({
+        id: a.id,
+        user_id: a.user_id,
+        staff_id: a.staff_id,
+        staff_name: a.staff_name,
+        amount: a.amount,
+        month_key: a.month_key,
+        note: a.note,
+        created_at: a.created_at,
+      })
+      if (error) return { ok: false, error: error.message }
+      return { ok: true }
+    }
+
+    if (entry.kind === 'staff_payroll_upsert') {
+      const p = entry.payload as StaffPayrollLock
+      const { error } = await sb.from('staff_payroll').upsert({
+        id: p.id,
+        user_id: p.user_id,
+        staff_id: p.staff_id,
+        staff_name: p.staff_name,
+        role: p.role,
+        month_key: p.month_key,
+        hours: p.hours,
+        gross_wage: p.gross_wage,
+        advances: p.advances,
+        payout: p.payout,
+        paid: p.paid,
+        paid_at: p.paid_at,
+        updated_at: p.updated_at,
       })
       if (error) return { ok: false, error: error.message }
       return { ok: true }

@@ -162,14 +162,27 @@ export function syncProjectShiftsAndBudget(project: EventProject): EventProject 
     ? project.shiftBookings
     : []
 
-  // Rebuild from staff when missing or date drifted
+  const hasProtected = bookings.some(
+    (b) => b.source === 'manual' || b.source === 'pos',
+  )
+
+  // Rebuild AI roster only when empty / unprotected drift — never wipe POS/manual rows
   const needsRebuild =
     !bookings.length ||
-    (dateKey && bookings.some((b) => b.date !== dateKey)) ||
-    (project.staff?.length || 0) !== bookings.length
+    (!hasProtected &&
+      ((dateKey && bookings.some((b) => b.date !== dateKey)) ||
+        (project.staff?.length || 0) !== bookings.length))
 
   if (needsRebuild && (project.staff?.length || 0) > 0) {
-    bookings = bookShiftsFromStaff(project, bookings.length ? 'manual' : 'ai')
+    const rebuilt = bookShiftsFromStaff(project, bookings.length ? 'manual' : 'ai')
+    if (hasProtected) {
+      const protectedRows = bookings.filter(
+        (b) => b.source === 'manual' || b.source === 'pos',
+      )
+      bookings = [...protectedRows, ...rebuilt]
+    } else {
+      bookings = rebuilt
+    }
   }
 
   return applyLaborToProjectFinancials({

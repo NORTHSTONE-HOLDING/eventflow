@@ -3181,11 +3181,116 @@ a:hover {
   text-align: center;
 }
 
+/* Mobilní číšník — Zpět na přehled stolů (thumb-safe, emerald/gold) */
+.st-mobile-back-bar {
+  position: sticky;
+  top: 0;
+  z-index: 45;
+  display: flex;
+  align-items: stretch;
+  padding: 0.35rem 0;
+  background: linear-gradient(180deg, rgba(7, 10, 14, 0.96), rgba(7, 10, 14, 0.88));
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+.st-mobile-back-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  width: 100%;
+  min-height: 52px;
+  min-width: 48px;
+  padding: 0.7rem 1rem;
+  border-radius: 14px;
+  border: 1.5px solid rgba(212, 175, 55, 0.55);
+  background:
+    linear-gradient(135deg, rgba(16, 185, 129, 0.22), rgba(212, 175, 55, 0.12)),
+    #0f172a;
+  color: #e8c86a;
+  font-size: 0.95rem;
+  font-weight: 900;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  touch-action: manipulation;
+  box-shadow:
+    0 0 0 1px rgba(16, 185, 129, 0.2),
+    0 8px 22px rgba(0, 0, 0, 0.35);
+  transition: transform 0.12s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.st-mobile-back-btn:hover {
+  border-color: #d4af37;
+  color: #f5e6a8;
+  box-shadow: 0 0 24px rgba(212, 175, 55, 0.28);
+}
+
+.st-mobile-back-btn:active {
+  transform: scale(0.985);
+}
+
+.st-mobile-back-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  border-radius: 10px;
+  border: 1px solid rgba(16, 185, 129, 0.45);
+  background: rgba(16, 185, 129, 0.18);
+  color: #34d399;
+}
+
+.st-mobile-back-label {
+  flex: 1;
+  text-align: left;
+  color: #d4af37;
+}
+
+.st-mobile-order-back-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 0.85rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid rgba(212, 175, 55, 0.2);
+}
+
+.st-mobile-back-btn-compact {
+  width: auto;
+  min-width: 48px;
+  min-height: 48px;
+  padding: 0.55rem 0.85rem;
+  flex-shrink: 0;
+}
+
+.st-mobile-order-back-meta {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.88rem;
+  font-weight: 800;
+  color: #e8c86a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Mobilní číšník — single-column thumb reach */
 .staff-terminal-mobile .st-grid {
   grid-template-columns: 1fr;
   min-height: auto;
   gap: 12px;
+}
+
+.staff-terminal-mobile.st-mobile-map-focus .st-center,
+.staff-terminal-mobile.st-mobile-map-focus .st-right {
+  display: none;
+}
+
+.staff-terminal-mobile.st-mobile-map-focus .st-left {
+  order: 1;
 }
 
 .staff-terminal-mobile .st-left,

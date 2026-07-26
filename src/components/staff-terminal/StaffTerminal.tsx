@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Bell,
+  ChevronLeft,
   Flag,
   Map as MapIcon,
   Minus,
@@ -365,6 +366,26 @@ export function StaffTerminal() {
     setWorkspaceTableId(null)
     if (project) updateProject(project.id, { activeTableId: null })
   }, [project, setWorkspaceTableId, updateProject])
+
+  /**
+   * Mobilní číšník — Zpět na přehled stolů.
+   * Closes cart/checkout detail, clears table focus, keeps single-column mobile layout.
+   */
+  const backToMobileTableOverview = useCallback(() => {
+    tapFeedback() // beep + navigator.vibrate(15)
+    setCheckoutOpen(false)
+    setQuickSale(false)
+    setMapFocus(true)
+    setActiveSeatIndex(null)
+    setWorkspaceTableId(null)
+    if (project) updateProject(project.id, { activeTableId: null })
+    setNavTab('mobile')
+    persistMobileOverride(true)
+    setToast('⬅ Přehled stolů — vyberte salonek nebo stůl')
+    if (typeof window !== 'undefined') {
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    }
+  }, [project, setWorkspaceTableId, updateProject, setToast])
 
   const resetTerminalAfterClosure = useCallback(() => {
     // ShiftFinance startNewShift already ran inside embedded hub close protocol
@@ -869,9 +890,14 @@ export function StaffTerminal() {
     )
   }
 
+  const mobileMapOverview =
+    isMobileWaiter && mapFocus && !quickSale && !checkoutOpen
+
   return (
     <div
-      className={`staff-terminal${isMobileWaiter ? ' staff-terminal-mobile' : ''}`}
+      className={`staff-terminal${isMobileWaiter ? ' staff-terminal-mobile' : ''}${
+        mobileMapOverview ? ' st-mobile-map-focus' : ''
+      }`}
     >
       {waiterLoggedOut && (
         <div className="st-waiter-login-gate panel" role="dialog" aria-modal="true">
@@ -1002,6 +1028,22 @@ export function StaffTerminal() {
         </div>
       )}
 
+      {isMobileWaiter && (activeTable || quickSale || checkoutOpen) && (
+        <div className="st-mobile-back-bar" role="navigation" aria-label="Navigace zpět">
+          <button
+            type="button"
+            className="st-mobile-back-btn"
+            onClick={backToMobileTableOverview}
+            aria-label="Zpět na přehled stolů"
+          >
+            <span className="st-mobile-back-chevron" aria-hidden>
+              <ChevronLeft size={22} strokeWidth={2.75} />
+            </span>
+            <span className="st-mobile-back-label">⬅ Zpět na přehled stolů</span>
+          </button>
+        </div>
+      )}
+
       {myReady.length > 0 && (
         <div className="st-ready-list">
           {myReady.map((a) => (
@@ -1022,7 +1064,7 @@ export function StaffTerminal() {
 
       <div className="st-grid">
         {/* LEFT (~22%) — spaces + table map */}
-        <aside className="st-left panel st-col-left">
+        <aside className="st-left st-col-left">
           <div className="st-section-title">
             <MapIcon size={16} color="#D4AF37" /> 🗺️ Mapa stolů & Salónky
           </div>
@@ -1130,7 +1172,27 @@ export function StaffTerminal() {
         </aside>
 
         {/* CENTER (~52%) — catalog + category nav */}
-        <main className="st-center panel st-col-center">
+        <main className="st-center st-col-center">
+          {isMobileWaiter && (activeTable || quickSale) && (
+            <div className="st-mobile-order-back-row">
+              <button
+                type="button"
+                className="st-mobile-back-btn st-mobile-back-btn-compact"
+                onClick={backToMobileTableOverview}
+                aria-label="Zpět na přehled stolů"
+              >
+                <ChevronLeft size={20} strokeWidth={2.75} />
+                <span>Zpět</span>
+              </button>
+              <div className="st-mobile-order-back-meta">
+                {quickSale
+                  ? 'Rychlý prodej'
+                  : activeTable
+                    ? `${activeTable.label} · ${spaceLabel}`
+                    : 'Objednávka'}
+              </div>
+            </div>
+          )}
           {quickSale && (
             <div className="st-quick-banner" role="status">
               <Zap size={16} color="#D4AF37" />
@@ -1259,7 +1321,7 @@ export function StaffTerminal() {
         </main>
 
         {/* RIGHT (~26%) — live cart locked to active table */}
-        <aside className="st-right panel st-col-right">
+        <aside className="st-right st-col-right">
           <div className="st-cart-header">{cartHeader}</div>
           {!quickSale && activeTable && (
             <div className="st-cart-seat-focus">

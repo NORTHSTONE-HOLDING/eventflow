@@ -646,6 +646,10 @@ export function openThermalHtmlPrintWindow(html: string, _title: string) {
     `<!doctype html><html lang="cs"><head><meta charset="utf-8"/><title>Účtenka</title></head>
 <body style="font-family:monospace;padding:12px;color:#000;background:#fff">
 <strong>Účtenka není k dispozici</strong><br/>Chybí data dokladu.
+<script>window.onload=function(){setTimeout(function(){window.print()},200)}</script>
 </body></html>`
-  writeAndPrintHtml(win, safeHtml, 240)
+  // Receipt HTML often embeds window.print(); skip host autoPrint to avoid double dialogs
+  writeAndPrintHtml(win, safeHtml, 240, {
+    autoPrint: !/window\.print\s*\(/.test(safeHtml),
+  })
 }

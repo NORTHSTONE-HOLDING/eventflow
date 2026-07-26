@@ -214,7 +214,7 @@ interface AppState {
   registerAgency: (profile: AgencyProfile) => void
   setSubscription: (tier: SubscriptionTier) => void
 
-  createFromPrompt: (prompt: string) => Promise<EventProject>
+  createFromPrompt: (prompt: string, attachments?: File[]) => Promise<EventProject>
   setActiveProject: (id: string | null) => void
   updateProject: (id: string, patch: Partial<EventProject>) => void
   updateTimeline: (projectId: string, timeline: TimelineItem[]) => void
@@ -380,11 +380,15 @@ export const useAppStore = create<AppState>()(
       setSubscription: (tier) =>
         set((s) => ({ profile: { ...s.profile, subscription: tier } })),
 
-      createFromPrompt: async (prompt) => {
+      createFromPrompt: async (prompt, attachments = []) => {
         set({ aiLoading: true, showHero: false })
         try {
           const seq = await allocateDocumentSequence(get().projects)
-          const project = await generateEventFromPrompt(prompt)
+          const files = Array.isArray(attachments) ? attachments.filter(Boolean) : []
+          const project = await generateEventFromPrompt(prompt, {
+            useOpenAI: true,
+            attachments: files,
+          })
           project.documents = generateDocumentIds(seq)
           setDocumentSequence(seq + 1)
           const synced = migrateProject(project)!
@@ -400,8 +404,11 @@ export const useAppStore = create<AppState>()(
           })
           // Link catering recipes → inventory for POS odepis
           void useInventoryStore.getState().syncRecipesFromProjects([synced])
+          const attachNote = files.length
+            ? ` · podklady: ${files.length} soubor${files.length === 1 ? '' : files.length < 5 ? 'y' : 'ů'}`
+            : ''
           get().setToast(
-            `Projekt vytvořen — ${synced.documents.nabidka} · směny v kalendáři: ${synced.shiftBookings?.length || 0}`
+            `Projekt vytvořen — ${synced.documents.nabidka} · směny v kalendáři: ${synced.shiftBookings?.length || 0}${attachNote}`
           )
           return synced
         } catch (e) {

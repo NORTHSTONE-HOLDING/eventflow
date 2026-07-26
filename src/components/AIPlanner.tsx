@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { motion, Reorder } from 'framer-motion'
 import {
   Sparkles,
@@ -8,26 +8,84 @@ import {
   Utensils,
   ListChecks,
   Loader2,
+  Camera,
+  X,
 } from 'lucide-react'
 import { useAppStore, selectActiveProject } from '../store/useAppStore'
 import { formatCurrency } from '../lib/documentIds'
+import { BUDGET_UPLOAD_ACCEPT } from '../lib/budgetDocumentParser'
+import { tapFeedback } from '../lib/touchFeedback'
 import type { AgencyProfile, CateringItem, ChecklistItem, EventProject, TimelineItem } from '../types'
+
+const MAX_BUDGET_FILES = 8
+
+function isAllowedBudgetFile(file: File): boolean {
+  const name = file.name.toLowerCase()
+  if (file.type.startsWith('image/')) return true
+  if (file.type === 'application/pdf' || name.endsWith('.pdf')) return true
+  if (
+    name.endsWith('.xlsx') ||
+    name.endsWith('.xls') ||
+    name.endsWith('.csv') ||
+    file.type.includes('sheet') ||
+    file.type.includes('excel') ||
+    file.type === 'text/csv'
+  ) {
+    return true
+  }
+  return false
+}
 
 export function AIPlanner() {
   const [prompt, setPrompt] = useState(
     'Firemní večírek pro 180 lidí v Praze s rozpočtem 450 000 Kč.'
   )
+  const [attachments, setAttachments] = useState<File[]>([])
+  const [dragOver, setDragOver] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const cameraInputRef = useRef<HTMLInputElement>(null)
   const createFromPrompt = useAppStore((s) => s.createFromPrompt)
   const aiLoading = useAppStore((s) => s.aiLoading)
+  const setToast = useAppStore((s) => s.setToast)
   const project = useAppStore(selectActiveProject)
   const updateTimeline = useAppStore((s) => s.updateTimeline)
   const updateChecklist = useAppStore((s) => s.updateChecklist)
   const profile = useAppStore((s) => s.profile)
   const [tab, setTab] = useState<'timeline' | 'budget' | 'catering' | 'checklist'>('timeline')
 
+  const addFiles = (list: FileList | File[] | null) => {
+    if (!list) return
+    const incoming = Array.from(list).filter(isAllowedBudgetFile)
+    if (!incoming.length) {
+      setToast('Podporované formáty: PDF, Excel/CSV a fotky rozpočtu')
+      return
+    }
+    setAttachments((prev) => {
+      const next = [...prev]
+      for (const file of incoming) {
+        const dup = next.some((f) => f.name === file.name && f.size === file.size)
+        if (!dup) next.push(file)
+      }
+      if (next.length > MAX_BUDGET_FILES) {
+        setToast(`Maximálně ${MAX_BUDGET_FILES} souborů najednou`)
+        return next.slice(0, MAX_BUDGET_FILES)
+      }
+      return next
+    })
+    tapFeedback('default')
+  }
+
+  const removeFile = (index: number) => {
+    setAttachments((prev) => prev.filter((_, i) => i !== index))
+    tapFeedback('default')
+  }
+
   const handleGenerate = async () => {
-    if (!prompt.trim() || aiLoading) return
-    await createFromPrompt(prompt.trim())
+    if ((!prompt.trim() && !attachments.length) || aiLoading) return
+    const text =
+      prompt.trim() ||
+      'Vygeneruj akci z nahraných podkladů rozpočtu (PDF / Excel / foto).'
+    await createFromPrompt(text, attachments)
     setTab('timeline')
   }
 
@@ -35,20 +93,130 @@ export function AIPlanner() {
     <div style={{ animation: 'fadeUp 0.4s ease' }}>
       <h1 className="section-title gold-text">Neural AI Planner</h1>
       <p className="section-sub">
-        Zadejte přirozený český prompt — AI vytvoří harmonogram, rozpočet, catering i checklist.
+        Zadejte český prompt a/nebo nahrajte starší rozpočet — AI synchronizuje harmonogram,
+        multi-sazbové DPH, catering i checklist.
       </p>
 
       <div className="panel" style={{ marginBottom: 24 }}>
-        <label className="label">AI Prompt</label>
-        <textarea
-          className="textarea"
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          placeholder='např. "Svatba pro 80 lidí v Brně s rozpočtem 280 000 Kč."'
-          style={{ minHeight: 90 }}
-        />
-        <div style={{ display: 'flex', gap: 10, marginTop: 12, flexWrap: 'wrap' }}>
-          <button className="btn btn-gold" onClick={handleGenerate} disabled={aiLoading}>
+        <div className="ai-planner-input-grid">
+          <div>
+            <label className="label">AI Prompt</label>
+            <textarea
+              className="textarea"
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              placeholder='např. "Firemní večírek pro 180 lidí v Praze s rozpočtem 450 000 Kč."'
+              style={{ minHeight: 120 }}
+            />
+          </div>
+
+          <div>
+            <label className="label">Podklady pro rozpočet</label>
+            <div
+              className={`ai-planner-dropzone${dragOver ? ' is-dragover' : ''}`}
+              role="button"
+              tabIndex={0}
+              onClick={() => fileInputRef.current?.click()}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  fileInputRef.current?.click()
+                }
+              }}
+              onDragOver={(e) => {
+                e.preventDefault()
+                setDragOver(true)
+              }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={(e) => {
+                e.preventDefault()
+                setDragOver(false)
+                addFiles(e.dataTransfer.files)
+              }}
+            >
+              <div className="ai-planner-dropzone-label">
+                📎 Nahrát / Vyfotit podklady pro rozpočet
+              </div>
+              <div className="ai-planner-dropzone-hint">
+                PDF, Excel (.xlsx/.xls/.csv) nebo fotka staršího rozpočtu / event sheetu.
+                gpt-4o-mini vytěží náklady, dodavatele a layout — při výpadku klíče běží bezpečná
+                simulace.
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  style={{ flex: 1, minWidth: 120 }}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    fileInputRef.current?.click()
+                  }}
+                >
+                  Vybrat soubory
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  style={{ flex: 1, minWidth: 120 }}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    cameraInputRef.current?.click()
+                  }}
+                >
+                  <Camera size={14} /> Fotoaparát
+                </button>
+              </div>
+            </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept={BUDGET_UPLOAD_ACCEPT}
+              multiple
+              hidden
+              onChange={(e) => {
+                addFiles(e.target.files)
+                e.target.value = ''
+              }}
+            />
+            <input
+              ref={cameraInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              hidden
+              onChange={(e) => {
+                addFiles(e.target.files)
+                e.target.value = ''
+              }}
+            />
+          </div>
+        </div>
+
+        {attachments.length > 0 && (
+          <div className="ai-planner-file-chips">
+            {attachments.map((file, index) => (
+              <div key={`${file.name}-${file.size}-${index}`} className="ai-planner-file-chip">
+                <span title={file.name}>
+                  {file.name} · {(file.size / 1024).toFixed(0)} kB
+                </span>
+                <button
+                  type="button"
+                  aria-label={`Odebrat ${file.name}`}
+                  onClick={() => removeFile(index)}
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: 10, marginTop: 14, flexWrap: 'wrap' }}>
+          <button
+            className="btn btn-gold"
+            onClick={() => void handleGenerate()}
+            disabled={aiLoading || (!prompt.trim() && !attachments.length)}
+          >
             {aiLoading ? (
               <>
                 <Loader2 size={16} className="spin" /> Generuji akci…

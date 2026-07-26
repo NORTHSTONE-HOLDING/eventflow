@@ -3,7 +3,7 @@ import { motion } from 'framer-motion'
 import { Check, Crown, Lock, Shield, Unlock } from 'lucide-react'
 import { useAppStore } from '../store/useAppStore'
 import { useStaffLockStore } from '../store/useStaffLockStore'
-import { SUBSCRIPTION_PLANS } from '../lib/subscriptions'
+import { SUBSCRIPTION_PLANS, TIER_RANK } from '../lib/subscriptions'
 import { Modal } from './Modal'
 import { ManagerPinKeypadModal } from './staff-terminal/ManagerPinKeypadModal'
 import { tapFeedback } from '../lib/touchFeedback'
@@ -402,18 +402,20 @@ export function ProfileSettings() {
         </div>
       </div>
 
-      <h3 style={{ fontSize: '1.35rem', marginBottom: 8 }}>Předplatné — 4 úrovně</h3>
+      <h3 style={{ fontSize: '1.35rem', marginBottom: 8 }}>Ceník / Předplatné</h3>
       <p style={{ color: 'var(--text-muted)', marginBottom: 16, fontSize: '0.9rem' }}>
         Otestujte gating funkcí změnou tarifu. Aktivní: <span className="badge badge-gold">{form.subscription}</span>
       </p>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 14 }}>
+      <div className="pricing-tier-grid">
         {SUBSCRIPTION_PLANS.map((plan) => {
           const active = form.subscription === plan.id
+          const isUpgrade =
+            !active && (TIER_RANK[plan.id] ?? 0) > (TIER_RANK[form.subscription] ?? 0)
           return (
             <motion.div
               key={plan.id}
-              className="panel glass-glow"
+              className="panel glass-glow pricing-tier-card"
               whileHover={{ y: -4 }}
               style={{
                 position: 'relative',
@@ -426,24 +428,26 @@ export function ProfileSettings() {
                   <Crown size={10} /> Popular
                 </div>
               )}
-              <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.4rem', color: 'var(--gold)' }}>
-                {plan.name}
+              <div className="pricing-tier-body">
+                <div style={{ fontFamily: 'var(--font-display)', fontSize: '1.4rem', color: 'var(--gold)' }}>
+                  {plan.name}
+                </div>
+                <div style={{ margin: '8px 0 16px' }}>
+                  <span style={{ fontSize: '1.75rem', fontWeight: 600 }}>{formatCurrency(plan.price)}</span>
+                  <span style={{ color: 'var(--text-dim)', fontSize: '0.8rem' }}> / {plan.period}</span>
+                </div>
+                <ul className="pricing-tier-features">
+                  {plan.features.map((f) => (
+                    <li key={f} style={{ display: 'flex', gap: 8, fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+                      <Check size={14} color="var(--gold)" style={{ flexShrink: 0, marginTop: 2 }} />
+                      {f}
+                    </li>
+                  ))}
+                </ul>
               </div>
-              <div style={{ margin: '8px 0 16px' }}>
-                <span style={{ fontSize: '1.75rem', fontWeight: 600 }}>{formatCurrency(plan.price)}</span>
-                <span style={{ color: 'var(--text-dim)', fontSize: '0.8rem' }}> / {plan.period}</span>
-              </div>
-              <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
-                {plan.features.map((f) => (
-                  <li key={f} style={{ display: 'flex', gap: 8, fontSize: '0.82rem', color: 'var(--text-muted)' }}>
-                    <Check size={14} color="var(--gold)" style={{ flexShrink: 0, marginTop: 2 }} />
-                    {f}
-                  </li>
-                ))}
-              </ul>
               <button
                 className={active ? 'btn btn-ghost' : 'btn btn-gold'}
-                style={{ width: '100%' }}
+                style={{ width: '100%', marginTop: 'auto' }}
                 onClick={() => {
                   set('subscription', plan.id)
                   setSubscription(plan.id)
@@ -452,7 +456,7 @@ export function ProfileSettings() {
                 }}
                 disabled={active}
               >
-                {active ? 'Aktivní' : 'Vybrat'}
+                {active ? 'Aktivní' : isUpgrade ? 'Upgrade' : 'Aktivovat tarif'}
               </button>
             </motion.div>
           )

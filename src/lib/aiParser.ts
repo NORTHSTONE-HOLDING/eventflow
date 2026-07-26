@@ -1,4 +1,5 @@
 import type {
+  BudgetLine,
   CateringItem,
   ChecklistItem,
   EventProject,
@@ -6,6 +7,14 @@ import type {
   TimelineItem,
 } from '../types'
 import { calculateBudget, optimizeBudgetRecommendations } from './budgetEngine'
+import {
+  parseBudgetDocuments,
+  summarizeBudgetExtract,
+  toBudgetLines,
+  toCateringItems,
+  toTimelineItems,
+  type BudgetDocumentExtract,
+} from './budgetDocumentParser'
 import { generateDocumentIds, uid } from './documentIds'
 import { buildWarehouseFromCatering } from './inventoryEngine'
 import { bookShiftsFromStaff, applyLaborToProjectFinancials } from './shiftScheduler'
@@ -14,6 +23,13 @@ import {
   openAiMessageContent,
   openaiChatCompletions,
 } from './openaiClient'
+
+export interface GenerateEventOptions {
+  /** Prefer OpenAI when venue key is present (default true). */
+  useOpenAI?: boolean
+  /** PDF / Excel / image snapshots of older budgets. */
+  attachments?: File[]
+}
 
 export interface ParsedPrompt {
   guests: number
@@ -346,13 +362,49 @@ function defaultStaff(guests: number): StaffMember[] {
   }))
 }
 
+function financialsFromLines(lines: BudgetLine[], fallbackBudget: number) {
+  const totalCost = lines.filter((l) => l.isCost).reduce((s, l) => s + l.amount, 0)
+  const revenue =
+    lines.filter((l) => !l.isCost).reduce((s, l) => s + l.amount, 0) || fallbackBudget
+  const netProfit = revenue - totalCost
+  const margin = revenue > 0 ? (netProfit / revenue) * 100 : 0
+  return { totalCost, revenue, netProfit, margin }
+}
+
+function mergePromptWithExtract(
+  parsed: ParsedPrompt,
+  extract: BudgetDocumentExtract | null,
+): ParsedPrompt {
+  if (!extract) return parsed
+  const guests = extract.guests && extract.guests > 0 ? extract.guests : parsed.guests
+  const location = extract.location || parsed.location
+  const budget = extract.budget && extract.budget > 0 ? extract.budget : parsed.budget
+  const eventType = extract.eventType || parsed.eventType
+  const name =
+    extract.name ||
+    `${eventType} — ${location} (${guests} hostů)`
+  return { ...parsed, guests, location, budget, eventType, name }
+}
+
 export async function generateEventFromPrompt(
   prompt: string,
-  useOpenAI = false
+  options: GenerateEventOptions | boolean = {},
 ): Promise<EventProject> {
-  let parsed = parseCzechPrompt(prompt)
+  // Backward-compatible: second arg used to be `useOpenAI: boolean`
+  const opts: GenerateEventOptions =
+    typeof options === 'boolean' ? { useOpenAI: options } : options ?? {}
+  const useOpenAI = opts.useOpenAI !== false
+  const attachments = Array.isArray(opts.attachments) ? opts.attachments.filter(Boolean) : []
 
-  if (useOpenAI && hasVenueOpenAiKey()) {
+  let parsed = parseCzechPrompt(prompt)
+  let documentExtract: BudgetDocumentExtract | null = null
+
+  if (attachments.length) {
+    documentExtract = await parseBudgetDocuments(attachments, prompt)
+    parsed = mergePromptWithExtract(parsed, documentExtract)
+  }
+
+  if (useOpenAI && hasVenueOpenAiKey() && prompt.trim()) {
     try {
       const chat = await openaiChatCompletions({
         model: 'gpt-4o-mini',
@@ -371,6 +423,8 @@ export async function generateEventFromPrompt(
         if (raw) {
           const content = JSON.parse(raw) as Partial<ParsedPrompt>
           parsed = { ...parsed, ...content, date: parsed.date }
+          // Document extract remains authoritative for structured budget merge
+          parsed = mergePromptWithExtract(parsed, documentExtract)
         }
       }
     } catch {
@@ -378,25 +432,80 @@ export async function generateEventFromPrompt(
     }
   }
 
-  await new Promise((r) => setTimeout(r, 1200))
+  if (!attachments.length) {
+    await new Promise((r) => setTimeout(r, 1200))
+  }
 
   const budget = calculateBudget(parsed.guests, parsed.budget, parsed.location)
   const docs = generateDocumentIds()
-  const catering = defaultCatering(parsed.guests)
+
+  let timeline: TimelineItem[] = defaultTimeline()
+  let budgetLines: BudgetLine[] = budget.lines
+  let catering: CateringItem[] = defaultCatering(parsed.guests)
+  let totalCost = budget.totalCost
+  let totalRevenue = budget.revenue
+  let netProfit = budget.netProfit
+  let margin = budget.margin
+
+  if (documentExtract) {
+    if (documentExtract.timeline.length) {
+      timeline = toTimelineItems(documentExtract.timeline)
+    }
+    if (documentExtract.budgetLines.length) {
+      budgetLines = toBudgetLines(documentExtract.budgetLines)
+      const hasRevenue = budgetLines.some((l) => !l.isCost)
+      if (!hasRevenue) {
+        budgetLines = [
+          ...budgetLines,
+          {
+            id: uid('bl'),
+            category: 'Výnos',
+            description: 'Celková cena zakázky (z podkladů)',
+            amount: parsed.budget,
+            vatRate: 21,
+            isCost: false,
+          },
+        ]
+      }
+      if (documentExtract.suppliers.length) {
+        const supplierNote = documentExtract.suppliers.join(', ')
+        budgetLines = budgetLines.map((line, idx) =>
+          idx === 0 && line.isCost
+            ? {
+                ...line,
+                description: `${line.description} · Dodavatelé: ${supplierNote}`,
+              }
+            : line,
+        )
+      }
+      const fin = financialsFromLines(budgetLines, parsed.budget)
+      totalCost = fin.totalCost
+      totalRevenue = fin.revenue
+      netProfit = fin.netProfit
+      margin = fin.margin
+    }
+    if (documentExtract.catering.length) {
+      catering = toCateringItems(documentExtract.catering)
+    }
+  }
+
   const warehouse = buildWarehouseFromCatering(catering)
   const staff = defaultStaff(parsed.guests)
+  const attachmentNote = documentExtract
+    ? `\n\n[${summarizeBudgetExtract(documentExtract)}]`
+    : ''
 
   const draft: EventProject = {
     id: uid('evt'),
     name: parsed.name,
-    prompt,
+    prompt: `${prompt}${attachmentNote}`,
     guests: parsed.guests,
     location: parsed.location,
     budget: parsed.budget,
     date: parsed.date,
     status: 'active',
-    timeline: defaultTimeline(),
-    budgetLines: budget.lines,
+    timeline,
+    budgetLines,
     catering,
     checklist: defaultChecklist(),
     staff,
@@ -408,10 +517,10 @@ export async function generateEventFromPrompt(
     clientSignature: null,
     depositPaid: false,
     createdAt: new Date().toISOString(),
-    margin: budget.margin,
-    netProfit: budget.netProfit,
-    totalCost: budget.totalCost,
-    totalRevenue: budget.revenue,
+    margin,
+    netProfit,
+    totalCost,
+    totalRevenue,
     warehouse,
     posTransactions: [],
     posTables: [],

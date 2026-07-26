@@ -1,14 +1,18 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
-import { Check, Crown, Lock, Shield } from 'lucide-react'
-import { maskOpenAiKey } from '../lib/openaiClient'
+import { Check, Crown, Lock, Shield, Unlock } from 'lucide-react'
 import { useAppStore } from '../store/useAppStore'
 import { useStaffLockStore } from '../store/useStaffLockStore'
 import { SUBSCRIPTION_PLANS } from '../lib/subscriptions'
 import { Modal } from './Modal'
+import { ManagerPinKeypadModal } from './staff-terminal/ManagerPinKeypadModal'
+import { tapFeedback } from '../lib/touchFeedback'
 import type { AgencyProfile, SubscriptionTier } from '../types'
 import { formatCurrency } from '../lib/documentIds'
 import { formatCzechDate } from '../lib/czechDate'
+
+/** Display-only mask — never bind the live key into a locked input. */
+const LOCKED_KEY_MASK = '••••••••••••••••••••••••'
 
 export function ProfileSettings() {
   const profile = useAppStore((s) => s.profile)
@@ -21,6 +25,20 @@ export function ProfileSettings() {
   const [showVop, setShowVop] = useState(false)
   const [showGdpr, setShowGdpr] = useState(false)
   const [errors, setErrors] = useState<string[]>([])
+  /** Session unlock after Manager PIN — allows editing until lock again. */
+  const [aiKeySessionUnlocked, setAiKeySessionUnlocked] = useState(false)
+  const [aiKeyDraft, setAiKeyDraft] = useState(() => String(profile.openaiApiKey ?? ''))
+  const [unlockPinOpen, setUnlockPinOpen] = useState(false)
+
+  const keyLocked = Boolean(form.openaiApiKeyLocked) && !aiKeySessionUnlocked
+  const hasStoredKey = Boolean(String(form.openaiApiKey || '').trim())
+
+  useEffect(() => {
+    setForm({ ...profile })
+    if (!aiKeySessionUnlocked) {
+      setAiKeyDraft(String(profile.openaiApiKey ?? ''))
+    }
+  }, [profile, aiKeySessionUnlocked])
 
   const set = (
     key: keyof AgencyProfile,
@@ -43,9 +61,46 @@ export function ProfileSettings() {
   const setManagerPin = useStaffLockStore((s) => s.setManagerPin)
 
   const handleSave = () => {
-    updateProfile(form)
-    if (form.managerPin) setManagerPin(form.managerPin)
+    const next = {
+      ...form,
+      openaiApiKey: keyLocked ? form.openaiApiKey : aiKeyDraft.trim(),
+    }
+    updateProfile(next)
+    setForm(next)
+    if (next.managerPin) setManagerPin(next.managerPin)
     setToast('Profil uložen — údaje se autofillují do hlaviček dokumentů')
+  }
+
+  const handleLockAiKey = () => {
+    tapFeedback('success')
+    const key = aiKeyDraft.trim()
+    if (!key) {
+      tapFeedback('alert')
+      setToast('Nejdříve vložte klíč AI asistenta, poté jej uzamkněte')
+      return
+    }
+    const next: AgencyProfile = {
+      ...form,
+      openaiApiKey: key,
+      openaiApiKeyLocked: true,
+    }
+    updateProfile(next)
+    setForm(next)
+    setAiKeyDraft(key)
+    setAiKeySessionUnlocked(false)
+    setToast('Klíč AI asistenta uložen a uzamčen')
+  }
+
+  const requestUnlockAiKey = () => {
+    tapFeedback()
+    setUnlockPinOpen(true)
+  }
+
+  const onUnlockPinSuccess = () => {
+    setUnlockPinOpen(false)
+    setAiKeySessionUnlocked(true)
+    setAiKeyDraft(String(form.openaiApiKey ?? ''))
+    setToast('Klíč odemčen — můžete jej upravit. Po úpravě znovu uzamkněte.')
   }
 
   return (
@@ -154,40 +209,88 @@ export function ProfileSettings() {
         </div>
 
         <div
-          className="panel"
+          className="panel ai-key-vault"
           style={{
             marginTop: 24,
             padding: '1.1rem 1.15rem',
-            borderColor: 'rgba(212,175,55,0.45)',
-            background: 'linear-gradient(135deg, rgba(212,175,55,0.1), rgba(15,23,42,0.9))',
+            borderColor: keyLocked
+              ? 'rgba(34,197,94,0.45)'
+              : 'rgba(212,175,55,0.45)',
+            background: keyLocked
+              ? 'linear-gradient(135deg, rgba(34,197,94,0.1), rgba(15,23,42,0.92))'
+              : 'linear-gradient(135deg, rgba(212,175,55,0.1), rgba(15,23,42,0.9))',
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              marginBottom: 10,
+              flexWrap: 'wrap',
+            }}
+          >
             <Shield size={18} color="#D4AF37" />
             <h4 style={{ margin: 0, fontSize: '1.05rem', color: '#D4AF37' }}>
               AI asistent provozovny
             </h4>
+            {keyLocked && hasStoredKey && (
+              <span className="ai-key-secured-badge" role="status">
+                🔒 AI Engine zabezpečen
+              </span>
+            )}
           </div>
           <label className="label" htmlFor="openai-api-key">
             Klíč k AI asistentovi (OpenAI API Key)
           </label>
-          <input
-            id="openai-api-key"
-            className="input"
-            type="password"
-            autoComplete="new-password"
-            spellCheck={false}
-            value={String(form.openaiApiKey ?? '')}
-            onChange={(e) => set('openaiApiKey', e.target.value.trim())}
-            placeholder="sk-…"
-            style={{
-              minHeight: 52,
-              fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-              letterSpacing: '0.04em',
-            }}
-          />
+          <div className="ai-key-row">
+            <input
+              id="openai-api-key"
+              className="input"
+              type="password"
+              autoComplete="new-password"
+              spellCheck={false}
+              disabled={keyLocked}
+              readOnly={keyLocked}
+              value={keyLocked ? LOCKED_KEY_MASK : aiKeyDraft}
+              onChange={(e) => {
+                if (keyLocked) return
+                setAiKeyDraft(e.target.value)
+              }}
+              placeholder="sk-…"
+              aria-label="Klíč k AI asistentovi"
+              style={{
+                minHeight: 52,
+                flex: 1,
+                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                letterSpacing: keyLocked ? '0.18em' : '0.04em',
+                opacity: keyLocked ? 0.85 : 1,
+                cursor: keyLocked ? 'not-allowed' : 'text',
+              }}
+            />
+            {keyLocked ? (
+              <button
+                type="button"
+                className="btn btn-gold ai-key-unlock-btn"
+                onClick={requestUnlockAiKey}
+                title="Odemknout klíč Manažerským PINem"
+                aria-label="Odemknout"
+              >
+                <Unlock size={16} /> 🔓 Odemknout
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="btn btn-gold ai-key-lock-btn"
+                onClick={handleLockAiKey}
+                style={{ fontWeight: 900, minHeight: 52 }}
+              >
+                <Lock size={16} /> 🔒 Uložit a uzamknout
+              </button>
+            )}
+          </div>
           <p
-            title="Klíč je v rozhraní vždy maskovaný (typ hesla) a slouží výhradně této provozovně."
+            title="Klíč je v rozhraní maskovaný a slouží výhradně této provozovně."
             style={{
               fontSize: '0.82rem',
               color: '#fde68a',
@@ -203,9 +306,11 @@ export function ProfileSettings() {
             <span>
               🔒 Klíč přidělený správcem platformy EventFlow pro sledování individuální spotřeby
               vaší provozovny.
-              {form.openaiApiKey
-                ? ` Uloženo: ${maskOpenAiKey(form.openaiApiKey)}`
-                : ' Klíč zatím není nastaven — AI poběží v simulačním režimu.'}
+              {keyLocked
+                ? ' Plaintext klíče není zobrazen — úprava vyžaduje Manažerský PIN.'
+                : hasStoredKey || aiKeyDraft.trim()
+                  ? ' Po uložení klíč uzamkněte, aby jej personál nemohl číst.'
+                  : ' Klíč zatím není nastaven — AI poběží v simulačním režimu.'}
             </span>
           </p>
         </div>
@@ -376,6 +481,19 @@ export function ProfileSettings() {
         </p>
         <a href="/gdpr.pdf" download className="btn btn-gold">Stáhnout GDPR PDF</a>
       </Modal>
+
+      <ManagerPinKeypadModal
+        open={unlockPinOpen}
+        title="Zadejte Manažerský PIN pro úpravu klíče"
+        subtitle="Úprava klíče AI asistenta je chráněna. Plaintext klíče smí zobrazit pouze vedoucí s platným Manažerským PINem."
+        expectedPin={form.managerPin || profile.managerPin}
+        confirmLabel="Odemknout klíč"
+        onSuccess={onUnlockPinSuccess}
+        onCancel={() => {
+          tapFeedback()
+          setUnlockPinOpen(false)
+        }}
+      />
     </div>
   )
 }

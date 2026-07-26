@@ -42,6 +42,8 @@ export interface AgencyProfile {
    * Used only for this provozovna's AI traffic (never shared globally).
    */
   openaiApiKey?: string
+  /** When true, profile UI hides the key and requires Manager PIN to edit. */
+  openaiApiKeyLocked?: boolean
 }
 
 export interface TimelineItem {

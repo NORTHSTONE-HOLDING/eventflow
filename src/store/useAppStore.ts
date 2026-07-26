@@ -80,6 +80,7 @@ const defaultProfile: AgencyProfile = {
   eventWelcomeMessage: '',
   showEventPrices: false,
   openaiApiKey: '',
+  openaiApiKeyLocked: false,
 }
 
 const APP_VIEWS: AppView[] = [

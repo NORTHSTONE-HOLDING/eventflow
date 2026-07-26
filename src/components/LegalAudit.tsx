@@ -140,8 +140,10 @@ export function LegalAudit() {
       useAppStore.setState({ legalRisks: risks })
       setToast(
         analysis.source === 'openai'
-          ? 'AI Právní analýza pohledávky hotova (OpenAI)'
-          : 'AI Právní analýza pohledávky hotova (simulační engine)'
+          ? 'AI Právní analýza pohledávky hotova (klíč provozovny)'
+          : !profile.openaiApiKey
+            ? 'Simulační AI audit — kontaktujte správu EventFlow pro přidělení klíče AI asistenta'
+            : 'AI Právní analýza pohledávky hotova (simulační engine)',
       )
     } catch {
       setToast('Analýza pohledávky selhala')

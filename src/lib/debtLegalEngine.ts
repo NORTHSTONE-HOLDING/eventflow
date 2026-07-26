@@ -2,6 +2,7 @@ import type { ProjectReceivable } from './receivables'
 import type { AgencyProfile } from '../types'
 import { formatCurrency } from './documentIds'
 import { formatCzechDate } from './czechDate'
+import { openAiMessageContent, openaiChatCompletions } from './openaiClient'
 
 export interface DebtLegalAnalysis {
   projectId: string
@@ -117,13 +118,7 @@ export async function analyzeReceivableWithAI(
   debt: ProjectReceivable,
   profile: AgencyProfile
 ): Promise<DebtLegalAnalysis> {
-  const apiKey = (import.meta.env.VITE_OPENAI_API_KEY as string | undefined)?.trim()
   const fallback = buildSimulatedAnalysis(debt, profile)
-
-  if (!apiKey) {
-    await new Promise((r) => setTimeout(r, 1200))
-    return fallback
-  }
 
   const systemPrompt =
     `Jsi nekompromisní český advokát specializovaný na vymáhání pohledávek z eventových ` +
@@ -146,62 +141,54 @@ export async function analyzeReceivableWithAI(
     `=== SMLOUVA O DÍLO ===\n${debt.contractText}\n\n` +
     `=== PŘEDÁVACÍ PROTOKOL ===\n${debt.protocolText}`
 
-  try {
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        temperature: 0.2,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
-        ],
-      }),
-    })
+  const chat = await openaiChatCompletions(
+    {
+      model: 'gpt-4o-mini',
+      temperature: 0.2,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+    },
+    { profile },
+  )
 
-    if (!res.ok) return fallback
-    const data = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string } }>
-      model?: string
-    }
-    const content = data.choices?.[0]?.message?.content?.trim()
-    if (!content) return fallback
-
-    const sectionBreach =
-      extractSection(content, '🔴 ANALÝZA PORUŠENÍ SMLOUVY', [
-        '📄 PŘEDŽALOBNÍ VÝZVA',
-      ]) || fallback.sectionBreach
-
-    const sectionPreAction =
-      extractSection(content, '📄 PŘEDŽALOBNÍ VÝZVA', []) ||
-      (content.includes('PŘEDŽALOBNÍ')
-        ? content.slice(content.indexOf('PŘEDŽALOBNÍ') - 2)
-        : fallback.sectionPreAction)
-
-    const whatsappNotice =
-      `⚠️ PŘEDŽALOBNÍ VÝZVA (§ 142a OSŘ)\n\n` +
-      `${debt.clientName}, neuhrazeno ${formatCurrency(debt.amountDue)} · ${debt.invoiceId}.\n` +
-      `Smlouva ${debt.contractId} / Protokol ${debt.protocolId}.\n` +
-      `Bez úhrady do 15 dnů žaloba + zákonný úrok z prodlení.\n\n` +
-      `💳 OKAMŽITÁ PLATBA:\n${debt.paymentLink}\n\n` +
-      `— ${profile.companyName || 'EventFlow'}`
-
-    return {
-      projectId: debt.projectId,
-      invoiceId: debt.invoiceId,
-      generatedAt: new Date().toISOString(),
-      sectionBreach,
-      sectionPreAction,
-      whatsappNotice,
-      model: data.model || 'gpt-4o-mini',
-      source: 'openai',
-    }
-  } catch {
+  if (!chat.ok) {
+    await new Promise((r) => setTimeout(r, 1200))
     return fallback
+  }
+
+  const content = openAiMessageContent(chat.data)
+  if (!content) return fallback
+
+  const sectionBreach =
+    extractSection(content, '🔴 ANALÝZA PORUŠENÍ SMLOUVY', [
+      '📄 PŘEDŽALOBNÍ VÝZVA',
+    ]) || fallback.sectionBreach
+
+  const sectionPreAction =
+    extractSection(content, '📄 PŘEDŽALOBNÍ VÝZVA', []) ||
+    (content.includes('PŘEDŽALOBNÍ')
+      ? content.slice(content.indexOf('PŘEDŽALOBNÍ') - 2)
+      : fallback.sectionPreAction)
+
+  const whatsappNotice =
+    `⚠️ PŘEDŽALOBNÍ VÝZVA (§ 142a OSŘ)\n\n` +
+    `${debt.clientName}, neuhrazeno ${formatCurrency(debt.amountDue)} · ${debt.invoiceId}.\n` +
+    `Smlouva ${debt.contractId} / Protokol ${debt.protocolId}.\n` +
+    `Bez úhrady do 15 dnů žaloba + zákonný úrok z prodlení.\n\n` +
+    `💳 OKAMŽITÁ PLATBA:\n${debt.paymentLink}\n\n` +
+    `— ${profile.companyName || 'EventFlow'}`
+
+  return {
+    projectId: debt.projectId,
+    invoiceId: debt.invoiceId,
+    generatedAt: new Date().toISOString(),
+    sectionBreach,
+    sectionPreAction,
+    whatsappNotice,
+    model: chat.model || 'gpt-4o-mini',
+    source: 'openai',
   }
 }
 

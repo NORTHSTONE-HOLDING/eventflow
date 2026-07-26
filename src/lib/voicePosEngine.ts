@@ -1,5 +1,13 @@
 import type { CateringItem } from '../types'
 import { matchMenuItemByName, normalizeName } from './venueCatalog'
+import {
+  AI_KEY_MISSING_SHORT_CS,
+  hasVenueOpenAiKey,
+  openAiMessageContent,
+  openaiChatCompletions,
+} from './openaiClient'
+
+export { AI_KEY_MISSING_SHORT_CS }
 
 export const VOICE_NOISE_FILTER_PROMPT =
   'Ignoruj hluk na pozadí a hlasy ostatních lidí. Zpracuj pouze jasné gastro příkazy od hlavního mluvčího ve formátu: [Číslo stolu/místa] + [množství] + [název položky]. Pokud věta nedává smysl jako objednávka, ignoruj ji.'
@@ -340,42 +348,40 @@ export function parseVoiceOrdersLocal(transcript: string): VoiceParseResult {
 
 export async function filterTranscriptWithAI(
   transcript: string
-): Promise<string> {
-  const apiKey = (import.meta.env.VITE_OPENAI_API_KEY as string | undefined)?.trim()
-  if (!apiKey || !transcript.trim()) return transcript
-
-  try {
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        temperature: 0,
-        messages: [
-          { role: 'system', content: VOICE_NOISE_FILTER_PROMPT },
-          {
-            role: 'user',
-            content:
-              `Přepis z hlučného prostředí:\n"""${transcript}"""\n\n` +
-              `Vrať POUZE vyčištěné gastro příkazy (jeden na řádek) ve formátu: ` +
-              `[stůl X] [množství] [název]. Pokud nic není objednávka, vrať přesně: IGNOROVAT`,
-          },
-        ],
-      }),
-    })
-    if (!res.ok) return transcript
-    const data = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string } }>
-    }
-    const content = data.choices?.[0]?.message?.content?.trim() || ''
-    if (!content || /^ignorovat$/i.test(content)) return ''
-    return content
-  } catch {
-    return transcript
+): Promise<{ text: string; usedOpenAi: boolean; missingKey: boolean }> {
+  if (!transcript.trim()) {
+    return { text: transcript, usedOpenAi: false, missingKey: false }
   }
+  if (!hasVenueOpenAiKey()) {
+    return { text: transcript, usedOpenAi: false, missingKey: true }
+  }
+
+  const chat = await openaiChatCompletions({
+    model: 'gpt-4o-mini',
+    temperature: 0,
+    messages: [
+      { role: 'system', content: VOICE_NOISE_FILTER_PROMPT },
+      {
+        role: 'user',
+        content:
+          `Přepis z hlučného prostředí:\n"""${transcript}"""\n\n` +
+          `Vrať POUZE vyčištěné gastro příkazy (jeden na řádek) ve formátu: ` +
+          `[stůl X] [množství] [název]. Pokud nic není objednávka, vrať přesně: IGNOROVAT`,
+      },
+    ],
+  })
+  if (!chat.ok) {
+    return {
+      text: transcript,
+      usedOpenAi: false,
+      missingKey: chat.reason === 'missing_key',
+    }
+  }
+  const content = openAiMessageContent(chat.data)
+  if (!content || /^ignorovat$/i.test(content)) {
+    return { text: '', usedOpenAi: true, missingKey: false }
+  }
+  return { text: content, usedOpenAi: true, missingKey: false }
 }
 
 export async function processVoiceOrderTranscript(
@@ -384,11 +390,12 @@ export async function processVoiceOrderTranscript(
 ): Promise<{
   parse: VoiceParseResult
   matched: Array<{ item: CateringItem; qty: number; tableHint: string | null }>
+  missingKey?: boolean
 }> {
   const filtered = await filterTranscriptWithAI(transcript)
-  const parse = parseVoiceOrdersLocal(filtered || transcript)
+  const parse = parseVoiceOrdersLocal(filtered.text || transcript)
   if (!parse.accepted) {
-    return { parse, matched: [] }
+    return { parse, matched: [], missingKey: filtered.missingKey }
   }
 
   const matched: Array<{
@@ -412,12 +419,17 @@ export async function processVoiceOrderTranscript(
         reason: `Položka nenalezena v menu: ${parse.commands.map((c) => c.itemName).join(', ')}`,
       },
       matched: [],
+      missingKey: filtered.missingKey,
     }
   }
 
   return {
-    parse: { ...parse, source: filtered !== transcript ? 'openai' : parse.source },
+    parse: {
+      ...parse,
+      source: filtered.usedOpenAi ? 'openai' : parse.source,
+    },
     matched,
+    missingKey: filtered.missingKey,
   }
 }
 

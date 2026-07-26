@@ -150,7 +150,7 @@ export function MobileInvoiceRestock() {
         {!draft && !scanning && (
           <div style={{ fontSize: '0.8rem', color: 'var(--text-dim)', display: 'flex', gap: 8, alignItems: 'center' }}>
             <Sparkles size={14} color="var(--gold)" />
-            Bez OpenAI klíče běží realistická offline simulace podle názvu souboru.
+            Bez klíče AI asistenta v profilu provozovny běží realistická offline simulace. Kontaktujte správu EventFlow pro aktivaci.
             <Upload size={14} />
           </div>
         )}

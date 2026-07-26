@@ -37,6 +37,11 @@ export interface AgencyProfile {
   eventWelcomeMessage?: string | null
   /** When false, event mode hides unit prices */
   showEventPrices?: boolean
+  /**
+   * Per-venue OpenAI API key issued by EventFlow platform admin.
+   * Used only for this provozovna's AI traffic (never shared globally).
+   */
+  openaiApiKey?: string
 }
 
 export interface TimelineItem {

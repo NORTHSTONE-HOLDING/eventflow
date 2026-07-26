@@ -2,10 +2,12 @@ import { useEffect, useRef, useState } from 'react'
 import { Mic, MicOff } from 'lucide-react'
 import type { CateringItem } from '../../types'
 import {
+  AI_KEY_MISSING_SHORT_CS,
   PushToTalkSession,
   processVoiceOrderTranscript,
   VOICE_NOISE_FILTER_PROMPT,
 } from '../../lib/voicePosEngine'
+import { hasVenueOpenAiKey } from '../../lib/openaiClient'
 import { tapFeedback } from '../../lib/touchFeedback'
 
 interface Props {
@@ -76,7 +78,14 @@ export function VoiceOrderButton({ catalog, disabled, onOrders, onReject }: Prop
         )
         return
       }
-      const { parse, matched } = await processVoiceOrderTranscript(finalText, catalog)
+      const { parse, matched, missingKey } = await processVoiceOrderTranscript(
+        finalText,
+        catalog,
+      )
+      if (missingKey || !hasVenueOpenAiKey()) {
+        // Local parse still runs; remind staff that cloud AI filter is inactive
+        onReject?.(AI_KEY_MISSING_SHORT_CS)
+      }
       if (!parse.accepted || !matched.length) {
         onReject?.(parse.reason || 'Příkaz ignorován (hluk / nejasná objednávka)')
         return

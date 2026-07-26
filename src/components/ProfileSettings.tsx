@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { motion } from 'framer-motion'
-import { Check, Crown, Lock } from 'lucide-react'
+import { Check, Crown, Lock, Shield } from 'lucide-react'
+import { maskOpenAiKey } from '../lib/openaiClient'
 import { useAppStore } from '../store/useAppStore'
 import { useStaffLockStore } from '../store/useStaffLockStore'
 import { SUBSCRIPTION_PLANS } from '../lib/subscriptions'
@@ -149,6 +150,63 @@ export function ProfileSettings() {
           />
           <p style={{ fontSize: '0.78rem', color: 'var(--text-dim)', marginTop: 6 }}>
             Personál na terminálu nemůže opustit kasu bez tohoto PIN (výchozí 2580).
+          </p>
+        </div>
+
+        <div
+          className="panel"
+          style={{
+            marginTop: 24,
+            padding: '1.1rem 1.15rem',
+            borderColor: 'rgba(212,175,55,0.45)',
+            background: 'linear-gradient(135deg, rgba(212,175,55,0.1), rgba(15,23,42,0.9))',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+            <Shield size={18} color="#D4AF37" />
+            <h4 style={{ margin: 0, fontSize: '1.05rem', color: '#D4AF37' }}>
+              AI asistent provozovny
+            </h4>
+          </div>
+          <label className="label" htmlFor="openai-api-key">
+            Klíč k AI asistentovi (OpenAI API Key)
+          </label>
+          <input
+            id="openai-api-key"
+            className="input"
+            type="password"
+            autoComplete="new-password"
+            spellCheck={false}
+            value={String(form.openaiApiKey ?? '')}
+            onChange={(e) => set('openaiApiKey', e.target.value.trim())}
+            placeholder="sk-…"
+            style={{
+              minHeight: 52,
+              fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+              letterSpacing: '0.04em',
+            }}
+          />
+          <p
+            title="Klíč je v rozhraní vždy maskovaný (typ hesla) a slouží výhradně této provozovně."
+            style={{
+              fontSize: '0.82rem',
+              color: '#fde68a',
+              marginTop: 8,
+              marginBottom: 0,
+              lineHeight: 1.45,
+              display: 'flex',
+              gap: 8,
+              alignItems: 'flex-start',
+            }}
+          >
+            <Lock size={14} style={{ flexShrink: 0, marginTop: 2 }} />
+            <span>
+              🔒 Klíč přidělený správcem platformy EventFlow pro sledování individuální spotřeby
+              vaší provozovny.
+              {form.openaiApiKey
+                ? ` Uloženo: ${maskOpenAiKey(form.openaiApiKey)}`
+                : ' Klíč zatím není nastaven — AI poběží v simulačním režimu.'}
+            </span>
           </p>
         </div>
 

@@ -3,6 +3,7 @@ import { Camera, Upload, Loader2, Lock } from 'lucide-react'
 import { useAppStore, selectActiveProject } from '../store/useAppStore'
 import { hasFeature } from '../lib/subscriptions'
 import { analyzeInvoiceImage } from '../lib/invoiceVision'
+import { hasVenueOpenAiKey } from '../lib/openaiClient'
 import type { InvoiceVisionResult } from '../types'
 import { useInventoryStore } from '../store/useInventoryStore'
 import {
@@ -46,7 +47,11 @@ export function AIVisionScanner() {
         setPreview(url)
         const result = await analyzeInvoiceImage(file)
         setDraft(result)
-        setToast(`AI vytěžila ${result.items.length} položek — ověřte před zápisem`)
+        setToast(
+          hasVenueOpenAiKey()
+            ? `AI vytěžila ${result.items.length} položek — ověřte před zápisem`
+            : `Simulace skenu: ${result.items.length} položek · kontaktujte správu EventFlow pro klíč AI asistenta`,
+        )
       } catch (e) {
         setToast(e instanceof Error ? e.message : 'Skenování selhalo')
       } finally {

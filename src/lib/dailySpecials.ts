@@ -7,6 +7,11 @@ import type { InventoryItem, RecipeIngredient } from '../types'
 import { formatCzechDate } from './czechDate'
 import { matchInventoryItem, normalizeName, normalizeUnit } from './inventoryModels'
 import { uid } from './documentIds'
+import {
+  hasVenueOpenAiKey,
+  openAiMessageContent,
+  openaiChatCompletions,
+} from './openaiClient'
 
 export type DailySpecial = {
   id: string
@@ -226,41 +231,30 @@ async function parseDailySpecialOpenAi(
   text: string,
   inventory: InventoryItem[],
 ): Promise<DailySpecialParseResult | null> {
-  const key = (import.meta.env.VITE_OPENAI_API_KEY as string | undefined)?.trim()
-  if (!key) return null
+  if (!hasVenueOpenAiKey()) return null
   try {
     const slim = inventory
       .filter((i) => i.is_raw_material)
       .slice(0, 60)
       .map((i) => ({ id: i.id, name: i.name, unit: i.unit }))
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${key}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        temperature: 0.2,
-        response_format: { type: 'json_object' },
-        messages: [
-          {
-            role: 'system',
-            content:
-              'Jsi EventFlow kuchyňský asistent. Z českého textu poledního menu vytěž JSON { "name", "sellPrice", "ingredients": [ { "name", "qtyPerPortion", "unit", "inventoryItemId?" } ] }. DPH je vždy 12. Množství surovin v kg/g (např. 0.150 kg hovězího). Napáruj inventoryItemId ze seznamu surovin pokud sedí. Bez okolního textu.',
-          },
-          {
-            role: 'user',
-            content: `Text: ${text}\nSuroviny skladu:\n${JSON.stringify(slim)}`,
-          },
-        ],
-      }),
+    const chat = await openaiChatCompletions({
+      model: 'gpt-4o-mini',
+      temperature: 0.2,
+      response_format: { type: 'json_object' },
+      messages: [
+        {
+          role: 'system',
+          content:
+            'Jsi EventFlow kuchyňský asistent. Z českého textu poledního menu vytěž JSON { "name", "sellPrice", "ingredients": [ { "name", "qtyPerPortion", "unit", "inventoryItemId?" } ] }. DPH je vždy 12. Množství surovin v kg/g (např. 0.150 kg hovězího). Napáruj inventoryItemId ze seznamu surovin pokud sedí. Bez okolního textu.',
+        },
+        {
+          role: 'user',
+          content: `Text: ${text}\nSuroviny skladu:\n${JSON.stringify(slim)}`,
+        },
+      ],
     })
-    if (!res.ok) return null
-    const json = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string } }>
-    }
-    const content = json.choices?.[0]?.message?.content
+    if (!chat.ok) return null
+    const content = openAiMessageContent(chat.data)
     if (!content) return null
     const parsed = JSON.parse(content) as {
       name?: string

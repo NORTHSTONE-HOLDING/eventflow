@@ -18,6 +18,11 @@ import {
   registerCategoryFromImportLabel,
   useCategoryRegistryStore,
 } from '../store/useCategoryRegistryStore'
+import {
+  hasVenueOpenAiKey,
+  openAiMessageContent,
+  openaiChatCompletions,
+} from './openaiClient'
 
 /** Czech display label or custom category name from importer / AI. */
 export type GastroImportCategory = string
@@ -431,26 +436,19 @@ async function openaiClassifyMatrix(
   rows: string[][],
   fileName: string,
 ): Promise<GastroImportDraft[] | null> {
-  const key = (import.meta.env.VITE_OPENAI_API_KEY as string | undefined)?.trim()
-  if (!key) return null
+  if (!hasVenueOpenAiKey()) return null
   try {
     const registryLabels = getRegistryCategories()
       .map((c) => c.label)
       .join(', ')
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${key}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        temperature: 0.1,
-        response_format: { type: 'json_object' },
-        messages: [
-          {
-            role: 'system',
-            content: `${AI_SYSTEM_PROMPT}
+    const chat = await openaiChatCompletions({
+      model: 'gpt-4o-mini',
+      temperature: 0.1,
+      response_format: { type: 'json_object' },
+      messages: [
+        {
+          role: 'system',
+          content: `${AI_SYSTEM_PROMPT}
 
 Výstupní formát JSON:
 {
@@ -472,19 +470,15 @@ Výstupní formát JSON:
   ]
 }
 Dostupné hlavní kategorie v EventFlow: ${registryLabels}.`,
-          },
-          {
-            role: 'user',
-            content: `Soubor: ${fileName}\n\nTabulková data (headers + rows):\n${matrixToAiPayload(rows)}`,
-          },
-        ],
-      }),
+        },
+        {
+          role: 'user',
+          content: `Soubor: ${fileName}\n\nTabulková data (headers + rows):\n${matrixToAiPayload(rows)}`,
+        },
+      ],
     })
-    if (!res.ok) return null
-    const json = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string } }>
-    }
-    const content = json.choices?.[0]?.message?.content
+    if (!chat.ok) return null
+    const content = openAiMessageContent(chat.data)
     if (!content) return null
     const parsed = JSON.parse(content) as {
       items?: Array<Partial<GastroImportDraft> & { name?: string }>

@@ -6,6 +6,11 @@ import type { PrintMenuItem, PrintMenuKind } from '../types'
 import { resolveAllergenCodes } from './allergens'
 import { uid } from './documentIds'
 import { czechPortionLabel } from './printMenuEngine'
+import {
+  hasVenueOpenAiKey,
+  openAiMessageContent,
+  openaiChatCompletions,
+} from './openaiClient'
 
 const SYSTEM_PROMPT = `Jseš gastronomický OCR auditor pro EventFlow (ČR).
 Z fotografie jídelního nebo nápojového lístku vytěž položky.
@@ -238,39 +243,29 @@ export async function scanPrintMenuFromImage(
   file: File,
   preferredKind: PrintMenuKind,
 ): Promise<PrintMenuItem[]> {
-  const apiKey = (import.meta.env.VITE_OPENAI_API_KEY as string | undefined)?.trim()
-
-  if (apiKey && file.type.startsWith('image/')) {
+  if (hasVenueOpenAiKey() && file.type.startsWith('image/')) {
     try {
       const dataUrl = await fileToDataUrl(file)
-      const res = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model: 'gpt-4o-mini',
-          messages: [
-            { role: 'system', content: SYSTEM_PROMPT },
-            {
-              role: 'user',
-              content: [
-                {
-                  type: 'text',
-                  text: `Preferovaný druh: ${preferredKind === 'beverage' ? 'nápojový lístek' : 'jídelní lístek'}. Extrahuj položky.`,
-                },
-                { type: 'image_url', image_url: { url: dataUrl } },
-              ],
-            },
-          ],
-          response_format: { type: 'json_object' },
-          max_tokens: 2500,
-        }),
+      const chat = await openaiChatCompletions({
+        model: 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: SYSTEM_PROMPT },
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: `Preferovaný druh: ${preferredKind === 'beverage' ? 'nápojový lístek' : 'jídelní lístek'}. Extrahuj položky.`,
+              },
+              { type: 'image_url', image_url: { url: dataUrl } },
+            ],
+          },
+        ],
+        response_format: { type: 'json_object' },
+        max_tokens: 2500,
       })
-      if (res.ok) {
-        const data = await res.json()
-        const content = data?.choices?.[0]?.message?.content
+      if (chat.ok) {
+        const content = openAiMessageContent(chat.data)
         if (content) {
           const items = parseVisionJson(content, preferredKind)
           if (items.length) return items

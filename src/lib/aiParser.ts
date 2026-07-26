@@ -9,6 +9,11 @@ import { calculateBudget, optimizeBudgetRecommendations } from './budgetEngine'
 import { generateDocumentIds, uid } from './documentIds'
 import { buildWarehouseFromCatering } from './inventoryEngine'
 import { bookShiftsFromStaff, applyLaborToProjectFinancials } from './shiftScheduler'
+import {
+  hasVenueOpenAiKey,
+  openAiMessageContent,
+  openaiChatCompletions,
+} from './openaiClient'
 
 export interface ParsedPrompt {
   guests: number
@@ -347,31 +352,26 @@ export async function generateEventFromPrompt(
 ): Promise<EventProject> {
   let parsed = parseCzechPrompt(prompt)
 
-  if (useOpenAI && import.meta.env.VITE_OPENAI_API_KEY) {
+  if (useOpenAI && hasVenueOpenAiKey()) {
     try {
-      const res = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${import.meta.env.VITE_OPENAI_API_KEY}`,
-        },
-        body: JSON.stringify({
-          model: 'gpt-4o-mini',
-          messages: [
-            {
-              role: 'system',
-              content:
-                'Extract event details from Czech text. Return JSON: {guests:number, location:string, budget:number, eventType:string, name:string}',
-            },
-            { role: 'user', content: prompt },
-          ],
-          response_format: { type: 'json_object' },
-        }),
+      const chat = await openaiChatCompletions({
+        model: 'gpt-4o-mini',
+        messages: [
+          {
+            role: 'system',
+            content:
+              'Extract event details from Czech text. Return JSON: {guests:number, location:string, budget:number, eventType:string, name:string}',
+          },
+          { role: 'user', content: prompt },
+        ],
+        response_format: { type: 'json_object' },
       })
-      if (res.ok) {
-        const data = await res.json()
-        const content = JSON.parse(data.choices[0].message.content)
-        parsed = { ...parsed, ...content, date: parsed.date }
+      if (chat.ok) {
+        const raw = openAiMessageContent(chat.data)
+        if (raw) {
+          const content = JSON.parse(raw) as Partial<ParsedPrompt>
+          parsed = { ...parsed, ...content, date: parsed.date }
+        }
       }
     } catch {
       // fallback to client simulation

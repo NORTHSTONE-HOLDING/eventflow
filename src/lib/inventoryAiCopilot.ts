@@ -10,6 +10,12 @@ import {
   matchItemToCategoryToken,
   useCategoryRegistryStore,
 } from '../store/useCategoryRegistryStore'
+import {
+  AI_KEY_MISSING_SHORT_CS,
+  hasVenueOpenAiKey,
+  openAiMessageContent,
+  openaiChatCompletions,
+} from './openaiClient'
 
 export type AiCopilotResult = {
   ok: boolean
@@ -234,8 +240,7 @@ async function openaiInventoryCommand(
   items: InventoryItem[],
   command: string,
 ): Promise<AiCopilotResult | null> {
-  const key = (import.meta.env.VITE_OPENAI_API_KEY as string | undefined)?.trim()
-  if (!key) return null
+  if (!hasVenueOpenAiKey()) return null
   try {
     const slim = items.slice(0, 80).map((i) => ({
       id: i.id,
@@ -248,36 +253,26 @@ async function openaiInventoryCommand(
       unit: i.unit,
       vat_rate: i.vat_rate,
     }))
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${key}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        temperature: 0.2,
-        response_format: { type: 'json_object' },
-        messages: [
-          {
-            role: 'system',
-            content:
-              'Jsi AI skladový asistent EventFlow. Uprav položky dle českého příkazu. Vrať JSON { "updates": [ { "id", "name?", "sale_price?", "purchase_price?", "minimum_quantity?", "vat_rate?", "category?" } ], "summary": "...", "new_category"?: "název" }. Měň jen relevantní řádky. Kategorie mohou být Jídlo/Pití/Inventář/Technika nebo vlastní (např. Tabákové výrobky).',
-          },
-          {
-            role: 'user',
-            content: `Příkaz: ${command}\nDostupné kategorie: ${getRegistryCategories()
-              .map((c) => c.label)
-              .join(', ')}\n\nPoložky:\n${JSON.stringify(slim)}`,
-          },
-        ],
-      }),
+    const chat = await openaiChatCompletions({
+      model: 'gpt-4o-mini',
+      temperature: 0.2,
+      response_format: { type: 'json_object' },
+      messages: [
+        {
+          role: 'system',
+          content:
+            'Jsi AI skladový asistent EventFlow. Uprav položky dle českého příkazu. Vrať JSON { "updates": [ { "id", "name?", "sale_price?", "purchase_price?", "minimum_quantity?", "vat_rate?", "category?" } ], "summary": "...", "new_category"?: "název" }. Měň jen relevantní řádky. Kategorie mohou být Jídlo/Pití/Inventář/Technika nebo vlastní (např. Tabákové výrobky).',
+        },
+        {
+          role: 'user',
+          content: `Příkaz: ${command}\nDostupné kategorie: ${getRegistryCategories()
+            .map((c) => c.label)
+            .join(', ')}\n\nPoložky:\n${JSON.stringify(slim)}`,
+        },
+      ],
     })
-    if (!res.ok) return null
-    const json = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string } }>
-    }
-    const content = json.choices?.[0]?.message?.content
+    if (!chat.ok) return null
+    const content = openAiMessageContent(chat.data)
     if (!content) return null
     const parsed = JSON.parse(content) as {
       updates?: Array<Partial<InventoryItem> & { id: string }>
@@ -341,5 +336,12 @@ export async function runInventoryAiCommand(
 ): Promise<AiCopilotResult> {
   const ai = await openaiInventoryCommand(items, command)
   if (ai) return ai
-  return applyInventoryCommandLocal(items, command)
+  const local = applyInventoryCommandLocal(items, command)
+  if (!hasVenueOpenAiKey()) {
+    return {
+      ...local,
+      message: `${local.message} ${AI_KEY_MISSING_SHORT_CS}`,
+    }
+  }
+  return local
 }

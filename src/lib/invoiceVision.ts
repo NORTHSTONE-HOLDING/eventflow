@@ -2,6 +2,11 @@ import type { AiScanConfidence, InvoiceVisionLine, InvoiceVisionResult } from '.
 import { formatCzechDate } from './czechDate'
 import { classifyCategory, classifySubcategoryLabel } from './gastroImporter'
 import { normalizeName } from './inventoryModels'
+import {
+  hasVenueOpenAiKey,
+  openAiMessageContent,
+  openaiChatCompletions,
+} from './openaiClient'
 
 const SYSTEM_PROMPT = `Jseš pokročilý skladový AI auditor pro EventFlow. Analyzuj vyfocenou českou nákupní fakturu, dodací list, účtenku nebo ruční jídelní lístek.
 Extrahuj: Název dodavatele, datum, IČO a kompletní seznam položek.
@@ -205,42 +210,33 @@ function parseVisionJson(raw: string, handwrittenHint: boolean): InvoiceVisionRe
 
 /** AI Vision capture of Czech delivery notes / invoices / menus. Falls back to simulation. */
 export async function analyzeInvoiceImage(file: File): Promise<InvoiceVisionResult> {
-  const apiKey = (import.meta.env.VITE_OPENAI_API_KEY as string | undefined)?.trim()
   const handwrittenHint = /rucni|ruční|hand|menu|listek|lístek|handwritten/i.test(
     file.name || '',
   )
 
-  if (apiKey) {
+  if (hasVenueOpenAiKey()) {
     try {
       const dataUrl = await fileToDataUrl(file)
-      const res = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          model: 'gpt-4o-mini',
-          messages: [
-            { role: 'system', content: SYSTEM_PROMPT },
-            {
-              role: 'user',
-              content: [
-                {
-                  type: 'text',
-                  text: 'Extrahuj data. JSON: { supplier_name, date, ico, source_kind, items:[{name, quantity, unit, purchase_price_ex_vat, sale_price, vat_rate, barcode, category, subcategory, confidence_score}] }.',
-                },
-                { type: 'image_url', image_url: { url: dataUrl } },
-              ],
-            },
-          ],
-          response_format: { type: 'json_object' },
-          max_tokens: 2500,
-        }),
+      const chat = await openaiChatCompletions({
+        model: 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: SYSTEM_PROMPT },
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: 'Extrahuj data. JSON: { supplier_name, date, ico, source_kind, items:[{name, quantity, unit, purchase_price_ex_vat, sale_price, vat_rate, barcode, category, subcategory, confidence_score}] }.',
+              },
+              { type: 'image_url', image_url: { url: dataUrl } },
+            ],
+          },
+        ],
+        response_format: { type: 'json_object' },
+        max_tokens: 2500,
       })
-      if (res.ok) {
-        const data = await res.json()
-        const content = data?.choices?.[0]?.message?.content
+      if (chat.ok) {
+        const content = openAiMessageContent(chat.data)
         if (content) return parseVisionJson(content, handwrittenHint)
       }
     } catch {

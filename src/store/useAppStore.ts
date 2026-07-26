@@ -79,6 +79,7 @@ const defaultProfile: AgencyProfile = {
   menuSubtitle: '',
   eventWelcomeMessage: '',
   showEventPrices: false,
+  openaiApiKey: '',
 }
 
 const APP_VIEWS: AppView[] = [

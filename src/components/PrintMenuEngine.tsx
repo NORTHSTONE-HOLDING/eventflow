@@ -35,6 +35,7 @@ import {
 import { inventoryCategoryToPos } from '../lib/inventoryPosBridge'
 import { exportMenuPdf, exportMenuWord, printMenuNative } from '../lib/printExport'
 import { scanPrintMenuFromImage } from '../lib/printMenuVision'
+import { hasVenueOpenAiKey } from '../lib/openaiClient'
 import { formatCurrency } from '../lib/documentIds'
 import type {
   InventoryItem,
@@ -142,7 +143,11 @@ export function PrintMenuEngine() {
     try {
       const parsed = await scanPrintMenuFromImage(file, kind)
       setVisionItems(parsed)
-      setToast(`AI Vision vytěžila ${parsed.length} položek do tiskové šablony`)
+      setToast(
+        hasVenueOpenAiKey()
+          ? `AI Vision vytěžila ${parsed.length} položek do tiskové šablony`
+          : `Simulace skenu: ${parsed.length} položek · 🔒 kontaktujte správu EventFlow pro klíč AI asistenta`,
+      )
     } catch (e) {
       setToast(e instanceof Error ? e.message : 'Skenování lístku selhalo')
     } finally {

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Bell,
-  ChefHat,
   Flag,
   Map as MapIcon,
   Minus,
@@ -32,7 +31,6 @@ import { useProductImageStore, productNameKey } from '../../store/useProductImag
 import { PosProductTile } from '../pos/PosProductTile'
 import { AdvancedCheckout, type CheckoutResult } from '../pos/AdvancedCheckout'
 import { ShiftClosureHub } from '../ShiftClosureHub'
-import { PosShiftExpressInput } from '../pos/PosShiftExpressInput'
 import { ManagerPinKeypadModal } from './ManagerPinKeypadModal'
 import { POS_CATEGORIES, filterPosMenu } from '../../lib/posCategories'
 import { buildVenueMasterCatalog, mergeCatalogs } from '../../lib/venueCatalog'
@@ -49,11 +47,7 @@ import {
 import { cartTotals, paymentMethodLabel } from '../../lib/posEngine'
 import { formatCurrency, uid } from '../../lib/documentIds'
 import { dispatchPrintJobs } from '../../lib/printerHardware'
-import {
-  getPosChannel,
-  openPosDisplayWindow,
-  type PosBroadcastMessage,
-} from '../../lib/kdsSync'
+import { getPosChannel, type PosBroadcastMessage } from '../../lib/kdsSync'
 import { printTableQrCode } from '../../lib/tableQrPrint'
 import { tapFeedback } from '../../lib/touchFeedback'
 import { resolveTableIdFromHint } from '../../lib/voicePosEngine'
@@ -65,9 +59,12 @@ import type { CateringItem, POSCartLine, POSSubcategory, PosTableTab } from '../
 
 const MOBILE_OVERRIDE_KEY = 'eventflow-mobile-waiter-override'
 
+type StaffNavTab = 'map' | 'quick' | 'mobile' | 'closure'
+
 /**
- * Ground-up Staff Terminal — 3-zone touch POS for /pos-terminal.
- * Left: spaces + tables · Center: catalog · Right: locked cart
+ * Staff Terminal Engine — distraction-free /pos-terminal.
+ * Four header tabs only: Mapa · Rychlý prodej · Mobilní číšník · Uzávěrka (PIN).
+ * Hardware pairing / multi-monitor live exclusively in Admin Hardware & POS Centrum.
  */
 export function StaffTerminal() {
   const activeRaw = useAppStore(selectActiveProject)
@@ -128,15 +125,16 @@ export function StaffTerminal() {
   const [checkoutOpen, setCheckoutOpen] = useState(false)
   const [quickSale, setQuickSale] = useState(false)
   const [quickLines, setQuickLines] = useState<POSCartLine[]>([])
-  const [showShifts, setShowShifts] = useState(false)
   const [flashReady, setFlashReady] = useState<string | null>(null)
   const [emergency, setEmergency] = useState<string | null>(null)
   const [voidTarget, setVoidTarget] = useState<POSCartLine | null>(null)
   /** After Odeslat — stay on space map until waiter taps a table again */
-  const [mapFocus, setMapFocus] = useState(false)
+  const [mapFocus, setMapFocus] = useState(true)
   /** PIN-gated Uzávěrka & Směna inside /pos-terminal */
   const [closurePinOpen, setClosurePinOpen] = useState(false)
   const [closureUnlocked, setClosureUnlocked] = useState(false)
+  /** Primary staff navigation — only these four tabs in the header */
+  const [navTab, setNavTab] = useState<StaffNavTab>('map')
   /** null = Celý stůl (společný účet); 1…N = Židle N */
   const [activeSeatIndex, setActiveSeatIndex] = useState<number | null>(null)
   const [autoMobile, setAutoMobile] = useState(false)
@@ -153,7 +151,7 @@ export function StaffTerminal() {
   const [voiceStatus, setVoiceStatus] = useState<string | null>(null)
   const logWaiterAction = useWaiterAuditStore((s) => s.logWaiterAction)
 
-  const isMobileWaiter = forceMobile || autoMobile
+  const isMobileWaiter = forceMobile || autoMobile || navTab === 'mobile'
 
   useEffect(() => {
     void bootstrapInventory()
@@ -170,22 +168,42 @@ export function StaffTerminal() {
     return () => mq.removeEventListener('change', sync)
   }, [])
 
-  const toggleMobileOverride = () => {
-    tapFeedback('success')
-    setForceMobile((prev) => {
-      const next = !prev
-      try {
-        localStorage.setItem(MOBILE_OVERRIDE_KEY, next ? '1' : '0')
-      } catch {
-        // ignore
+  const persistMobileOverride = (next: boolean) => {
+    try {
+      localStorage.setItem(MOBILE_OVERRIDE_KEY, next ? '1' : '0')
+    } catch {
+      // ignore
+    }
+    setForceMobile(next)
+  }
+
+  const selectStaffTab = (tab: StaffNavTab) => {
+    tapFeedback(tab === 'closure' ? 'default' : 'success')
+    if (tab === 'closure') {
+      if (closureUnlocked) {
+        setNavTab('closure')
+        return
       }
-      setToast(
-        next
-          ? 'Mobilní číšník aktivní — zobrazení do ruky'
-          : 'Desktop rozložení obnoveno',
-      )
-      return next
-    })
+      setClosurePinOpen(true)
+      return
+    }
+    setClosureUnlocked(false)
+    setNavTab(tab)
+    if (tab === 'map') {
+      setQuickSale(false)
+      setMapFocus(true)
+      persistMobileOverride(false)
+    } else if (tab === 'quick') {
+      setQuickSale(true)
+      setMapFocus(false)
+      setWorkspaceTableId(null)
+      if (project) updateProject(project.id, { activeTableId: null })
+      persistMobileOverride(false)
+    } else if (tab === 'mobile') {
+      setQuickSale(false)
+      persistMobileOverride(true)
+      setToast('Mobilní číšník — jednosloupcové zobrazení do ruky')
+    }
   }
 
   const tables = useMemo(
@@ -321,9 +339,10 @@ export function StaffTerminal() {
 
   const selectTable = useCallback(
     (tableId: string) => {
-      tapFeedback()
+      tapFeedback('success')
       setQuickSale(false)
       setMapFocus(false)
+      if (navTab === 'quick') setNavTab('map')
       setWorkspaceTableId(tableId)
       if (project) setActiveTable(project.id, tableId)
       const label =
@@ -336,10 +355,12 @@ export function StaffTerminal() {
         amount_czk: 0,
       })
     },
-    [project, setActiveTable, setWorkspaceTableId, tables, logWaiterAction, waiter],
+    [project, setActiveTable, setWorkspaceTableId, tables, logWaiterAction, waiter, navTab],
   )
 
   const returnToTableMap = useCallback(() => {
+    setNavTab('map')
+    setQuickSale(false)
     setMapFocus(true)
     setWorkspaceTableId(null)
     if (project) updateProject(project.id, { activeTableId: null })
@@ -352,7 +373,7 @@ export function StaffTerminal() {
     setQuickSale(false)
     setQuickLines([])
     setCheckoutOpen(false)
-    setShowShifts(false)
+    setNavTab('map')
     setMapFocus(true)
     setWorkspaceTableId(null)
     if (project) updateProject(project.id, { activeTableId: null })
@@ -817,11 +838,30 @@ export function StaffTerminal() {
   if (closureUnlocked) {
     return (
       <div className="staff-terminal staff-terminal-closure">
+        <header className="st-topbar st-topbar-tabs">
+          <nav className="st-nav-tabs" aria-label="Personální terminál">
+            <button
+              type="button"
+              className="st-nav-tab"
+              onClick={() => {
+                tapFeedback()
+                setClosureUnlocked(false)
+                selectStaffTab('map')
+              }}
+            >
+              <MapIcon size={16} /> 🗺️ Mapa stolů & Salónky
+            </button>
+            <button type="button" className="st-nav-tab is-active is-locked">
+              <Flag size={16} /> 🏁 Uzávěrka & Směna
+            </button>
+          </nav>
+        </header>
         <ShiftClosureHub
           embedded
           onBack={() => {
             tapFeedback()
             setClosureUnlocked(false)
+            setNavTab('map')
           }}
           onClosedComplete={resetTerminalAfterClosure}
         />
@@ -829,25 +869,16 @@ export function StaffTerminal() {
     )
   }
 
+  const showMapColumn = navTab === 'map' || navTab === 'mobile'
+  const mapOnly = navTab === 'map' && (mapFocus || !activeTableId) && !quickSale
+  const showCatalog = quickSale || Boolean(activeTableId) || navTab === 'quick' || navTab === 'mobile'
+
   return (
     <div
-      className={`staff-terminal${isMobileWaiter ? ' staff-terminal-mobile' : ''}`}
+      className={`staff-terminal${isMobileWaiter ? ' staff-terminal-mobile' : ''}${
+        mapOnly ? ' staff-terminal-map-focus' : ''
+      }`}
     >
-      <div className="st-mobile-override-bar">
-        <button
-          type="button"
-          className={forceMobile ? 'btn btn-gold st-mobile-override-btn' : 'btn btn-ghost st-mobile-override-btn'}
-          onClick={toggleMobileOverride}
-        >
-          <Smartphone size={16} /> 📱 Přepnout na Mobilního číšníka (Zobrazení do ruky)
-        </button>
-        {isMobileWaiter && (
-          <span className="st-mobile-banner-inline" role="status">
-            Mobilní číšník aktivní
-            {forceMobile ? ' · ruční přepínač' : ' · auto ≤900px'}
-          </span>
-        )}
-      </div>
       {waiterLoggedOut && (
         <div className="st-waiter-login-gate panel" role="dialog" aria-modal="true">
           <h2 className="gold-text" style={{ marginTop: 0 }}>
@@ -919,7 +950,7 @@ export function StaffTerminal() {
         </div>
       )}
 
-      <header className="st-topbar">
+      <header className="st-topbar st-topbar-tabs">
         <div className="st-waiter-row">
           <UserRound size={16} color="var(--gold)" />
           {waiters.map((w) => (
@@ -939,69 +970,41 @@ export function StaffTerminal() {
             </button>
           ))}
         </div>
-        <div className="st-top-actions">
+        <nav className="st-nav-tabs" aria-label="Personální terminál">
           <button
             type="button"
-            className={quickSale ? 'btn btn-gold' : 'btn btn-ghost'}
-            style={{ minHeight: 48 }}
-            onClick={() => {
-              tapFeedback()
-              setMapFocus(false)
-              setQuickSale((v) => !v)
-            }}
+            className={navTab === 'map' ? 'st-nav-tab is-active' : 'st-nav-tab'}
+            onClick={() => selectStaffTab('map')}
           >
-            <Zap size={15} /> ⚡ Rychlý prodej (Bez stolu)
+            <MapIcon size={16} /> 🗺️ Mapa stolů & Salónky
           </button>
           <button
             type="button"
-            className="btn btn-ghost"
-            style={{ minHeight: 48 }}
-            onClick={() => {
-              tapFeedback()
-              void openPosDisplayWindow('/kds-kitchen', 1)
-            }}
+            className={navTab === 'quick' || quickSale ? 'st-nav-tab is-active' : 'st-nav-tab'}
+            onClick={() => selectStaffTab('quick')}
           >
-            <ChefHat size={15} /> KDS Kuchyň
+            <Zap size={16} /> ⚡ Rychlý prodej
           </button>
           <button
             type="button"
-            className="btn btn-ghost"
-            style={{ minHeight: 48 }}
-            onClick={() => {
-              tapFeedback()
-              void openPosDisplayWindow('/kds-bar', 2)
-            }}
+            className={navTab === 'mobile' || forceMobile ? 'st-nav-tab is-active' : 'st-nav-tab'}
+            onClick={() => selectStaffTab('mobile')}
           >
-            <Wine size={15} /> KDS Bar
+            <Smartphone size={16} /> 📱 Mobilní číšník
           </button>
           <button
             type="button"
-            className={showShifts ? 'btn btn-gold' : 'btn btn-ghost'}
-            style={{ minHeight: 48 }}
-            onClick={() => {
-              tapFeedback()
-              setShowShifts((v) => !v)
-            }}
+            className="st-nav-tab st-nav-tab-lock"
+            onClick={() => selectStaffTab('closure')}
           >
-            Směny
+            <Flag size={16} /> 🏁 Uzávěrka & Směna
           </button>
-          <button
-            type="button"
-            className="btn btn-gold st-closure-nav-btn"
-            style={{ minHeight: 52, fontWeight: 900 }}
-            onClick={() => {
-              tapFeedback()
-              setClosurePinOpen(true)
-            }}
-          >
-            <Flag size={15} /> 🏁 Uzávěrka & Směna
-          </button>
-        </div>
+        </nav>
       </header>
 
-      {showShifts && (
-        <div style={{ marginBottom: 12 }}>
-          <PosShiftExpressInput />
+      {isMobileWaiter && (
+        <div className="st-mobile-banner-inline" role="status">
+          Mobilní číšník aktivní — jednosloupcové ovládání v dosahu palce
         </div>
       )}
 
@@ -1023,11 +1026,12 @@ export function StaffTerminal() {
         </div>
       )}
 
-      <div className="st-grid">
+      <div className={`st-grid${quickSale ? ' st-grid-quick' : ''}${mapOnly ? ' st-grid-map-only' : ''}`}>
         {/* LEFT — spaces + tables */}
+        {showMapColumn && (
         <aside className="st-left panel">
           <div className="st-section-title">
-            <MapIcon size={16} color="var(--gold)" /> Prostory a stoly
+            <MapIcon size={16} color="var(--gold)" /> 🗺️ Mapa stolů & Salónky
           </div>
           <div className="st-space-bar">
             {spaces.map((s) => (
@@ -1131,9 +1135,17 @@ export function StaffTerminal() {
             })}
           </div>
         </aside>
+        )}
 
         {/* CENTER — catalog (+ seat focus strip when table open) */}
+        {showCatalog && (
         <main className="st-center panel">
+          {quickSale && (
+            <div className="st-quick-banner" role="status">
+              <Zap size={16} color="var(--gold)" />
+              Rychlý prodej — přímý prodej přes pult bez vazby na stůl
+            </div>
+          )}
           {!quickSale && activeTable && (
             <div className="st-seat-rail" aria-label="Výběr židle">
               <div className="st-seat-rail-title">
@@ -1254,8 +1266,10 @@ export function StaffTerminal() {
             )}
           </div>
         </main>
+        )}
 
         {/* RIGHT — cart locked to table / seat */}
+        {showCatalog && (
         <aside className="st-right panel">
           <div className="st-cart-header">{cartHeader}</div>
           {!quickSale && activeTable && (
@@ -1408,6 +1422,18 @@ export function StaffTerminal() {
             </button>
           </div>
         </aside>
+        )}
+
+        {mapOnly && !showCatalog && (
+          <div className="st-map-hint panel">
+            <h3 className="gold-text" style={{ marginTop: 0 }}>Vyberte stůl</h3>
+            <p style={{ color: 'var(--text-muted)', margin: 0 }}>
+              Klepněte na stůl v salónku / na zahrádce. Katalog Jídlo / Pití a košík
+              Rozpracováno → Odesláno se otevřou automaticky. Prázdné stoly lze smazat,
+              nové přidáte přes ➕ Přidat stůl (posuvník kapacity míst).
+            </p>
+          </div>
+        )}
       </div>
 
       <AdvancedCheckout
@@ -1429,13 +1455,14 @@ export function StaffTerminal() {
       <ManagerPinKeypadModal
         open={closurePinOpen}
         title="Zadejte Manažerský PIN pro přístup k uzávěrce"
-        subtitle="Uzávěrka & Směna je chráněna. Po autorizaci se otevře kompletní finanční dashboard směny."
+        subtitle="Uzávěrka & Směna je uzamčena. Demo PIN 1234 odemkne souhrn směny, pokladní deník (Platba zboží, Zálohy, Výplaty) a tlačítko Uzavřít a vytisknout."
         expectedPin={profile.managerPin}
         confirmLabel="Odemknout uzávěrku"
         onSuccess={() => {
           setClosurePinOpen(false)
           setClosureUnlocked(true)
-          setToast('Uzávěrka odemčena — Manažerský PIN ověřen')
+          setNavTab('closure')
+          setToast('Uzávěrka odemčena — Manažerský PIN ověřen (1234 / profilový PIN)')
         }}
         onCancel={() => setClosurePinOpen(false)}
       />

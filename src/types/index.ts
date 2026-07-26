@@ -783,6 +783,7 @@ export type AppView =
   | 'profile'
   | 'print'
   | 'pos'
+  | 'hardware'
   | 'inventory'
   | 'cctv'
   | 'closure'

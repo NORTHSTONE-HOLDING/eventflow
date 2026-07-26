@@ -10,13 +10,14 @@ import {
   Bar,
 } from 'recharts'
 import { motion } from 'framer-motion'
-import { Sparkles, TrendingUp, AlertTriangle, MonitorSmartphone, Siren } from 'lucide-react'
+import { Sparkles, TrendingUp, AlertTriangle, MonitorSmartphone, Siren, Cpu } from 'lucide-react'
 import { useAppStore, computeMetrics } from '../store/useAppStore'
 import { useCctvStore } from '../store/useCctvStore'
 import { formatCurrency, formatPercent } from '../lib/documentIds'
 import type { EventProject } from '../types'
 import { EventCalendarScheduler } from './EventCalendarScheduler'
 import { WaiterPerformanceRanking } from './WaiterPerformanceRanking'
+import { HardwarePosCentrum } from './HardwarePosCentrum'
 
 const FALLBACK_CHART = [
   { name: 'Led', revenue: 120000, cost: 85000 },
@@ -130,11 +131,22 @@ export function Dashboard() {
           >
             <MonitorSmartphone size={16} /> Event POS / Kasa
           </button>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={() => setView('hardware')}
+          >
+            <Cpu size={16} /> Hardware & POS Centrum
+          </button>
         </div>
       </div>
 
       <div className="panel" style={{ marginBottom: 20 }}>
         <WaiterPerformanceRanking title="Výkonnost číšníků · aktuální směna" />
+      </div>
+
+      <div className="panel" style={{ marginBottom: 20, borderColor: 'var(--border-strong)' }}>
+        <HardwarePosCentrum embedded />
       </div>
 
       {(globalCctvAlert || activeCctvAlerts.length > 0) && (

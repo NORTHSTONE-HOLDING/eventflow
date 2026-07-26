@@ -77,6 +77,20 @@ export function roleLabel(role: PrinterRole): string {
   }
 }
 
+/** Czech station label for Hardware Centrum (Bar / Kitchen / Customer). */
+export function stationLabel(role: PrinterRole): string {
+  switch (role) {
+    case 'kitchen':
+      return 'Kuchyň'
+    case 'bar':
+      return 'Bar'
+    case 'receipt':
+      return 'Zákazník (účtenka)'
+    default:
+      return role
+  }
+}
+
 /** Simulated Web Bluetooth pairing for thermal printers. */
 export async function pairBluetoothPrinter(role: PrinterRole): Promise<PosPrinter> {
   try {
@@ -119,6 +133,47 @@ export async function pairBluetoothPrinter(role: PrinterRole): Promise<PosPrinte
     address: `SIM-BT:${role.toUpperCase()}-${suffix}`,
     paired: true,
     paperWidthMm: 80,
+    lastSeen: new Date().toISOString(),
+  }
+}
+
+/**
+ * LAN / network thermal printer pairing (IP:port).
+ * Validates address shape and stores a network PosPrinter row.
+ */
+export async function pairNetworkPrinter(
+  role: PrinterRole,
+  address: string,
+  name?: string,
+): Promise<PosPrinter> {
+  const cleaned = String(address || '').trim()
+  if (!cleaned) {
+    throw new Error('Zadejte IP adresu tiskárny (např. 192.168.1.50:9100)')
+  }
+  const ok = /^(\d{1,3}\.){3}\d{1,3}(:\d{1,5})?$/.test(cleaned) || cleaned.includes('.')
+  if (!ok) {
+    throw new Error('Neplatná síťová adresa tiskárny')
+  }
+  await new Promise((r) => setTimeout(r, 600))
+  const withPort = cleaned.includes(':') ? cleaned : `${cleaned}:9100`
+  return {
+    id: uid('printer'),
+    name: (name || '').trim() || `${roleLabel(role)} · LAN`,
+    role,
+    connection: 'network',
+    address: `LAN:${withPort}`,
+    paired: true,
+    paperWidthMm: 80,
+    lastSeen: new Date().toISOString(),
+  }
+}
+
+export function renamePosPrinter(printer: PosPrinter, name: string): PosPrinter {
+  const next = String(name || '').trim()
+  if (!next) throw new Error('Název tiskárny nesmí být prázdný')
+  return {
+    ...printer,
+    name: next,
     lastSeen: new Date().toISOString(),
   }
 }

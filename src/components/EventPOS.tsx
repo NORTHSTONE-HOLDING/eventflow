@@ -2,11 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { formatCzechDateTime } from '../lib/czechDate'
 import {
-  Bluetooth,
   FileText,
   Lock,
   Minus,
-  Monitor,
   Plus,
   Printer,
   Settings2,
@@ -17,7 +15,6 @@ import {
   X,
   CheckCircle2,
   Banknote,
-  ChefHat,
   Map as MapIcon,
   Sparkles,
   AlertTriangle,
@@ -49,16 +46,11 @@ import {
 import { stockPercent, getLowStockItems } from '../lib/inventoryEngine'
 import { formatCurrency, uid } from '../lib/documentIds'
 import { POS_CATEGORIES, filterPosMenu } from '../lib/posCategories'
-import {
-  dispatchPrintJobs,
-  pairBluetoothPrinter,
-  roleLabel,
-} from '../lib/printerHardware'
+import { dispatchPrintJobs } from '../lib/printerHardware'
 import { ensurePosTables, resolveActiveTableId } from '../lib/tableTabs'
 import {
   emptyCustomerDisplay,
   getPosChannel,
-  openPosDisplayWindow,
   publishCustomerDisplay,
   type PosBroadcastMessage,
 } from '../lib/kdsSync'
@@ -69,8 +61,6 @@ import type {
   POSPaymentMethod,
   POSSubcategory,
   POSTransaction,
-  PosPrinter,
-  PrinterRole,
 } from '../types'
 import { PosTableMap } from './pos/PosTableMap'
 import { AdvancedCheckout, type CheckoutResult } from './pos/AdvancedCheckout'
@@ -112,7 +102,6 @@ export function EventPOS({ mode = 'admin' }: EventPOSProps) {
   const closePosAndGenerateDoplatkova = useAppStore((s) => s.closePosAndGenerateDoplatkova)
   const warehouseAlerts = useAppStore((s) => s.warehouseAlerts)
   const printers = useAppStore((s) => s.printers)
-  const upsertPrinter = useAppStore((s) => s.upsertPrinter)
   const setToast = useAppStore((s) => s.setToast)
   const setActiveTable = useAppStore((s) => s.setActiveTable)
   const setTableLines = useAppStore((s) => s.setTableLines)
@@ -159,8 +148,6 @@ export function EventPOS({ mode = 'admin' }: EventPOSProps) {
   const [posLocked, setPosLocked] = useState(false)
   const [lastReceipt, setLastReceipt] = useState<POSTransaction | null>(null)
   const [doplatkovaPreview, setDoplatkovaPreview] = useState<string | null>(null)
-  const [showPrinters, setShowPrinters] = useState(false)
-  const [pairingRole, setPairingRole] = useState<PrinterRole | null>(null)
   const [flashReady, setFlashReady] = useState<string | null>(null)
   const [flashSecurity, setFlashSecurity] = useState<string | null>(null)
   const [flashAmber, setFlashAmber] = useState<string | null>(null)
@@ -788,19 +775,6 @@ export function EventPOS({ mode = 'admin' }: EventPOSProps) {
     }
   }
 
-  const handlePairPrinter = async (role: PrinterRole) => {
-    setPairingRole(role)
-    try {
-      const printer = await pairBluetoothPrinter(role)
-      upsertPrinter(printer)
-      setToast(`Spárováno: ${printer.name}`)
-    } catch (e) {
-      setToast(e instanceof Error ? e.message : 'Párování selhalo')
-    } finally {
-      setPairingRole(null)
-    }
-  }
-
   const handleClosePos = () => {
     if (!project) return
     const text = closePosAndGenerateDoplatkova(project.id)
@@ -938,17 +912,15 @@ export function EventPOS({ mode = 'admin' }: EventPOSProps) {
             >
               <UserRound size={15} /> Zadat směnu personálu
             </button>
-            <button type="button" className="btn btn-ghost" onClick={() => setShowPrinters((v) => !v)} style={{ minHeight: 48 }}>
-              <Settings2 size={15} /> Tiskárny
-            </button>
-            <button type="button" className="btn btn-ghost" onClick={() => openPosDisplayWindow('/pos/customer', 1)} style={{ minHeight: 48 }}>
-              <Monitor size={15} /> Zákaznický display
-            </button>
-            <button type="button" className="btn btn-ghost" onClick={() => openPosDisplayWindow('/pos/kds/kitchen', 2)} style={{ minHeight: 48 }}>
-              <ChefHat size={15} /> Displej KUCHYŇ
-            </button>
-            <button type="button" className="btn btn-ghost" onClick={() => openPosDisplayWindow('/pos/kds/bar', 2)} style={{ minHeight: 48 }}>
-              <Wine size={15} /> Displej BAR
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => {
+                setView('hardware')
+              }}
+              style={{ minHeight: 48 }}
+            >
+              <Settings2 size={15} /> Hardware & POS Centrum
             </button>
             {project && posOpen && !project.posClosed && (
               <button type="button" className="btn btn-ghost" onClick={handleClosePos} style={{ minHeight: 48 }}>
@@ -972,12 +944,15 @@ export function EventPOS({ mode = 'admin' }: EventPOSProps) {
           >
             <UserRound size={15} /> Zadat směnu personálu
           </button>
-          <button type="button" className="btn btn-ghost" onClick={() => openPosDisplayWindow('/pos/kds/kitchen', 2)} style={{ minHeight: 48 }}>
-            <ChefHat size={15} /> Displej KUCHYŇ
-          </button>
-          <button type="button" className="btn btn-ghost" onClick={() => openPosDisplayWindow('/pos/kds/bar', 2)} style={{ minHeight: 48 }}>
-            <Wine size={15} /> Displej BAR
-          </button>
+          <div
+            style={{
+              alignSelf: 'center',
+              fontSize: '0.78rem',
+              color: 'var(--text-dim)',
+            }}
+          >
+            Tiskárny a monitory spravuje manažer v Hardware & POS Centrum.
+          </div>
         </div>
       )}
 
@@ -1262,15 +1237,6 @@ export function EventPOS({ mode = 'admin' }: EventPOSProps) {
             const id = addTable(project.id, `Stůl ${tables.length + 1}`)
             if (id) selectTable(id)
           }}
-        />
-      )}
-
-      {!staffMode && showPrinters && (
-        <PrinterConfigPanel
-          printers={safePrinters}
-          pairingRole={pairingRole}
-          onPair={handlePairPrinter}
-          onClose={() => setShowPrinters(false)}
         />
       )}
 
@@ -1898,75 +1864,6 @@ function MetricCard({
       >
         {value}
       </div>
-    </div>
-  )
-}
-
-function PrinterConfigPanel({
-  printers,
-  pairingRole,
-  onPair,
-  onClose,
-}: {
-  printers: PosPrinter[]
-  pairingRole: PrinterRole | null
-  onPair: (role: PrinterRole) => void
-  onClose: () => void
-}) {
-  const roles: PrinterRole[] = ['kitchen', 'bar', 'receipt']
-  return (
-    <div className="panel" style={{ marginBottom: 14, borderColor: 'var(--border-strong)' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
-        <h3 style={{ fontSize: '1.15rem', display: 'flex', gap: 8, alignItems: 'center' }}>
-          <Bluetooth size={18} color="var(--gold)" /> Konfigurace tiskáren
-        </h3>
-        <button type="button" className="btn btn-ghost" style={{ padding: 6 }} onClick={onClose}>
-          <X size={14} />
-        </button>
-      </div>
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-          gap: 10,
-        }}
-      >
-        {roles.map((role) => {
-          const printer = printers.find((p) => p.role === role)
-          return (
-            <div
-              key={role}
-              style={{
-                padding: '1rem',
-                background: 'var(--bg-elevated)',
-                borderRadius: 10,
-                border: '1px solid var(--border)',
-              }}
-            >
-              <div style={{ fontWeight: 600, marginBottom: 6 }}>{roleLabel(role)}</div>
-              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: 10 }}>
-                {printer
-                  ? `${printer.name} · ${printer.connection} · ${printer.address}`
-                  : 'Nepřiřazeno'}
-              </div>
-              <button
-                type="button"
-                className="btn btn-gold"
-                style={{ width: '100%' }}
-                disabled={pairingRole === role}
-                onClick={() => onPair(role)}
-              >
-                <Bluetooth size={14} />
-                {pairingRole === role ? 'Páruji…' : printer?.paired ? 'Znovu spárovat' : 'Spárovat BT'}
-              </button>
-            </div>
-          )
-        })}
-      </div>
-      <p style={{ marginTop: 10, fontSize: '0.8rem', color: 'var(--text-dim)' }}>
-        Jídlo → Kuchyňská bonička · Pití → Barová objednávka · Účtenka → Zákaznická tiskárna (80mm).
-        Volné položky jdou pouze na Tiskárnu Účtenky.
-      </p>
     </div>
   )
 }

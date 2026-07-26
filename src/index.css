@@ -1903,6 +1903,83 @@ a:hover {
   align-items: center;
 }
 
+.st-topbar-tabs {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.st-nav-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  width: 100%;
+}
+
+.st-nav-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 56px;
+  padding: 0.65rem 0.75rem;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+  text-align: center;
+  line-height: 1.25;
+  transition: border-color 0.2s ease, background 0.2s ease, color 0.2s ease;
+}
+
+.st-nav-tab.is-active {
+  border-color: var(--gold);
+  background: var(--gold-subtle);
+  color: var(--gold-light);
+  box-shadow: var(--shadow-gold);
+}
+
+.st-nav-tab-lock {
+  border-color: rgba(212, 175, 55, 0.4);
+  color: var(--gold);
+}
+
+.st-nav-tab.is-locked {
+  border-color: var(--gold);
+  background: rgba(212, 175, 55, 0.16);
+  color: var(--gold-light);
+}
+
+.st-quick-banner,
+.st-map-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 0.85rem 1rem;
+  margin-bottom: 12px;
+  border-radius: 10px;
+  border: 1px dashed rgba(212, 175, 55, 0.35);
+  background: rgba(212, 175, 55, 0.06);
+  color: var(--text-muted);
+  font-size: 0.88rem;
+}
+
+.st-grid-quick {
+  grid-template-columns: minmax(0, 1.4fr) minmax(280px, 0.9fr);
+}
+
+.st-grid-map-only {
+  grid-template-columns: minmax(280px, 1.1fr) minmax(0, 1fr);
+}
+
+.staff-terminal-map-focus .st-left {
+  min-height: 420px;
+}
+
 .st-waiter-row,
 .st-top-actions,
 .st-space-bar,
@@ -1913,6 +1990,187 @@ a:hover {
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
+}
+
+/* Hardware & POS Centrum (owner/manager only) */
+.hardware-pos-centrum .hw-section {
+  margin-bottom: 18px;
+}
+
+.hw-embedded-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+
+.hw-section-title {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 16px;
+}
+
+.hw-section-title h3 {
+  margin: 0;
+  font-size: 1.2rem;
+}
+
+.hw-section-title p {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: 0.88rem;
+}
+
+.hw-printer-grid,
+.hw-monitor-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.hw-printer-card,
+.hw-monitor-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 1rem;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  min-height: 100%;
+}
+
+.hw-printer-card-head,
+.hw-logs-head,
+.hw-connection-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.hw-printer-name,
+.hw-monitor-title {
+  font-weight: 700;
+  font-size: 1.05rem;
+}
+
+.hw-printer-meta,
+.hw-monitor-sub,
+.hw-footnote {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.hw-footnote {
+  margin-top: 12px;
+}
+
+.hw-inline-row,
+.hw-btn-stack {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.hw-inline-row .input {
+  flex: 1;
+  min-width: 140px;
+}
+
+.hw-btn-stack {
+  flex-direction: column;
+  align-items: stretch;
+  margin-top: 6px;
+}
+
+.hw-status {
+  font-size: 0.75rem;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.hw-status.ok {
+  color: var(--success);
+}
+
+.hw-status.warn {
+  color: var(--warning);
+}
+
+.hw-terminal-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  gap: 14px;
+  align-items: stretch;
+}
+
+.hw-terminal-logs,
+.hw-terminal-config {
+  min-width: 0;
+}
+
+.hw-logs-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 320px;
+  overflow: auto;
+  margin-top: 10px;
+}
+
+.hw-log-row {
+  padding: 0.7rem 0.85rem;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-base);
+}
+
+.hw-log-row.is-ok {
+  border-color: rgba(62, 207, 142, 0.35);
+}
+
+.hw-log-row.is-fail {
+  border-color: rgba(239, 68, 68, 0.35);
+}
+
+.hw-log-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.86rem;
+}
+
+.hw-log-meta,
+.hw-logs-empty,
+.hw-handshake-status {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  margin-top: 4px;
+}
+
+.hw-handshake-status {
+  margin-top: 10px;
+  color: var(--gold-light);
+}
+
+@media (max-width: 900px) {
+  .st-nav-tabs {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .st-grid-quick,
+  .st-grid-map-only,
+  .hw-terminal-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* Category (Jídlo/Pití) ↔ subcategory (Pivo/Víno…) vertical separation */

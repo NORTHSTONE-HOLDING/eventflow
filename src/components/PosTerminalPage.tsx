@@ -105,7 +105,7 @@ export function PosTerminalPage() {
         <div>
           <div className="st-page-brand">EVENTFLOW · PERSONÁLNÍ TERMINÁL</div>
           <div className="st-page-sub">
-            Multi-zónová kasa · prostory · KDS · dělení účtu · uzávěrka směny
+            Mapa stolů · Rychlý prodej · Mobilní číšník · Uzávěrka (PIN)
           </div>
         </div>
         <button type="button" className="st-admin-exit" onClick={requestAdminExit}>

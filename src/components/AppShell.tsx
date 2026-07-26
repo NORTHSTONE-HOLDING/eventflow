@@ -10,6 +10,7 @@ import { ClientPortal } from './ClientPortal'
 import { LegalAudit } from './LegalAudit'
 import { ProfileSettings } from './ProfileSettings'
 import { EventPOS } from './EventPOS'
+import { HardwarePosCentrum } from './HardwarePosCentrum'
 import { ShiftClosureHub } from './ShiftClosureHub'
 import { InventoryHub } from './inventory/InventoryHub'
 import { CloudSyncBadge } from './inventory/CloudSyncBadge'
@@ -30,8 +31,10 @@ function renderView(view: AppView) {
       return <Dashboard />
     case 'planner':
       return <AIPlanner />
-      case 'pos':
+    case 'pos':
       return <EventPOS />
+    case 'hardware':
+      return <HardwarePosCentrum />
     case 'closure':
       return <ShiftClosureHub />
     case 'cctv':

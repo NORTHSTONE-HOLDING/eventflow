@@ -93,6 +93,7 @@ const APP_VIEWS: AppView[] = [
   'profile',
   'print',
   'pos',
+  'hardware',
   'inventory',
   'cctv',
   'closure',

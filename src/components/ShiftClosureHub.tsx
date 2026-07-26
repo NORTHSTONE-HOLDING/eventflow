@@ -453,7 +453,7 @@ export function ShiftClosureHub({
             onClick={onCloseShift}
           >
             {busy ? <Loader2 className="spin" size={18} /> : <Printer size={18} />}
-            {' '}🖨️ Uzavřít směnu a Vytisknout uzávěrku
+            {' '}🖨️ Uzavřít a vytisknout
           </button>
 
           <p style={{ fontSize: '0.78rem', color: '#94a3b8', marginTop: 10 }}>

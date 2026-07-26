@@ -265,8 +265,8 @@ export function StaffTerminal() {
   const cartHeader = quickSale
     ? '🛒 ÚČET: RYCHLÝ PRODEJ'
     : activeTable
-      ? `🛒 ÚČET: ${activeTable.label} · Kapacita: ${seatCapacity} osob · ${spaceLabel}`
-      : `🛒 ÚČET: STŮL — · ${spaceLabel}`
+      ? `🛒 ÚČET: STŮL ${activeTable.label} - ${spaceLabel}`
+      : `🛒 ÚČET: STŮL — - ${spaceLabel}`
   const focusSeatLabel = seatLabel(activeSeatIndex)
 
   const myReady = useMemo(
@@ -869,15 +869,9 @@ export function StaffTerminal() {
     )
   }
 
-  const showMapColumn = navTab === 'map' || navTab === 'mobile'
-  const mapOnly = navTab === 'map' && (mapFocus || !activeTableId) && !quickSale
-  const showCatalog = quickSale || Boolean(activeTableId) || navTab === 'quick' || navTab === 'mobile'
-
   return (
     <div
-      className={`staff-terminal${isMobileWaiter ? ' staff-terminal-mobile' : ''}${
-        mapOnly ? ' staff-terminal-map-focus' : ''
-      }`}
+      className={`staff-terminal${isMobileWaiter ? ' staff-terminal-mobile' : ''}`}
     >
       {waiterLoggedOut && (
         <div className="st-waiter-login-gate panel" role="dialog" aria-modal="true">
@@ -951,32 +945,13 @@ export function StaffTerminal() {
       )}
 
       <header className="st-topbar st-topbar-tabs">
-        <div className="st-waiter-row">
-          <UserRound size={16} color="var(--gold)" />
-          {waiters.map((w) => (
-            <button
-              key={w.id}
-              type="button"
-              className={
-                !waiterLoggedOut && activeWaiterId === w.id ? 'btn btn-gold' : 'btn btn-ghost'
-              }
-              style={{ minHeight: 44 }}
-              onClick={() => {
-                tapFeedback()
-                setActiveWaiter(w.id)
-              }}
-            >
-              {w.name}
-            </button>
-          ))}
-        </div>
         <nav className="st-nav-tabs" aria-label="Personální terminál">
           <button
             type="button"
-            className={navTab === 'map' ? 'st-nav-tab is-active' : 'st-nav-tab'}
+            className={navTab === 'map' && !quickSale ? 'st-nav-tab is-active' : 'st-nav-tab'}
             onClick={() => selectStaffTab('map')}
           >
-            <MapIcon size={16} /> 🗺️ Mapa stolů & Salónky
+            <MapIcon size={16} /> 🗺️ Mapa stolů
           </button>
           <button
             type="button"
@@ -1000,11 +975,30 @@ export function StaffTerminal() {
             <Flag size={16} /> 🏁 Uzávěrka & Směna
           </button>
         </nav>
+        <div className="st-waiter-row">
+          <UserRound size={16} color="var(--gold)" />
+          {waiters.map((w) => (
+            <button
+              key={w.id}
+              type="button"
+              className={
+                !waiterLoggedOut && activeWaiterId === w.id ? 'btn btn-gold' : 'btn btn-ghost'
+              }
+              style={{ minHeight: 44 }}
+              onClick={() => {
+                tapFeedback()
+                setActiveWaiter(w.id)
+              }}
+            >
+              {w.name}
+            </button>
+          ))}
+        </div>
       </header>
 
       {isMobileWaiter && (
         <div className="st-mobile-banner-inline" role="status">
-          Mobilní číšník aktivní — jednosloupcové ovládání v dosahu palce
+          📱 Mobilní číšník aktivní — jednosloupcové ovládání v dosahu palce
         </div>
       )}
 
@@ -1026,14 +1020,13 @@ export function StaffTerminal() {
         </div>
       )}
 
-      <div className={`st-grid${quickSale ? ' st-grid-quick' : ''}${mapOnly ? ' st-grid-map-only' : ''}`}>
-        {/* LEFT — spaces + tables */}
-        {showMapColumn && (
-        <aside className="st-left panel">
+      <div className="st-grid">
+        {/* LEFT (~22%) — spaces + table map */}
+        <aside className="st-left panel st-col-left">
           <div className="st-section-title">
-            <MapIcon size={16} color="var(--gold)" /> 🗺️ Mapa stolů & Salónky
+            <MapIcon size={16} color="#D4AF37" /> 🗺️ Mapa stolů & Salónky
           </div>
-          <div className="st-space-bar">
+          <div className="st-space-bar" role="tablist" aria-label="Prostory">
             {spaces.map((s) => (
               <button
                 key={s.id}
@@ -1135,14 +1128,12 @@ export function StaffTerminal() {
             })}
           </div>
         </aside>
-        )}
 
-        {/* CENTER — catalog (+ seat focus strip when table open) */}
-        {showCatalog && (
-        <main className="st-center panel">
+        {/* CENTER (~52%) — catalog + category nav */}
+        <main className="st-center panel st-col-center">
           {quickSale && (
             <div className="st-quick-banner" role="status">
-              <Zap size={16} color="var(--gold)" />
+              <Zap size={16} color="#D4AF37" />
               Rychlý prodej — přímý prodej přes pult bez vazby na stůl
             </div>
           )}
@@ -1266,11 +1257,9 @@ export function StaffTerminal() {
             )}
           </div>
         </main>
-        )}
 
-        {/* RIGHT — cart locked to table / seat */}
-        {showCatalog && (
-        <aside className="st-right panel">
+        {/* RIGHT (~26%) — live cart locked to active table */}
+        <aside className="st-right panel st-col-right">
           <div className="st-cart-header">{cartHeader}</div>
           {!quickSale && activeTable && (
             <div className="st-cart-seat-focus">
@@ -1279,11 +1268,13 @@ export function StaffTerminal() {
               {activeSeatIndex != null
                 ? ' — nové položky se uzamknou na tuto židli'
                 : ' — společný účet stolu'}
+              <span className="st-cart-zone-chip">Kapacita: {seatCapacity} osob</span>
             </div>
           )}
           {!quickSale && !activeTable && (
             <div className="st-empty-cat" style={{ padding: '1.5rem 0.75rem' }}>
-              Vyberte stůl na mapě vlevo. Po odeslání objednávky se pohled vrátí sem.
+              Vyberte stůl na mapě vlevo. Po odeslání objednávky se pohled vrátí na mapu;
+              katalog a košík zůstávají připravené.
             </div>
           )}
           <div className="st-cart-lines">
@@ -1422,18 +1413,6 @@ export function StaffTerminal() {
             </button>
           </div>
         </aside>
-        )}
-
-        {mapOnly && !showCatalog && (
-          <div className="st-map-hint panel">
-            <h3 className="gold-text" style={{ marginTop: 0 }}>Vyberte stůl</h3>
-            <p style={{ color: 'var(--text-muted)', margin: 0 }}>
-              Klepněte na stůl v salónku / na zahrádce. Katalog Jídlo / Pití a košík
-              Rozpracováno → Odesláno se otevřou automaticky. Prázdné stoly lze smazat,
-              nové přidáte přes ➕ Přidat stůl (posuvník kapacity míst).
-            </p>
-          </div>
-        )}
       </div>
 
       <AdvancedCheckout

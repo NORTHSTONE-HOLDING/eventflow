@@ -15,6 +15,10 @@ function CategoryIcon({ category }: { category: string }) {
   return <Package size={42} color={GOLD} strokeWidth={1.35} />
 }
 
+/**
+ * High-contrast POS product tile — photo fills background,
+ * bold white name on slate-950/80 bar, gold #D4AF37 price.
+ */
 export function PosProductTile({
   item,
   imageUrl,
@@ -38,7 +42,7 @@ export function PosProductTile({
       onClick={onAdd}
       className="pos-item-card"
       style={{
-        minHeight: 168,
+        minHeight: 176,
         minWidth: 44,
         padding: 0,
         background: '#0f172a',
@@ -160,6 +164,7 @@ export function PosProductTile({
         />
       )}
 
+      {/* bg-slate-950/80 backdrop-blur · white name · gold price */}
       <div
         className="pos-item-overlay"
         style={{
@@ -167,17 +172,18 @@ export function PosProductTile({
           zIndex: 1,
           width: '100%',
           marginTop: 'auto',
-          padding: '0.7rem 0.75rem 0.65rem',
-          background: 'rgba(2, 6, 23, 0.7)',
+          padding: '0.65rem 0.75rem',
+          background: 'rgba(2, 6, 23, 0.8)',
           backdropFilter: 'blur(6px)',
           WebkitBackdropFilter: 'blur(6px)',
           borderTop: '1px solid rgba(148,163,184,0.18)',
         }}
       >
         <div
+          className="pos-item-name"
           style={{
             fontFamily: 'var(--font-display)',
-            fontSize: '0.98rem',
+            fontSize: '1rem',
             lineHeight: 1.2,
             color: '#ffffff',
             fontWeight: 800,
@@ -196,10 +202,11 @@ export function PosProductTile({
           }}
         >
           <div
+            className="pos-item-price"
             style={{
               color: GOLD,
               fontWeight: 900,
-              fontSize: '1.12rem',
+              fontSize: '1.15rem',
               textShadow: '0 1px 4px rgba(0,0,0,0.7)',
             }}
           >

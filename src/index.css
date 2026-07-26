@@ -1915,6 +1915,64 @@ a:hover {
   align-items: center;
 }
 
+/* Category (Jídlo/Pití) ↔ subcategory (Pivo/Víno…) vertical separation */
+.st-menu-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-bottom: 0.85rem;
+  padding-bottom: 0.85rem;
+  border-bottom: 1px solid rgba(212, 175, 55, 0.22);
+}
+
+.st-cat-tabs {
+  justify-content: center;
+  gap: 10px;
+  margin: 0;
+  padding: 0.15rem 0 0.35rem;
+}
+
+.st-sub-bar {
+  justify-content: center;
+  gap: 10px;
+  margin: 0;
+  padding: 0.35rem 0 0.15rem;
+}
+
+.st-cat-tabs .btn,
+.st-sub-bar .btn {
+  justify-content: center;
+  touch-action: manipulation;
+}
+
+/* Space manager: Přidat prostor / Přidat stůl — no overlap */
+.st-space-bar {
+  margin-bottom: 0.75rem;
+}
+
+.st-space-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin: 0 0 1rem;
+  padding: 0.15rem 0 0.35rem;
+}
+
+.st-space-action-btn {
+  min-height: 52px !important;
+  width: 100%;
+  justify-content: center;
+  font-weight: 800;
+  touch-action: manipulation;
+}
+
+@media (max-width: 420px) {
+  .st-space-actions {
+    grid-template-columns: 1fr;
+    gap: 0.85rem;
+  }
+}
+
 .st-ready-chip {
   min-height: 44px;
   padding: 0.5rem 0.85rem;

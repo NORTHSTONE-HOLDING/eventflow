@@ -1044,13 +1044,22 @@ export function StaffTerminal() {
                 {s.name}
               </button>
             ))}
+          </div>
+
+          <div className="st-space-actions">
             <button
               type="button"
-              className="btn btn-ghost"
-              style={{ minHeight: 44 }}
+              className="btn btn-ghost st-space-action-btn"
               onClick={onAddSpace}
             >
               ➕ Přidat prostor
+            </button>
+            <button
+              type="button"
+              className="btn btn-gold st-space-action-btn"
+              onClick={onAddTable}
+            >
+              <Plus size={16} /> ➕ Přidat stůl
             </button>
           </div>
 
@@ -1121,14 +1130,6 @@ export function StaffTerminal() {
               )
             })}
           </div>
-          <button
-            type="button"
-            className="btn btn-gold"
-            style={{ width: '100%', minHeight: 48, marginTop: 10 }}
-            onClick={onAddTable}
-          >
-            <Plus size={16} /> ➕ Přidat stůl
-          </button>
         </aside>
 
         {/* CENTER — catalog (+ seat focus strip when table open) */}
@@ -1172,47 +1173,49 @@ export function StaffTerminal() {
               </div>
             </div>
           )}
-          <div className="st-cat-tabs">
-            <button
-              type="button"
-              className={mainCat === 'food' ? 'btn btn-gold' : 'btn btn-ghost'}
-              style={{ minHeight: 48 }}
-              onClick={() => {
-                tapFeedback()
-                setMainCat('food')
-                setSubCat('all')
-              }}
-            >
-              <Utensils size={15} /> Jídlo
-            </button>
-            <button
-              type="button"
-              className={mainCat === 'beverage' ? 'btn btn-gold' : 'btn btn-ghost'}
-              style={{ minHeight: 48 }}
-              onClick={() => {
-                tapFeedback()
-                setMainCat('beverage')
-                setSubCat('all')
-              }}
-            >
-              <Wine size={15} /> Pití
-            </button>
-          </div>
-          <div className="st-sub-bar">
-            {subs.map((s) => (
+          <div className="st-menu-nav" aria-label="Kategorie jídelníčku">
+            <div className="st-cat-tabs">
               <button
-                key={s.id}
                 type="button"
-                className={subCat === s.id ? 'btn btn-gold' : 'btn btn-ghost'}
-                style={{ minHeight: 40 }}
+                className={mainCat === 'food' ? 'btn btn-gold' : 'btn btn-ghost'}
+                style={{ minHeight: 48 }}
                 onClick={() => {
                   tapFeedback()
-                  setSubCat(s.id)
+                  setMainCat('food')
+                  setSubCat('all')
                 }}
               >
-                {s.label}
+                <Utensils size={15} /> Jídlo
               </button>
-            ))}
+              <button
+                type="button"
+                className={mainCat === 'beverage' ? 'btn btn-gold' : 'btn btn-ghost'}
+                style={{ minHeight: 48 }}
+                onClick={() => {
+                  tapFeedback()
+                  setMainCat('beverage')
+                  setSubCat('all')
+                }}
+              >
+                <Wine size={15} /> Pití
+              </button>
+            </div>
+            <div className="st-sub-bar">
+              {subs.map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  className={subCat === s.id ? 'btn btn-gold' : 'btn btn-ghost'}
+                  style={{ minHeight: 44 }}
+                  onClick={() => {
+                    tapFeedback()
+                    setSubCat(s.id)
+                  }}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
           </div>
           <div className="st-voice-row">
             <VoiceOrderButton

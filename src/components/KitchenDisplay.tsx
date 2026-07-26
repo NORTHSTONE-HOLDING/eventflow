@@ -489,8 +489,37 @@ export function KitchenDisplayPage() {
                 >
                   {ticket.tableLabel}
                 </div>
+                {(ticket.orderSource === 'customer_qr' ||
+                  ticket.orderSource === 'online') && (
+                  <div
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      marginBottom: 8,
+                      padding: '0.45rem 0.75rem',
+                      borderRadius: 10,
+                      fontWeight: 900,
+                      fontSize: '0.78rem',
+                      letterSpacing: '0.02em',
+                      color: '#0b0f14',
+                      background: 'linear-gradient(135deg, #f0d78c, #D4AF37)',
+                      border: '1px solid #fde68a',
+                      boxShadow: '0 0 18px rgba(212,175,55,0.45)',
+                      animation: 'stReadyPulse 1.4s ease infinite',
+                    }}
+                  >
+                    📥 ONLINE OBJEDNÁVKA -{' '}
+                    {(ticket.tableLabel || 'STŮL').toUpperCase()}
+                  </div>
+                )}
                 <div style={{ fontSize: '0.82rem', color: '#94a3b8', marginBottom: 6 }}>
-                  Obsluha: <strong style={{ color: '#e2e8f0' }}>{ticket.waiterName || '—'}</strong>
+                  Obsluha:{' '}
+                  <strong style={{ color: '#e2e8f0' }}>
+                    {ticket.orderSource === 'customer_qr' || ticket.orderSource === 'online'
+                      ? 'Online host'
+                      : ticket.waiterName || '—'}
+                  </strong>
                 </div>
                 <div style={{ fontSize: '0.78rem', color: '#94a3b8', marginBottom: 8 }}>
                   Odesláno {orderTime} · {ticket.receiptNumber}

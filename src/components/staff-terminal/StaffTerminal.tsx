@@ -6,7 +6,10 @@ import {
   Map as MapIcon,
   Minus,
   Plus,
+  Printer,
+  Settings2,
   ShoppingCart,
+  Smartphone,
   Trash2,
   Utensils,
   Wine,
@@ -35,8 +38,11 @@ import { POS_CATEGORIES, filterPosMenu } from '../../lib/posCategories'
 import { buildVenueMasterCatalog, mergeCatalogs } from '../../lib/venueCatalog'
 import { mergeHybridPosCatalog } from '../../lib/inventoryPosBridge'
 import {
+  clampSeatCapacity,
+  DEFAULT_SEAT_CAPACITY,
   ensurePosTables,
   isSentCartLine,
+  seatLabel,
   tableOpenTotal,
   tablesInSpace,
 } from '../../lib/tableTabs'
@@ -48,8 +54,10 @@ import {
   openPosDisplayWindow,
   type PosBroadcastMessage,
 } from '../../lib/kdsSync'
+import { printTableQrCode } from '../../lib/tableQrPrint'
 import { tapFeedback } from '../../lib/touchFeedback'
 import { StornoPinModal } from './StornoPinModal'
+import { TableConfigModal } from './TableConfigModal'
 import type { CateringItem, POSCartLine, POSSubcategory, PosTableTab } from '../../types'
 
 /**
@@ -67,6 +75,8 @@ export function StaffTerminal() {
   const updateProject = useAppStore((s) => s.updateProject)
   const addTable = useAppStore((s) => s.addTable)
   const removeTable = useAppStore((s) => s.removeTable)
+  const renameTable = useAppStore((s) => s.renameTable)
+  const updateTableCapacity = useAppStore((s) => s.updateTableCapacity)
   const sendTableOrderToKds = useAppStore((s) => s.sendTableOrderToKds)
   const removeDraftCartLine = useAppStore((s) => s.removeDraftCartLine)
   const voidSentCartLine = useAppStore((s) => s.voidSentCartLine)
@@ -122,12 +132,27 @@ export function StaffTerminal() {
   /** PIN-gated Uzávěrka & Směna inside /pos-terminal */
   const [closurePinOpen, setClosurePinOpen] = useState(false)
   const [closureUnlocked, setClosureUnlocked] = useState(false)
+  /** null = Celý stůl (společný účet); 1…N = Židle N */
+  const [activeSeatIndex, setActiveSeatIndex] = useState<number | null>(null)
+  const [isMobileWaiter, setIsMobileWaiter] = useState(false)
+  const [tableConfig, setTableConfig] = useState<
+    null | { mode: 'add' } | { mode: 'edit'; table: PosTableTab }
+  >(null)
 
   useEffect(() => {
     void bootstrapInventory()
     purgeExpired()
     if (project) ensureProjectPosReady(project.id)
   }, [bootstrapInventory, purgeExpired, project, ensureProjectPosReady])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const mq = window.matchMedia('(max-width: 900px)')
+    const sync = () => setIsMobileWaiter(mq.matches)
+    sync()
+    mq.addEventListener('change', sync)
+    return () => mq.removeEventListener('change', sync)
+  }, [])
 
   const tables = useMemo(
     () => (project ? ensurePosTables(project.posTables) : []),
@@ -145,6 +170,10 @@ export function StaffTerminal() {
     () => tables.find((t) => t.id === activeTableId) || null,
     [tables, activeTableId],
   )
+
+  useEffect(() => {
+    setActiveSeatIndex(null)
+  }, [activeTableId])
 
   const draftLines = useMemo(
     () => (quickSale ? quickLines : (activeTable?.lines ?? []).filter((l) => !isSentCartLine(l))),
@@ -178,9 +207,15 @@ export function StaffTerminal() {
   const cartLines = quickSale ? quickLines : activeTable?.lines ?? []
   const cartTotalsValue = cartTotals(cartLines)
   const spaceLabel = getSpaceName(activeTable?.spaceId || activeSpaceId)
+  const seatCapacity = clampSeatCapacity(
+    activeTable?.seatCapacity ?? DEFAULT_SEAT_CAPACITY,
+  )
   const cartHeader = quickSale
     ? '🛒 ÚČET: RYCHLÝ PRODEJ'
-    : `🛒 ÚČET: STŮL ${activeTable?.label || '—'} - ${spaceLabel}`
+    : activeTable
+      ? `🛒 ÚČET: ${activeTable.label} · Kapacita: ${seatCapacity} osob · ${spaceLabel}`
+      : `🛒 ÚČET: STŮL — · ${spaceLabel}`
+  const focusSeatLabel = seatLabel(activeSeatIndex)
 
   const myReady = useMemo(
     () =>
@@ -308,6 +343,8 @@ export function StaffTerminal() {
       sentToKds: false,
       inventory_item_id: item.inventory_item_id ?? null,
       is_daily_special: item.is_daily_special,
+      seatIndex: quickSale ? null : activeSeatIndex,
+      orderSource: 'waiter',
     }
     if (quickSale) {
       setQuickLines((prev) => {
@@ -547,7 +584,13 @@ export function StaffTerminal() {
     }
     printSale(result, activeTable.label, sale.receiptNumber || uid('rcp'))
     setCheckoutOpen(false)
-    setToast(`Platba ${activeTable.label} · zbývající položky zůstávají na stole`)
+    const walletPaid =
+      result.method === 'apple_pay' || result.method === 'google_pay'
+    setToast(
+      walletPaid
+        ? `ZAPLACENO · ${activeTable.label} · ${paymentMethodLabel(result.method)}`
+        : `Platba ${activeTable.label} · zbývající položky zůstávají na stole`,
+    )
   }
 
   const onAddSpace = () => {
@@ -564,13 +607,23 @@ export function StaffTerminal() {
       setToast('Nejdřív aktivujte projekt v Admin Dashboardu')
       return
     }
-    const name = window.prompt('Název / popis stolu', `Stůl ${tables.length + 1}`)
-    if (!name) return
-    const id = addTable(project.id, name, { spaceId: activeSpaceId })
-    if (id) {
-      setWorkspaceTableId(id)
-      setToast(`Stůl „${name.trim()}“ přidán do ${getSpaceName(activeSpaceId)}`)
-    }
+    setTableConfig({ mode: 'add' })
+  }
+
+  const onEditTable = (table: PosTableTab) => {
+    tapFeedback()
+    setTableConfig({ mode: 'edit', table })
+  }
+
+  const onPrintTableQr = (table: PosTableTab) => {
+    tapFeedback('success')
+    printTableQrCode({
+      tableId: table.id,
+      tableLabel: table.label,
+      seatCapacity: clampSeatCapacity(table.seatCapacity),
+      venueName: profile.companyName || 'EventFlow',
+    })
+    setToast(`QR kód pro ${table.label} připraven k tisku`)
   }
 
   const onDeleteTable = (table: PosTableTab) => {
@@ -580,6 +633,30 @@ export function StaffTerminal() {
     const res = removeTable(project.id, table.id)
     if (!res.ok) setToast(res.error || 'Smazání selhalo')
     else setToast(`Stůl „${table.label}“ smazán`)
+  }
+
+  const onSaveTableConfig = (result: { label: string; seatCapacity: number }) => {
+    if (!project || !tableConfig) return
+    if (tableConfig.mode === 'add') {
+      const id = addTable(project.id, result.label, {
+        spaceId: activeSpaceId,
+        seatCapacity: result.seatCapacity,
+      })
+      if (id) {
+        setWorkspaceTableId(id)
+        setMapFocus(false)
+        setToast(
+          `${result.label} přidán · Kapacita: ${result.seatCapacity} osob · ${getSpaceName(activeSpaceId)}`,
+        )
+      }
+    } else {
+      renameTable(project.id, tableConfig.table.id, result.label)
+      updateTableCapacity(project.id, tableConfig.table.id, result.seatCapacity)
+      setToast(
+        `${result.label} uložen · Kapacita: ${result.seatCapacity} osob`,
+      )
+    }
+    setTableConfig(null)
   }
 
   const subs = POS_CATEGORIES.find((c) => c.id === mainCat)?.subs || []
@@ -611,7 +688,14 @@ export function StaffTerminal() {
   }
 
   return (
-    <div className="staff-terminal">
+    <div
+      className={`staff-terminal${isMobileWaiter ? ' staff-terminal-mobile' : ''}`}
+    >
+      {isMobileWaiter && (
+        <div className="st-mobile-banner" role="status">
+          <Smartphone size={16} /> Mobilní číšník · optimalizovaný jedno sloupec
+        </div>
+      )}
       {waiterLoggedOut && (
         <div className="st-waiter-login-gate panel" role="dialog" aria-modal="true">
           <h2 className="gold-text" style={{ marginTop: 0 }}>
@@ -822,6 +906,10 @@ export function StaffTerminal() {
             {spaceTables.map((t) => {
               const total = tableOpenTotal(t)
               const active = !quickSale && t.id === activeTableId
+              const cap = clampSeatCapacity(t.seatCapacity)
+              const onlineLines = (t.lines ?? []).filter(
+                (l) => l.orderSource === 'customer_qr' || l.orderSource === 'online',
+              ).length
               return (
                 <div
                   key={t.id}
@@ -833,21 +921,49 @@ export function StaffTerminal() {
                     onClick={() => selectTable(t.id)}
                   >
                     <div className="st-table-label">{t.label}</div>
-                    <div className="st-table-zone">{getSpaceName(t.spaceId)}</div>
+                    <div className="st-table-zone">
+                      {getSpaceName(t.spaceId)} · Kapacita: {cap} osob
+                    </div>
                     <div className="st-table-balance">
                       {total > 0 ? formatCurrency(total) : 'Volný'}
                     </div>
                     <div className="st-table-meta">
                       {(t.lines ?? []).length} pol. · {t.assignedWaiterName || '—'}
+                      {onlineLines > 0 ? ` · 📥 Online ${onlineLines}` : ''}
                     </div>
                   </button>
+                  <div className="st-table-card-actions">
+                    <button
+                      type="button"
+                      className="st-table-tool"
+                      title="Konfigurace stolu"
+                      onClick={() => onEditTable(t)}
+                    >
+                      <Settings2 size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      className="st-table-tool"
+                      title="Vytisknout QR kód pro stůl"
+                      onClick={() => onPrintTableQr(t)}
+                    >
+                      <Printer size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      className="st-table-trash"
+                      title="Smazat stůl"
+                      onClick={() => onDeleteTable(t)}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
                   <button
                     type="button"
-                    className="st-table-trash"
-                    title="Smazat stůl"
-                    onClick={() => onDeleteTable(t)}
+                    className="st-table-qr-btn"
+                    onClick={() => onPrintTableQr(t)}
                   >
-                    <Trash2 size={14} />
+                    🖨️ Vytisknout QR kód pro stůl
                   </button>
                 </div>
               )
@@ -863,8 +979,47 @@ export function StaffTerminal() {
           </button>
         </aside>
 
-        {/* CENTER — catalog */}
+        {/* CENTER — catalog (+ seat focus strip when table open) */}
         <main className="st-center panel">
+          {!quickSale && activeTable && (
+            <div className="st-seat-rail" aria-label="Výběr židle">
+              <div className="st-seat-rail-title">
+                {activeTable.label} · Kapacita: {seatCapacity} osob · fokus:{' '}
+                <strong className="gold-text">{focusSeatLabel}</strong>
+              </div>
+              <div className="st-seat-nodes">
+                <button
+                  type="button"
+                  className={
+                    activeSeatIndex == null
+                      ? 'st-seat-node is-active is-shared'
+                      : 'st-seat-node is-shared'
+                  }
+                  onClick={() => {
+                    tapFeedback()
+                    setActiveSeatIndex(null)
+                  }}
+                >
+                  Celý Stůl (Společný účet)
+                </button>
+                {Array.from({ length: seatCapacity }, (_, i) => i + 1).map((seat) => (
+                  <button
+                    key={seat}
+                    type="button"
+                    className={
+                      activeSeatIndex === seat ? 'st-seat-node is-active' : 'st-seat-node'
+                    }
+                    onClick={() => {
+                      tapFeedback()
+                      setActiveSeatIndex(seat)
+                    }}
+                  >
+                    Židle {seat}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="st-cat-tabs">
             <button
               type="button"
@@ -928,9 +1083,18 @@ export function StaffTerminal() {
           </div>
         </main>
 
-        {/* RIGHT — cart locked to table */}
+        {/* RIGHT — cart locked to table / seat */}
         <aside className="st-right panel">
           <div className="st-cart-header">{cartHeader}</div>
+          {!quickSale && activeTable && (
+            <div className="st-cart-seat-focus">
+              Aktivní účet:{' '}
+              <strong className="gold-text">{focusSeatLabel}</strong>
+              {activeSeatIndex != null
+                ? ' — nové položky se uzamknou na tuto židli'
+                : ' — společný účet stolu'}
+            </div>
+          )}
           {!quickSale && !activeTable && (
             <div className="st-empty-cat" style={{ padding: '1.5rem 0.75rem' }}>
               Vyberte stůl na mapě vlevo. Po odeslání objednávky se pohled vrátí sem.
@@ -950,7 +1114,10 @@ export function StaffTerminal() {
                 <div>
                   <div className="st-cart-name">{line.name}</div>
                   <div className="st-cart-price">
-                    {formatCurrency(line.unitPrice)} · Draft
+                    {formatCurrency(line.unitPrice)} · Draft · {seatLabel(line.seatIndex)}
+                    {line.orderSource === 'customer_qr' || line.orderSource === 'online'
+                      ? ' · 📥 Online'
+                      : ''}
                   </div>
                 </div>
                 <div className="st-cart-qty">
@@ -994,14 +1161,26 @@ export function StaffTerminal() {
             {sentLines.map((line, idx) => (
               <div
                 key={line.lineId || `sent-${line.cateringId}-${idx}`}
-                className="st-cart-line st-cart-line-sent"
+                className={`st-cart-line st-cart-line-sent${
+                  line.orderSource === 'customer_qr' || line.orderSource === 'online'
+                    ? ' st-cart-line-online'
+                    : ''
+                }`}
               >
                 <div>
-                  <div className="st-cart-name">{line.name}</div>
+                  <div className="st-cart-name">
+                    {line.orderSource === 'customer_qr' || line.orderSource === 'online'
+                      ? '📥 '
+                      : ''}
+                    {line.name}
+                  </div>
                   <div className="st-cart-price">
-                    {formatCurrency(line.unitPrice)} · Odesláno
+                    {formatCurrency(line.unitPrice)} · Odesláno · {seatLabel(line.seatIndex)}
                     {line.sentAt
                       ? ` · ${new Date(line.sentAt).toLocaleTimeString('cs-CZ')}`
+                      : ''}
+                    {line.orderSource === 'customer_qr' || line.orderSource === 'online'
+                      ? ' · ONLINE OBJEDNÁVKA'
                       : ''}
                   </div>
                 </div>
@@ -1087,6 +1266,28 @@ export function StaffTerminal() {
           setToast('Uzávěrka odemčena — Manažerský PIN ověřen')
         }}
         onCancel={() => setClosurePinOpen(false)}
+      />
+
+      <TableConfigModal
+        open={Boolean(tableConfig)}
+        mode={tableConfig?.mode === 'edit' ? 'edit' : 'add'}
+        initialLabel={
+          tableConfig?.mode === 'edit'
+            ? tableConfig.table.label
+            : `Stůl ${tables.length + 1}`
+        }
+        initialSeatCapacity={
+          tableConfig?.mode === 'edit'
+            ? tableConfig.table.seatCapacity
+            : DEFAULT_SEAT_CAPACITY
+        }
+        spaceName={getSpaceName(
+          tableConfig?.mode === 'edit'
+            ? tableConfig.table.spaceId || activeSpaceId
+            : activeSpaceId,
+        )}
+        onClose={() => setTableConfig(null)}
+        onSave={onSaveTableConfig}
       />
     </div>
   )

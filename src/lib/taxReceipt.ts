@@ -190,6 +190,10 @@ export function receiptPaymentLabel(method: POSPaymentMethod): string {
       return 'Na účet akce'
     case 'all_inclusive':
       return 'Na účet akce'
+    case 'apple_pay':
+      return 'Apple Pay'
+    case 'google_pay':
+      return 'Google Pay'
     default:
       return 'Hotovost'
   }

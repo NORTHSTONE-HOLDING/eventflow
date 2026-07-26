@@ -44,6 +44,7 @@ import {
   publishWaiterReady,
 } from '../lib/kdsSync'
 import {
+  clampSeatCapacity,
   ensurePosTables,
   isSentCartLine,
   mergeCartLine,
@@ -274,8 +275,20 @@ interface AppState {
   addTable: (
     projectId: string,
     label: string,
-    opts?: { spaceId?: string | null },
+    opts?: { spaceId?: string | null; seatCapacity?: number },
   ) => string | null
+  updateTableCapacity: (
+    projectId: string,
+    tableId: string,
+    seatCapacity: number,
+  ) => void
+  /** Guest QR / online order → table cart + KDS tickets */
+  injectCustomerQrOrder: (opts: {
+    projectId: string
+    tableId: string
+    lines: POSCartLine[]
+    paymentMethod: POSPaymentMethod
+  }) => { ok: boolean; ticketIds?: string[]; error?: string }
   removeTable: (projectId: string, tableId: string) => {
     ok: boolean
     error?: string
@@ -583,6 +596,8 @@ export const useAppStore = create<AppState>()(
 
         const charged =
           paymentMethod === 'card' ||
+          paymentMethod === 'apple_pay' ||
+          paymentMethod === 'google_pay' ||
           paymentMethod === 'cash' ||
           paymentMethod === 'combined' ||
           paymentMethod === 'invoice'
@@ -687,6 +702,10 @@ export const useAppStore = create<AppState>()(
           get().setToast(
             `Kombinovaná platba OK · hotovost ${opts?.cashAmount ?? 0} Kč + karta ${opts?.cardAmount ?? 0} Kč`
           )
+        } else if (paymentMethod === 'apple_pay') {
+          get().setToast(`Apple Pay · ZAPLACENO · ${tx.receiptNumber}`)
+        } else if (paymentMethod === 'google_pay') {
+          get().setToast(`Google Pay · ZAPLACENO · ${tx.receiptNumber}`)
         } else {
           get().setToast(`Platba kartou OK · ${tx.receiptNumber}`)
         }
@@ -1083,12 +1102,94 @@ export const useAppStore = create<AppState>()(
           updatedAt: new Date().toISOString(),
           billingKind: 'restaurant',
           spaceId: opts?.spaceId || 'space_main',
+          seatCapacity: clampSeatCapacity(opts?.seatCapacity ?? 4),
         }
         get().updateProject(projectId, {
           posTables: [...tables, neu],
           activeTableId: neu.id,
         })
         return neu.id
+      },
+
+      updateTableCapacity: (projectId, tableId, seatCapacity) => {
+        const p = migrateProject(get().projects.find((x) => x.id === projectId))
+        if (!p) return
+        const cap = clampSeatCapacity(seatCapacity)
+        const tables = ensurePosTables(p.posTables).map((t) =>
+          t.id === tableId
+            ? { ...t, seatCapacity: cap, updatedAt: new Date().toISOString() }
+            : t,
+        )
+        get().updateProject(projectId, { posTables: tables })
+      },
+
+      injectCustomerQrOrder: ({ projectId, tableId, lines, paymentMethod }) => {
+        const state = get()
+        const project = migrateProject(state.projects.find((p) => p.id === projectId))
+        if (!project) return { ok: false, error: 'Projekt nenalezen' }
+        const tables = ensurePosTables(project.posTables)
+        const table = tables.find((t) => t.id === tableId)
+        if (!table) return { ok: false, error: 'Stůl nenalezen' }
+        const dispatchedAt = new Date().toISOString()
+        const incoming = (lines ?? []).map((l) => ({
+          ...l,
+          lineId: l.lineId || uid('line'),
+          cartState: 'sent' as const,
+          sentToKds: true,
+          sentAt: dispatchedAt,
+          orderSource: 'customer_qr' as const,
+        }))
+        if (!incoming.length) return { ok: false, error: 'Prázdná objednávka' }
+
+        const receiptNumber = `QR-${Date.now().toString(36).toUpperCase()}`
+        const orderId = uid('order')
+        const tickets = buildKdsTicketsFromCart({
+          projectId: project.id,
+          projectName: project.name,
+          receiptNumber,
+          tableLabel: table.label,
+          lines: incoming,
+          waiterId: 'customer_qr',
+          waiterName: 'Online host',
+          orderId,
+          tableId: table.id,
+          dispatchedAt,
+          orderSource: 'customer_qr',
+        })
+        for (const ticket of tickets) publishKdsTicket(ticket)
+
+        const gross = incoming.reduce(
+          (s, l) => s + (Number(l.unitPrice) || 0) * (Number(l.qty) || 0),
+          0,
+        )
+        get().completePosSale(project.id, incoming, paymentMethod, {
+          clearFromTable: false,
+          tableId: table.id,
+          tableLabel: table.label,
+          skipKds: true,
+          waiterId: 'customer_qr',
+          waiterName: 'Online host',
+          cardAmount: Math.round(gross),
+        })
+
+        const nextTables = ensurePosTables(
+          migrateProject(get().projects.find((p) => p.id === projectId))?.posTables,
+        ).map((t) =>
+          t.id === tableId
+            ? {
+                ...t,
+                lines: [...(t.lines ?? []), ...incoming],
+                updatedAt: dispatchedAt,
+              }
+            : t,
+        )
+
+        set({
+          kdsTickets: [...tickets, ...(get().kdsTickets ?? [])].slice(0, 120),
+        })
+        get().updateProject(projectId, { posTables: nextTables })
+        get().setToast(`📥 ONLINE OBJEDNÁVKA · ${table.label} · ZAPLACENO`)
+        return { ok: true, ticketIds: tickets.map((t) => t.id) }
       },
 
       removeTable: (projectId, tableId) => {

@@ -6,6 +6,7 @@ import { AppShell } from './components/AppShell'
 import { StaffCheckinPage } from './components/StaffPanel'
 import { ClientPortalRoute } from './components/ClientPortalRoute'
 import { CustomerDisplayPage } from './components/CustomerDisplay'
+import { CustomerOrderPage } from './components/CustomerOrderPage'
 import { KitchenDisplayPage } from './components/KitchenDisplay'
 import { PosTerminalPage } from './components/PosTerminalPage'
 import { CctvWallPage } from './components/CctvWallPage'
@@ -76,6 +77,14 @@ const router = createBrowserRouter([
         element: (
           <ErrorBoundary fallbackTitle="Chyba zákaznického displaye">
             <CustomerDisplayPage />
+          </ErrorBoundary>
+        ),
+      },
+      {
+        path: 'customer-order/:tableId',
+        element: (
+          <ErrorBoundary fallbackTitle="Chyba QR objednávky">
+            <CustomerOrderPage />
           </ErrorBoundary>
         ),
       },

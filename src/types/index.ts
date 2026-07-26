@@ -256,6 +256,8 @@ export type POSPaymentMethod =
   | 'all_inclusive'
   | 'cash'
   | 'combined'
+  | 'apple_pay'
+  | 'google_pay'
 
 /** Draft = waiter's unsent cart; Sent = locked after Odeslat to KDS */
 export type PosCartLineState = 'draft' | 'sent'
@@ -285,6 +287,13 @@ export interface POSCartLine {
   /** Direct inventory link for hybrid 1:1 deduction */
   inventory_item_id?: string | null
   is_daily_special?: boolean
+  /**
+   * Seat / židle assignment (1…capacity).
+   * null/undefined = Celý stůl (společný účet).
+   */
+  seatIndex?: number | null
+  /** Guest self-order / online channel flag */
+  orderSource?: 'waiter' | 'customer_qr' | 'online'
 }
 
 /** Permanent POS / KDS audit trail (storno, odeslání, …) */
@@ -333,6 +342,8 @@ export interface PosTableTab {
    * - event = all-inclusive / pre-paid event tab (gold)
    */
   billingKind?: 'restaurant' | 'event'
+  /** Dynamic seat capacity — Počet židlí / míst (1–16) */
+  seatCapacity?: number
 }
 
 /** POS layout: venue master catalog vs event catering vs merged hybrid */
@@ -389,6 +400,8 @@ export interface KdsTicket {
   prepDurationSec?: number | null
   /** Estimated ticket value for daily station revenue (Kč) */
   ticketValue?: number
+  /** Origin channel for KDS badge */
+  orderSource?: 'waiter' | 'customer_qr' | 'online'
 }
 
 /** Cash outflow logged during an active shift (odepis z tržby) */

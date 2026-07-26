@@ -64,6 +64,8 @@ export function computeShiftRevenue(
       card += Number(tx.cardAmount) || amount - (Number(tx.cashAmount) || 0)
     } else if (
       tx.paymentMethod === 'card' ||
+      tx.paymentMethod === 'apple_pay' ||
+      tx.paymentMethod === 'google_pay' ||
       tx.paymentMethod === 'invoice' ||
       tx.paymentMethod === 'all_inclusive'
     ) {

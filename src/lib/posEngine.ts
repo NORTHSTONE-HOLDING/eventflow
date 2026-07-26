@@ -195,6 +195,10 @@ export function paymentMethodLabel(method: POSPaymentMethod): string {
       return 'Hotovost'
     case 'combined':
       return 'Kombinovaná platba (hotovost + karta)'
+    case 'apple_pay':
+      return 'Apple Pay'
+    case 'google_pay':
+      return 'Google Pay'
     default:
       return method
   }

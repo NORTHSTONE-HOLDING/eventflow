@@ -194,11 +194,13 @@ export function buildKdsTicketsFromCart(opts: {
   tableId?: string
   /** Exact Odeslat click timestamp — stopwatch origin */
   dispatchedAt?: string
+  orderSource?: 'waiter' | 'customer_qr' | 'online'
 }): KdsTicket[] {
   const { kitchen, bar } = splitCartByStation(opts.lines ?? [])
   const tickets: KdsTicket[] = []
   // Prefer the caller's dispatch stamp so cart.sentAt === ticket.createdAt
   const stamp = opts.dispatchedAt || new Date().toISOString()
+  const source = opts.orderSource || 'waiter'
 
   const sumValue = (rows: POSCartLine[]) =>
     Math.round(
@@ -209,12 +211,16 @@ export function buildKdsTicketsFromCart(opts: {
     )
 
   const toTicketLines = (rows: POSCartLine[]) =>
-    rows.map((l) => ({
-      name: l.name,
-      qty: l.qty,
-      lineId: l.lineId,
-      unitPrice: Number(l.unitPrice) || 0,
-    }))
+    rows.map((l) => {
+      const seat =
+        l.seatIndex != null && l.seatIndex > 0 ? ` · Židle ${l.seatIndex}` : ''
+      return {
+        name: `${l.name}${seat}`,
+        qty: l.qty,
+        lineId: l.lineId,
+        unitPrice: Number(l.unitPrice) || 0,
+      }
+    })
 
   if (kitchen.length) {
     tickets.push({
@@ -236,6 +242,7 @@ export function buildKdsTicketsFromCart(opts: {
       preparingAt: null,
       completedAt: null,
       prepDurationSec: null,
+      orderSource: source,
     })
   }
   if (bar.length) {
@@ -258,6 +265,7 @@ export function buildKdsTicketsFromCart(opts: {
       preparingAt: null,
       completedAt: null,
       prepDurationSec: null,
+      orderSource: source,
     })
   }
   return tickets

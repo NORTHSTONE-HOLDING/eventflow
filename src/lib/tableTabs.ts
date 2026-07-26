@@ -11,6 +11,30 @@ export const DEFAULT_TABLE_LABELS = [
 
 const DEFAULT_SPACE_CYCLE = ['space_salon', 'space_garden', 'space_main'] as const
 
+export const MIN_SEAT_CAPACITY = 1
+export const MAX_SEAT_CAPACITY = 16
+export const DEFAULT_SEAT_CAPACITY = 4
+
+export function clampSeatCapacity(n: number | null | undefined): number {
+  const v = Math.round(Number(n) || DEFAULT_SEAT_CAPACITY)
+  return Math.min(MAX_SEAT_CAPACITY, Math.max(MIN_SEAT_CAPACITY, v))
+}
+
+/** null = Celý stůl (společný účet) */
+export function sameSeat(
+  a: number | null | undefined,
+  b: number | null | undefined,
+): boolean {
+  const na = a == null || a <= 0 ? null : a
+  const nb = b == null || b <= 0 ? null : b
+  return na === nb
+}
+
+export function seatLabel(seatIndex: number | null | undefined): string {
+  if (seatIndex == null || seatIndex <= 0) return 'Celý stůl'
+  return `Židle ${seatIndex}`
+}
+
 export function createDefaultTables(): PosTableTab[] {
   const now = new Date().toISOString()
   return DEFAULT_TABLE_LABELS.map((row, i) => ({
@@ -21,6 +45,7 @@ export function createDefaultTables(): PosTableTab[] {
     updatedAt: now,
     billingKind: row.billingKind,
     spaceId: DEFAULT_SPACE_CYCLE[i % DEFAULT_SPACE_CYCLE.length],
+    seatCapacity: i === 3 ? 6 : DEFAULT_SEAT_CAPACITY,
   }))
 }
 
@@ -39,6 +64,7 @@ export function ensurePosTables(
         ( /vip|event|salon/i.test(t.label) || i === 2
           ? 'event'
           : 'restaurant'),
+      seatCapacity: clampSeatCapacity(t.seatCapacity),
     }))
   }
   return createDefaultTables()
@@ -93,13 +119,15 @@ export function mergeCartLine(
     return [...list, draftIncoming]
   }
   // Only merge into other DRAFT lines — never unlock / mutate Sent rows
+  // Seat-scoped: Židle N never merges into Celý stůl or another seat
   const idx = list.findIndex(
     (l) =>
       !l.isCustom &&
       !isSentCartLine(l) &&
       l.cateringId === incoming.cateringId &&
       l.unitPrice === incoming.unitPrice &&
-      l.vatRate === incoming.vatRate
+      l.vatRate === incoming.vatRate &&
+      sameSeat(l.seatIndex, incoming.seatIndex)
   )
   if (idx >= 0) {
     list[idx] = {

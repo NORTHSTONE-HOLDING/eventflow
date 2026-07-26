@@ -14,6 +14,10 @@ import { cartTotals, paymentMethodLabel } from '../../lib/posEngine'
 import { formatCurrency } from '../../lib/documentIds'
 import { calcCashChange } from '../../lib/tableTabs'
 import { runTerminalHandshake } from '../../lib/terminalHandshake'
+import {
+  runMobileWalletHandshake,
+  type WalletPaySession,
+} from '../../lib/mobilePayHandshake'
 import { tapFeedback } from '../../lib/touchFeedback'
 
 export interface CheckoutResult {
@@ -34,7 +38,14 @@ interface Props {
 }
 
 type PayMode = 'full' | 'split'
-type PayType = 'cash' | 'card' | 'combined' | 'invoice' | 'all_inclusive'
+type PayType =
+  | 'cash'
+  | 'card'
+  | 'combined'
+  | 'invoice'
+  | 'all_inclusive'
+  | 'apple_pay'
+  | 'google_pay'
 
 interface SplitPick {
   key: string
@@ -60,6 +71,7 @@ export function AdvancedCheckout({
   const [cashPart, setCashPart] = useState('')
   const [busy, setBusy] = useState(false)
   const [terminalSession, setTerminalSession] = useState<TerminalSession | null>(null)
+  const [walletSession, setWalletSession] = useState<WalletPaySession | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const source = useMemo(
@@ -82,6 +94,7 @@ export function AdvancedCheckout({
     setCashPart('')
     setBusy(false)
     setTerminalSession(null)
+    setWalletSession(null)
     setError(null)
   }, [open, source])
 
@@ -131,6 +144,35 @@ export function AdvancedCheckout({
     })
     setBusy(false)
     return result
+  }
+
+  const runExpressPay = async (method: 'apple_pay' | 'google_pay') => {
+    tapFeedback('success')
+    if (!payableLines.length) {
+      setError('Vyberte položky k úhradě')
+      return
+    }
+    setPayType(method)
+    setBusy(true)
+    setError(null)
+    const wallet = await runMobileWalletHandshake({
+      provider: method,
+      amountCzK: totals.totalGross,
+      onStatus: (s) => setWalletSession({ ...s }),
+    })
+    setBusy(false)
+    if (!wallet.approved) {
+      setError(
+        wallet.declineReason ||
+          (method === 'apple_pay' ? 'Apple Pay zamítnuto' : 'Google Pay zamítnuto'),
+      )
+      return
+    }
+    await onComplete({
+      method,
+      lines: payableLines,
+      cardAmount: totals.totalGross,
+    })
   }
 
   const handlePay = async () => {
@@ -188,6 +230,11 @@ export function AdvancedCheckout({
       return
     }
 
+    if (payType === 'apple_pay' || payType === 'google_pay') {
+      await runExpressPay(payType)
+      return
+    }
+
     if (payType === 'invoice') {
       await onComplete({ method: 'invoice', lines: payableLines })
       return
@@ -199,7 +246,9 @@ export function AdvancedCheckout({
   const waiting =
     busy ||
     terminalSession?.status === 'sending' ||
-    terminalSession?.status === 'waiting_card'
+    terminalSession?.status === 'waiting_card' ||
+    walletSession?.status === 'biometric' ||
+    walletSession?.status === 'tokenizing'
 
   return (
     <motion.div
@@ -220,7 +269,7 @@ export function AdvancedCheckout({
           <div>
             <h2 style={{ fontSize: '1.35rem' }}>Platba · {tableLabel}</h2>
             <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-              Platit zvlášť · hotovost · karta · kombinovaná platba
+              Platit zvlášť · hotovost · karta · Apple Pay · Google Pay
             </div>
           </div>
           <button
@@ -343,12 +392,38 @@ export function AdvancedCheckout({
               <CreditCard size={34} color="var(--gold)" />
             </motion.div>
             <div style={{ color: 'var(--gold)', fontWeight: 600 }}>
-              {terminalSession?.message ||
+              {walletSession?.message ||
+                terminalSession?.message ||
                 `Odesláno do terminálu. Částka: ${totals.totalGross.toLocaleString('cs-CZ')} Kč. Čekání na přiložení karty…`}
             </div>
           </div>
         ) : (
           <>
+            <div className="pos-express-pay-row">
+              <button
+                type="button"
+                className="pos-apple-pay-btn"
+                onClick={() => void runExpressPay('apple_pay')}
+                disabled={!payableLines.length}
+              >
+                <span className="pos-apple-logo" aria-hidden>
+                  
+                </span>
+                Apple Pay
+              </button>
+              <button
+                type="button"
+                className="pos-google-pay-btn"
+                onClick={() => void runExpressPay('google_pay')}
+                disabled={!payableLines.length}
+              >
+                <span className="pos-gpay-mark" aria-hidden>
+                  G
+                </span>
+                Google Pay
+              </button>
+            </div>
+
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 12 }}>
               {(
                 [
@@ -464,7 +539,8 @@ export function AdvancedCheckout({
               onClick={handlePay}
             >
               <ArrowRight size={16} />
-              Potvrdit · {paymentMethodLabel(
+              Potvrdit ·{' '}
+              {paymentMethodLabel(
                 payType === 'card'
                   ? 'card'
                   : payType === 'cash'
@@ -473,7 +549,11 @@ export function AdvancedCheckout({
                       ? 'combined'
                       : payType === 'invoice'
                         ? 'invoice'
-                        : 'all_inclusive'
+                        : payType === 'apple_pay'
+                          ? 'apple_pay'
+                          : payType === 'google_pay'
+                            ? 'google_pay'
+                            : 'all_inclusive',
               )}
             </button>
           </>

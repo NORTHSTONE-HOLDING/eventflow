@@ -17,6 +17,7 @@ import {
   receiptPrintedAtLabel,
 } from './taxReceipt'
 import type { POSPaymentMethod } from '../types'
+import { openPrintCapableWindow, writeAndPrintHtml } from './safePrintWindow'
 
 declare global {
   interface Navigator {
@@ -258,9 +259,29 @@ export function formatCustomerReceipt80mm(opts: CustomerReceiptOpts): string {
 
 /** High-contrast HTML thermal receipt — black on white, centered headers. */
 export function buildCustomerReceiptHtml(opts: CustomerReceiptOpts): string {
-  const profile = opts.profile
-  const company = escapeHtml((profile.companyName || 'EventFlow').trim())
-  const address = escapeHtml(formatVenueAddress(profile))
+  try {
+    return buildCustomerReceiptHtmlInner(opts)
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Neznámá chyba tisku'
+    return `<!doctype html><html lang="cs"><head><meta charset="utf-8"/><title>Účtenka</title></head>
+<body style="font-family:monospace;padding:16px;background:#fff;color:#000">
+<strong>Tisk účtenky selhal</strong><br/>${escapeHtml(msg)}<br/>Zkontrolujte data dokladu.
+</body></html>`
+  }
+}
+
+function buildCustomerReceiptHtmlInner(opts: CustomerReceiptOpts): string {
+  const profile = opts?.profile ?? {
+    companyName: 'EventFlow',
+    ico: '',
+    dic: '',
+    street: '',
+    city: '',
+    zip: '',
+    logoUrl: null,
+  }
+  const company = escapeHtml(String(profile.companyName || 'EventFlow').trim() || 'EventFlow')
+  const address = escapeHtml(formatVenueAddress(profile) || '—')
   const ico = escapeHtml(String(profile.ico || '').trim() || '—')
   const dicRaw = String(profile.dic || '').trim()
   const dic = escapeHtml(dicRaw)
@@ -268,18 +289,20 @@ export function buildCustomerReceiptHtml(opts: CustomerReceiptOpts): string {
   const hours = escapeHtml(opts.openingHours || 'Po - Ne: 11:00 - 23:00')
   const docNo = escapeHtml(
     formatTaxDocumentNumber({
-      receiptNumber: opts.receiptNumber,
+      receiptNumber: opts.receiptNumber || 'F20260001',
       projectSequence: opts.projectSequence,
-    }),
+    }) || 'F20260001',
   )
-  const printedAt = escapeHtml(receiptPrintedAtLabel(opts.printedAt || new Date()))
+  const printedAt = escapeHtml(receiptPrintedAtLabel(opts.printedAt || new Date()) || '—')
   const payLabel = escapeHtml(
     opts.paymentMethod != null
       ? receiptPaymentLabel(opts.paymentMethod)
       : opts.paymentLabel || 'Hotovost',
   )
 
-  const { rows, totalGross, printLines } = buildVatBreakdown(opts.lines ?? [])
+  const { rows, totalGross, printLines } = buildVatBreakdown(
+    Array.isArray(opts.lines) ? opts.lines : [],
+  )
 
   const itemsHtml = printLines
     .map((l) => {
@@ -465,15 +488,15 @@ export function buildCustomerReceiptHtml(opts: CustomerReceiptOpts): string {
 </html>`
 }
 
-function escapeHtml(s: string): string {
-  return String(s)
+function escapeHtml(s: string | number | null | undefined): string {
+  return String(s ?? '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
 }
 
-function escapeAttr(s: string): string {
+function escapeAttr(s: string | number | null | undefined): string {
   return escapeHtml(s).replace(/'/g, '&#39;')
 }
 
@@ -573,13 +596,19 @@ export function dispatchPrintJobs(opts: {
 
 /** Plain-text thermal popup (kitchen / bar / closure). */
 export function openThermalPrintWindow(content: string, title: string) {
-  const win = window.open('', '_blank', 'noopener,noreferrer,width=360,height=640')
-  if (!win) return
-  const safe = content
+  const win = openPrintCapableWindow({ width: 360, height: 640 })
+  if (!win) {
+    console.warn('Tiskové okno bylo zablokováno prohlížečem')
+    return
+  }
+  const safeTitle = escapeHtml(String(title || 'Tisk'))
+  const safe = String(content ?? '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-  win.document.write(`<!doctype html><html lang="cs"><head><meta charset="utf-8"/><title>${escapeHtml(title)}</title>
+  writeAndPrintHtml(
+    win,
+    `<!doctype html><html lang="cs"><head><meta charset="utf-8"/><title>${safeTitle}</title>
 <style>
   :root { color-scheme: only light; }
   @page { size: 80mm auto; margin: 2mm; }
@@ -599,17 +628,24 @@ export function openThermalPrintWindow(content: string, title: string) {
     html, body { background: #fff !important; color: #000 !important; box-shadow: none !important; }
     * { box-shadow: none !important; text-shadow: none !important; }
   }
-</style></head><body><h1>${escapeHtml(title)}</h1><pre>${safe}</pre>
-<script>window.onload=function(){setTimeout(function(){window.print()},200)}</script>
-</body></html>`)
-  win.document.close()
+</style></head><body><h1>${safeTitle}</h1><pre>${safe || '(prázdný doklad)'}</pre>
+</body></html>`,
+    220,
+  )
 }
 
 /** Statutory customer receipt HTML print (ZDD). */
 export function openThermalHtmlPrintWindow(html: string, _title: string) {
-  const win = window.open('', '_blank', 'noopener,noreferrer,width=380,height=720')
-  if (!win) return
-  win.document.open()
-  win.document.write(html)
-  win.document.close()
+  const win = openPrintCapableWindow({ width: 380, height: 720 })
+  if (!win) {
+    console.warn('Tiskové okno účtenky bylo zablokováno prohlížečem')
+    return
+  }
+  const safeHtml =
+    String(html || '').trim() ||
+    `<!doctype html><html lang="cs"><head><meta charset="utf-8"/><title>Účtenka</title></head>
+<body style="font-family:monospace;padding:12px;color:#000;background:#fff">
+<strong>Účtenka není k dispozici</strong><br/>Chybí data dokladu.
+</body></html>`
+  writeAndPrintHtml(win, safeHtml, 240)
 }

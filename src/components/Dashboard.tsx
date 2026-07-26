@@ -16,6 +16,7 @@ import { useCctvStore } from '../store/useCctvStore'
 import { formatCurrency, formatPercent } from '../lib/documentIds'
 import type { EventProject } from '../types'
 import { EventCalendarScheduler } from './EventCalendarScheduler'
+import { WaiterPerformanceRanking } from './WaiterPerformanceRanking'
 
 const FALLBACK_CHART = [
   { name: 'Led', revenue: 120000, cost: 85000 },
@@ -130,6 +131,10 @@ export function Dashboard() {
             <MonitorSmartphone size={16} /> Event POS / Kasa
           </button>
         </div>
+      </div>
+
+      <div className="panel" style={{ marginBottom: 20 }}>
+        <WaiterPerformanceRanking title="Výkonnost číšníků · aktuální směna" />
       </div>
 
       {(globalCctvAlert || activeCctvAlerts.length > 0) && (

@@ -72,9 +72,10 @@ export function printMenuNative(format: PrintFormat) {
   style.textContent = `
     @media print {
       @page { size: ${widthMm}mm ${heightMm}mm; margin: 8mm; }
-      body * { visibility: hidden !important; }
-      .print-menu-sheet, .print-menu-sheet * { visibility: visible !important; }
-      .print-menu-sheet {
+      body.ef-print-menu * { visibility: hidden !important; }
+      body.ef-print-menu .print-menu-sheet,
+      body.ef-print-menu .print-menu-sheet * { visibility: visible !important; }
+      body.ef-print-menu .print-menu-sheet {
         position: absolute !important;
         left: 0 !important;
         top: 0 !important;
@@ -85,13 +86,25 @@ export function printMenuNative(format: PrintFormat) {
         -webkit-print-color-adjust: exact !important;
         print-color-adjust: exact !important;
       }
-      .no-print,
-      .print-ops-label,
-      .print-menu-meta,
-      .print-menu-subtitle { display: none !important; }
+      body.ef-print-menu .no-print,
+      body.ef-print-menu .print-ops-label,
+      body.ef-print-menu .print-menu-meta,
+      body.ef-print-menu .print-menu-subtitle { display: none !important; }
     }
   `
-  window.print()
+  document.body.classList.add('ef-print-menu')
+  const cleanup = () => {
+    document.body.classList.remove('ef-print-menu')
+    window.removeEventListener('afterprint', cleanup)
+  }
+  window.addEventListener('afterprint', cleanup)
+  window.setTimeout(() => {
+    try {
+      window.print()
+    } catch {
+      cleanup()
+    }
+  }, 60)
 }
 
 function escapeHtml(value: string): string {

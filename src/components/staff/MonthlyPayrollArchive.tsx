@@ -7,6 +7,7 @@ import {
   monthKeyFromDate,
 } from '../../lib/shiftParser'
 import { formatCurrency } from '../../lib/documentIds'
+import { WaiterPerformanceRanking } from '../WaiterPerformanceRanking'
 import type { StaffMember } from '../../types'
 
 type PayrollCard = {
@@ -168,6 +169,12 @@ export function MonthlyPayrollArchive() {
 
   return (
     <div className="payroll-archive">
+      <div className="panel" style={{ marginBottom: 16 }}>
+        <WaiterPerformanceRanking
+          compact
+          title="Výkonnost číšníků (POS stopa · aktivní směna)"
+        />
+      </div>
       <div className="payroll-archive-head">
         <div>
           <h2 className="payroll-archive-title gold-text">Měsíční uzávěrka mezd</h2>

@@ -38,9 +38,19 @@ export function AIProcurementAssistant() {
       return
     }
     setPrintReady(true)
-    window.setTimeout(() => {
-      window.print()
+    document.body.classList.add('ef-print-ai')
+    const cleanup = () => {
+      document.body.classList.remove('ef-print-ai')
       setPrintReady(false)
+      window.removeEventListener('afterprint', cleanup)
+    }
+    window.addEventListener('afterprint', cleanup)
+    window.setTimeout(() => {
+      try {
+        window.print()
+      } catch {
+        cleanup()
+      }
     }, 80)
   }
 

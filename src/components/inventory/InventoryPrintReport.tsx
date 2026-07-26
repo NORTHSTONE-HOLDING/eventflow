@@ -42,8 +42,15 @@ export function InventoryPrintReport({ session, items, onClose }: Props) {
   }, [rows])
 
   useEffect(() => {
+    document.body.classList.add('ef-print-inventura')
     const t = window.setTimeout(() => window.print(), 350)
-    return () => window.clearTimeout(t)
+    const cleanup = () => document.body.classList.remove('ef-print-inventura')
+    window.addEventListener('afterprint', cleanup)
+    return () => {
+      window.clearTimeout(t)
+      window.removeEventListener('afterprint', cleanup)
+      cleanup()
+    }
   }, [])
 
   const closedLabel = session.closed_at

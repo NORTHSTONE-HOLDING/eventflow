@@ -56,9 +56,14 @@ import {
 } from '../../lib/kdsSync'
 import { printTableQrCode } from '../../lib/tableQrPrint'
 import { tapFeedback } from '../../lib/touchFeedback'
+import { resolveTableIdFromHint } from '../../lib/voicePosEngine'
+import { useWaiterAuditStore } from '../../store/useWaiterAuditStore'
+import { VoiceOrderButton } from '../pos/VoiceOrderButton'
 import { StornoPinModal } from './StornoPinModal'
 import { TableConfigModal } from './TableConfigModal'
 import type { CateringItem, POSCartLine, POSSubcategory, PosTableTab } from '../../types'
+
+const MOBILE_OVERRIDE_KEY = 'eventflow-mobile-waiter-override'
 
 /**
  * Ground-up Staff Terminal — 3-zone touch POS for /pos-terminal.
@@ -134,10 +139,21 @@ export function StaffTerminal() {
   const [closureUnlocked, setClosureUnlocked] = useState(false)
   /** null = Celý stůl (společný účet); 1…N = Židle N */
   const [activeSeatIndex, setActiveSeatIndex] = useState<number | null>(null)
-  const [isMobileWaiter, setIsMobileWaiter] = useState(false)
+  const [autoMobile, setAutoMobile] = useState(false)
+  const [forceMobile, setForceMobile] = useState(() => {
+    try {
+      return localStorage.getItem(MOBILE_OVERRIDE_KEY) === '1'
+    } catch {
+      return false
+    }
+  })
   const [tableConfig, setTableConfig] = useState<
     null | { mode: 'add' } | { mode: 'edit'; table: PosTableTab }
   >(null)
+  const [voiceStatus, setVoiceStatus] = useState<string | null>(null)
+  const logWaiterAction = useWaiterAuditStore((s) => s.logWaiterAction)
+
+  const isMobileWaiter = forceMobile || autoMobile
 
   useEffect(() => {
     void bootstrapInventory()
@@ -148,11 +164,29 @@ export function StaffTerminal() {
   useEffect(() => {
     if (typeof window === 'undefined') return
     const mq = window.matchMedia('(max-width: 900px)')
-    const sync = () => setIsMobileWaiter(mq.matches)
+    const sync = () => setAutoMobile(mq.matches)
     sync()
     mq.addEventListener('change', sync)
     return () => mq.removeEventListener('change', sync)
   }, [])
+
+  const toggleMobileOverride = () => {
+    tapFeedback('success')
+    setForceMobile((prev) => {
+      const next = !prev
+      try {
+        localStorage.setItem(MOBILE_OVERRIDE_KEY, next ? '1' : '0')
+      } catch {
+        // ignore
+      }
+      setToast(
+        next
+          ? 'Mobilní číšník aktivní — zobrazení do ruky'
+          : 'Desktop rozložení obnoveno',
+      )
+      return next
+    })
+  }
 
   const tables = useMemo(
     () => (project ? ensurePosTables(project.posTables) : []),
@@ -292,8 +326,17 @@ export function StaffTerminal() {
       setMapFocus(false)
       setWorkspaceTableId(tableId)
       if (project) setActiveTable(project.id, tableId)
+      const label =
+        tables.find((t) => t.id === tableId)?.label || tableId
+      logWaiterAction({
+        project_id: project?.id,
+        waiter_name: waiter?.name,
+        waiter_id: waiter?.id,
+        action_description: `Otevřen ${label}`,
+        amount_czk: 0,
+      })
     },
-    [project, setActiveTable, setWorkspaceTableId],
+    [project, setActiveTable, setWorkspaceTableId, tables, logWaiterAction, waiter],
   )
 
   const returnToTableMap = useCallback(() => {
@@ -358,6 +401,13 @@ export function StaffTerminal() {
         }
         return [...prev, line]
       })
+      logWaiterAction({
+        project_id: project?.id,
+        waiter_name: waiter?.name,
+        waiter_id: waiter?.id,
+        action_description: `Přidán 1× ${item.name} na Rychlý prodej`,
+        amount_czk: line.unitPrice,
+      })
       return
     }
     if (!project || !activeTableId) {
@@ -369,12 +419,90 @@ export function StaffTerminal() {
       waiterId: waiter?.id,
       waiterName: waiter?.name,
     })
+    logWaiterAction({
+      project_id: project.id,
+      waiter_name: waiter?.name,
+      waiter_id: waiter?.id,
+      action_description: `Přidán 1× ${item.name} na ${activeTable?.label || 'stůl'}`,
+      amount_czk: line.unitPrice,
+    })
     void ensureAiImage({
       id: item.id,
       name: item.name,
       category: item.category === 'beverage' ? 'beverage' : 'raw',
       image_url: item.image_url ?? null,
     })
+  }
+
+  const handleVoiceOrders = (
+    matched: Array<{ item: CateringItem; qty: number; tableHint: string | null }>,
+    transcript: string,
+  ) => {
+    if (!project) {
+      setToast('Aktivujte projekt')
+      return
+    }
+    if (ordersLocked || waiterLoggedOut) {
+      setToast('Nelze přidat hlasovou objednávku — směna/obsluha není připravena')
+      return
+    }
+    let added = 0
+    for (const row of matched) {
+      const targetTable =
+        resolveTableIdFromHint(tables, row.tableHint, activeTableId) || activeTableId
+      if (!targetTable) {
+        setToast('Vyberte stůl pro hlasovou objednávku')
+        continue
+      }
+      if (targetTable !== activeTableId) {
+        setQuickSale(false)
+        setMapFocus(false)
+        setWorkspaceTableId(targetTable)
+        setActiveTable(project.id, targetTable)
+      }
+      const targetLabel =
+        tables.find((t) => t.id === targetTable)?.label || 'Stůl'
+      const unitPrice = Number(row.item.sellPrice) || 0
+      const line: POSCartLine = {
+        cateringId: row.item.id,
+        name: row.item.name,
+        category:
+          row.item.category === 'beverage'
+            ? 'beverage'
+            : row.item.category === 'other'
+              ? 'other'
+              : 'food',
+        subcategory: row.item.subcategory || 'ostatni',
+        unitPrice,
+        qty: Math.max(1, row.qty),
+        vatRate: Number(row.item.vatRate) || 12,
+        foodCostPerUnit: Number(row.item.foodCost) || 0,
+        lineId: uid('line'),
+        waiterId: waiter?.id,
+        waiterName: waiter?.name,
+        sentToKds: false,
+        seatIndex: activeSeatIndex,
+        orderSource: 'waiter',
+        inventory_item_id: row.item.inventory_item_id ?? null,
+        is_daily_special: row.item.is_daily_special,
+      }
+      addLineToActiveTable(project.id, line, {
+        tableId: targetTable,
+        waiterId: waiter?.id,
+        waiterName: waiter?.name,
+      })
+      added += line.qty
+      logWaiterAction({
+        project_id: project.id,
+        waiter_name: waiter?.name,
+        waiter_id: waiter?.id,
+        action_description: `Hlasem: Přidán ${line.qty}× ${row.item.name} na ${targetLabel}`,
+        amount_czk: unitPrice * line.qty,
+      })
+    }
+    setVoiceStatus(`„${transcript}“ · +${added} pol.`)
+    setToast(`Hlasová objednávka: +${added} položek`)
+    window.setTimeout(() => setVoiceStatus(null), 5000)
   }
 
   const changeDraftQty = (line: POSCartLine, delta: number) => {
@@ -584,6 +712,20 @@ export function StaffTerminal() {
     }
     printSale(result, activeTable.label, sale.receiptNumber || uid('rcp'))
     setCheckoutOpen(false)
+    const paidGross = result.lines.reduce(
+      (s, l) => s + (Number(l.unitPrice) || 0) * (Number(l.qty) || 0),
+      0,
+    )
+    logWaiterAction({
+      project_id: project.id,
+      waiter_name: waiter?.name,
+      waiter_id: waiter?.id,
+      action_description:
+        result.method === 'cash' && result.changeGiven
+          ? `Platba ${activeTable.label} · vráceno ${result.changeGiven} Kč`
+          : `Platba ${paymentMethodLabel(result.method)} · ${activeTable.label} · ZAPLACENO`,
+      amount_czk: paidGross,
+    })
     const walletPaid =
       result.method === 'apple_pay' || result.method === 'google_pay'
     setToast(
@@ -691,11 +833,21 @@ export function StaffTerminal() {
     <div
       className={`staff-terminal${isMobileWaiter ? ' staff-terminal-mobile' : ''}`}
     >
-      {isMobileWaiter && (
-        <div className="st-mobile-banner" role="status">
-          <Smartphone size={16} /> Mobilní číšník · optimalizovaný jedno sloupec
-        </div>
-      )}
+      <div className="st-mobile-override-bar">
+        <button
+          type="button"
+          className={forceMobile ? 'btn btn-gold st-mobile-override-btn' : 'btn btn-ghost st-mobile-override-btn'}
+          onClick={toggleMobileOverride}
+        >
+          <Smartphone size={16} /> 📱 Přepnout na Mobilního číšníka (Zobrazení do ruky)
+        </button>
+        {isMobileWaiter && (
+          <span className="st-mobile-banner-inline" role="status">
+            Mobilní číšník aktivní
+            {forceMobile ? ' · ruční přepínač' : ' · auto ≤900px'}
+          </span>
+        )}
+      </div>
       {waiterLoggedOut && (
         <div className="st-waiter-login-gate panel" role="dialog" aria-modal="true">
           <h2 className="gold-text" style={{ marginTop: 0 }}>
@@ -1061,6 +1213,23 @@ export function StaffTerminal() {
                 {s.label}
               </button>
             ))}
+          </div>
+          <div className="st-voice-row">
+            <VoiceOrderButton
+              catalog={catalog}
+              disabled={
+                waiterLoggedOut ||
+                ordersLocked ||
+                (!quickSale && !activeTableId)
+              }
+              onOrders={handleVoiceOrders}
+              onReject={(reason) => {
+                setVoiceStatus(reason)
+                setToast(reason)
+                window.setTimeout(() => setVoiceStatus(null), 5000)
+              }}
+            />
+            {voiceStatus && <div className="st-voice-status">{voiceStatus}</div>}
           </div>
           <div className="st-product-grid">
             {visibleItems.map((item) => (

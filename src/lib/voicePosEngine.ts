@@ -51,25 +51,42 @@ function getSpeechRecognitionCtor(): (new () => SpeechRec) | null {
 /**
  * Push-to-Talk voice session:
  * - starts MediaRecorder + SpeechRecognition only while held
- * - truncates/stops immediately on release
+ * - truncates/aborts stream immediately on finger release
+ * - streams interim transcript into the confirmation text box
  */
 export class PushToTalkSession {
   private mediaRecorder: MediaRecorder | null = null
   private mediaStream: MediaStream | null = null
   private recognition: SpeechRec | null = null
   private chunks: BlobPart[] = []
-  private transcriptParts: string[] = []
+  private finalParts: string[] = []
+  private interimText = ''
   private holding = false
+  private onLiveTranscript: ((text: string) => void) | null = null
 
   get isHolding() {
     return this.holding
+  }
+
+  setLiveTranscriptHandler(handler: ((text: string) => void) | null) {
+    this.onLiveTranscript = handler
+  }
+
+  private emitLive() {
+    const text = [...this.finalParts, this.interimText]
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+    this.onLiveTranscript?.(text)
   }
 
   async startHold(): Promise<void> {
     if (this.holding) return
     this.holding = true
     this.chunks = []
-    this.transcriptParts = []
+    this.finalParts = []
+    this.interimText = ''
+    this.emitLive()
 
     try {
       this.mediaStream = await navigator.mediaDevices.getUserMedia({
@@ -80,6 +97,12 @@ export class PushToTalkSession {
         },
         video: false,
       })
+      // If finger already released during mic permission prompt, abort immediately
+      if (!this.holding) {
+        this.mediaStream.getTracks().forEach((t) => t.stop())
+        this.mediaStream = null
+        return
+      }
       const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
         ? 'audio/webm;codecs=opus'
         : MediaRecorder.isTypeSupported('audio/webm')
@@ -89,6 +112,7 @@ export class PushToTalkSession {
         ? new MediaRecorder(this.mediaStream, { mimeType: mime })
         : new MediaRecorder(this.mediaStream)
       this.mediaRecorder.ondataavailable = (e) => {
+        if (!this.holding) return
         if (e.data && e.data.size > 0) this.chunks.push(e.data)
       }
       // Short timeslice so lift truncates promptly
@@ -96,6 +120,8 @@ export class PushToTalkSession {
     } catch {
       // Mic may be denied — still try speech recognition only
     }
+
+    if (!this.holding) return
 
     const Ctor = getSpeechRecognitionCtor()
     if (Ctor) {
@@ -106,12 +132,19 @@ export class PushToTalkSession {
       rec.maxAlternatives = 1
       rec.onresult = (ev) => {
         if (!this.holding) return
-        let chunk = ''
+        let interim = ''
         for (let i = ev.resultIndex; i < ev.results.length; i++) {
-          chunk += ev.results[i][0]?.transcript || ''
+          const piece = ev.results[i][0]?.transcript || ''
+          if (ev.results[i].isFinal) {
+            const cleaned = piece.trim()
+            if (cleaned) this.finalParts.push(cleaned)
+            interim = ''
+          } else {
+            interim += piece
+          }
         }
-        const cleaned = chunk.trim()
-        if (cleaned) this.transcriptParts.push(cleaned)
+        this.interimText = interim.trim()
+        this.emitLive()
       }
       rec.onerror = () => {
         // ignore transient noise errors while holding
@@ -141,9 +174,15 @@ export class PushToTalkSession {
     if (this.recognition) {
       try {
         this.recognition.onend = null
-        this.recognition.stop()
+        this.recognition.onresult = null
+        // abort() cuts the stream harder than stop() on finger release
+        this.recognition.abort()
       } catch {
-        // ignore
+        try {
+          this.recognition.stop()
+        } catch {
+          // ignore
+        }
       }
       this.recognition = null
     }
@@ -154,30 +193,44 @@ export class PushToTalkSession {
         resolve(null)
         return
       }
-      rec.onstop = () => {
+      const finish = () => {
         const blob =
           this.chunks.length > 0
             ? new Blob(this.chunks, { type: rec.mimeType || 'audio/webm' })
             : null
         resolve(blob)
       }
+      rec.onstop = finish
       try {
         // Truncate stream immediately on finger lift
         rec.stop()
       } catch {
         resolve(null)
       }
+      // Safety timeout if onstop never fires
+      window.setTimeout(() => resolve(null), 400)
     })
 
     if (this.mediaStream) {
-      this.mediaStream.getTracks().forEach((t) => t.stop())
+      this.mediaStream.getTracks().forEach((t) => {
+        try {
+          t.stop()
+        } catch {
+          // ignore
+        }
+      })
       this.mediaStream = null
     }
     this.mediaRecorder = null
 
-    const transcript = this.transcriptParts.join(' ').replace(/\s+/g, ' ').trim()
-    this.transcriptParts = []
+    const transcript = [...this.finalParts, this.interimText]
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+    this.finalParts = []
+    this.interimText = ''
     this.chunks = []
+    this.emitLive()
     return { transcript, audioBlob }
   }
 

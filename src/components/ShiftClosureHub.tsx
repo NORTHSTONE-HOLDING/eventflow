@@ -21,6 +21,7 @@ import {
 import { useShiftFinanceStore } from '../store/useShiftFinanceStore'
 import { useStaffShiftStore } from '../store/useStaffShiftStore'
 import { usePosSessionStore } from '../store/usePosSessionStore'
+import { useWaiterAuditStore } from '../store/useWaiterAuditStore'
 import {
   computeCashBalance,
   computeShiftRevenue,
@@ -29,6 +30,7 @@ import {
 import { formatCurrency } from '../lib/documentIds'
 import { formatCzechDateTime } from '../lib/czechDate'
 import { tapFeedback } from '../lib/touchFeedback'
+import { WaiterPerformanceRanking } from './WaiterPerformanceRanking'
 import type { ShiftCashExpenseKind } from '../types'
 
 export interface ShiftClosureHubProps {
@@ -72,6 +74,10 @@ export function ShiftClosureHub({
   const waiters = usePosSessionStore((s) => s.waiters)
   const getActiveWaiter = usePosSessionStore((s) => s.getActiveWaiter)
   const waiter = getActiveWaiter()
+  const waiterAuditLogs = useWaiterAuditStore((s) => s.waiter_audit_logs)
+  const payrollArchive = useWaiterAuditStore((s) => s.payroll_archive)
+  const logWaiterAction = useWaiterAuditStore((s) => s.logWaiterAction)
+  const archiveShiftLogs = useWaiterAuditStore((s) => s.archiveShiftLogs)
 
   const [expKind, setExpKind] = useState<ShiftCashExpenseKind>('goods_cash')
   const [expAmount, setExpAmount] = useState('')
@@ -135,6 +141,15 @@ export function ShiftClosureHub({
       return
     }
     tapFeedback('success')
+    logWaiterAction({
+      project_id: project?.id,
+      waiter_name: waiter?.name || managerName,
+      waiter_id: waiter?.id,
+      action_description: `Výdej z pokladny: ${expenseKindLabel(expKind)}${
+        row.staffName ? ` · ${row.staffName}` : ''
+      }`,
+      amount_czk: -Math.abs(row.amount),
+    })
     setExpAmount('')
     setExpNote('')
     setToast(`${expenseKindLabel(expKind)} · ${formatCurrency(row.amount)}`)
@@ -171,6 +186,12 @@ export function ShiftClosureHub({
         setToast(res.error || 'Uzávěrka selhala')
         return
       }
+      const archived = archiveShiftLogs({
+        project_id: project?.id,
+        venueName: profile.companyName || project?.name || 'EventFlow',
+        managerName: managerName.trim() || 'Vedoucí směny',
+        revenueTotal: res.closure.revenueTotal,
+      })
       // Bar-tablet protocol: unlock next morning shift immediately after archive+print
       if (embedded) {
         startNewShift()
@@ -178,8 +199,8 @@ export function ShiftClosureHub({
       tapFeedback('success')
       setToast(
         embedded
-          ? 'Směna uzavřena · tisk odeslán · KDS archivována · obsluha odhlášena'
-          : 'Směna uzavřena · KDS historie archivována · uzávěrka odeslána na tisk',
+          ? `Směna uzavřena · stopa číšníka archivována (${archived?.logs.length ?? 0}) · obsluha odhlášena`
+          : `Směna uzavřena · payroll_archive + KDS historie · ${archived?.logs.length ?? 0} úkonů`,
       )
       onClosedComplete?.()
     } finally {
@@ -442,6 +463,52 @@ export function ShiftClosureHub({
           </p>
         </section>
       </div>
+
+      <section className="panel closure-panel" style={{ marginTop: 16 }}>
+        <h2 className="gold-text" style={{ fontSize: '1.15rem', marginTop: 0 }}>
+          Stopa číšníka · historie dne
+        </h2>
+        <p style={{ color: '#94a3b8', fontSize: '0.85rem', marginTop: 0 }}>
+          Živý chronologický záznam úkonů aktivní směny (waiter_audit_logs). Při uzávěrce se
+          uloží do payroll_archive na 30 dní.
+        </p>
+        <div className="waiter-audit-scroll" role="log" aria-live="polite">
+          {waiterAuditLogs.map((log) => (
+            <div key={log.id} className="waiter-audit-row">
+              <div className="waiter-audit-time">{log.timestamp}</div>
+              <div className="waiter-audit-body">
+                <strong>{log.waiter_name}</strong>
+                <span>{log.action_description}</span>
+              </div>
+              <div
+                className={
+                  log.amount_czk < 0
+                    ? 'waiter-audit-amt is-out'
+                    : log.amount_czk > 0
+                      ? 'waiter-audit-amt gold-text'
+                      : 'waiter-audit-amt'
+                }
+              >
+                {log.amount_czk
+                  ? `${log.amount_czk < 0 ? '−' : ''}${formatCurrency(Math.abs(log.amount_czk))}`
+                  : '—'}
+              </div>
+            </div>
+          ))}
+          {!waiterAuditLogs.length && (
+            <div style={{ color: '#64748b', padding: '0.75rem 0' }}>
+              Zatím žádné úkony — otevření stolů, položky, platby a výdeje se zapíší sem.
+            </div>
+          )}
+        </div>
+        <WaiterPerformanceRanking title="Výkonnost číšníků aktivní směny" />
+        {payrollArchive.length > 0 && (
+          <div className="waiter-payroll-archive-hint">
+            Uzamčený archiv (30 dní): {payrollArchive.length} směn · poslední{' '}
+            {formatCzechDateTime(payrollArchive[0]?.archivedAt)}
+          </div>
+        )}
+      </section>
 
       <section className="panel closure-panel" style={{ marginTop: 16 }}>
         <h2 className="gold-text" style={{ fontSize: '1.15rem', marginTop: 0 }}>

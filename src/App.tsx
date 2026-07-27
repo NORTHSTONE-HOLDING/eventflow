@@ -3,6 +3,7 @@ import { useAppStore } from './store/useAppStore'
 import { useStaffLockStore } from './store/useStaffLockStore'
 import { HeroScreen } from './components/HeroScreen'
 import { AppShell } from './components/AppShell'
+import { SaaSOnboarding } from './components/onboarding/SaaSOnboarding'
 import { StaffCheckinPage } from './components/StaffPanel'
 import { ClientPortalRoute } from './components/ClientPortalRoute'
 import { CustomerDisplayPage } from './components/CustomerDisplay'
@@ -16,19 +17,62 @@ function RootLayout() {
   return <Outlet />
 }
 
+/** Fresh / incomplete SaaS profile must complete onboarding before ERP. */
+export function profileNeedsOnboarding(profile: {
+  onboardingCompleted?: boolean
+  registeredAt?: string | null
+  subscriptionPaid?: boolean
+} | null | undefined): boolean {
+  if (!profile) return true
+  return !(
+    Boolean(profile.onboardingCompleted) &&
+    Boolean(profile.registeredAt) &&
+    Boolean(profile.subscriptionPaid)
+  )
+}
+
 /**
  * Main ERP shell. Explicitly refuses to render when path is /cctv-wall
  * (belt-and-suspenders — primary wall route is a top-level sibling).
  */
 function MainAppRoute() {
   const location = useLocation()
+  const hydrated = useAppStore((s) => s.hydrated)
   const showHero = useAppStore((s) => s.showHero)
+  const profile = useAppStore((s) => s.profile)
   const staffTerminalLocked = useStaffLockStore((s) => s.staffTerminalLocked)
 
   if (location.pathname === '/cctv-wall') {
     return (
       <ErrorBoundary fallbackTitle="Chyba CCTV TV režimu">
         <CctvWallPage />
+      </ErrorBoundary>
+    )
+  }
+
+  if (!hydrated) {
+    return (
+      <div
+        style={{
+          minHeight: '100vh',
+          display: 'grid',
+          placeItems: 'center',
+          background: '#070a0e',
+          color: '#D4AF37',
+          fontFamily: 'var(--font-body)',
+          fontWeight: 700,
+        }}
+      >
+        EventFlow OS se načítá…
+      </div>
+    )
+  }
+
+  // SaaS onboarding gate — first launch / fresh profile (never during staff lock)
+  if (profileNeedsOnboarding(profile) && !staffTerminalLocked) {
+    return (
+      <ErrorBoundary fallbackTitle="Chyba SaaS onboarding">
+        <SaaSOnboarding />
       </ErrorBoundary>
     )
   }

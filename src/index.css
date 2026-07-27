@@ -3708,6 +3708,229 @@ a:hover {
   cursor: not-allowed;
 }
 
+/* —— SaaS Onboarding (Tauri / first launch) —— */
+.saas-onboarding {
+  position: relative;
+  min-height: 100vh;
+  background: #070a0e;
+  color: var(--text);
+  padding: 1.5rem 1.25rem 3rem;
+  overflow-x: hidden;
+}
+
+.saas-onboarding-inner {
+  position: relative;
+  z-index: 2;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.saas-onboarding-head {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+  margin-bottom: 1.5rem;
+}
+
+.saas-stepper {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 1.15rem;
+}
+
+.saas-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  padding: 0.65rem 0.85rem;
+  border-radius: 12px;
+  border: 1px solid rgba(212, 175, 55, 0.22);
+  background: #0f172a;
+  color: #94a3b8;
+  cursor: pointer;
+  touch-action: manipulation;
+  text-align: left;
+  transition: border-color 0.2s ease, background 0.2s ease, color 0.2s ease;
+}
+
+.saas-step:hover {
+  border-color: rgba(212, 175, 55, 0.45);
+  color: #e8c86a;
+}
+
+.saas-step.is-active {
+  border-color: #d4af37;
+  background: rgba(212, 175, 55, 0.12);
+  color: #e8c86a;
+  box-shadow: var(--shadow-gold);
+}
+
+.saas-step.is-done {
+  border-color: rgba(16, 185, 129, 0.4);
+  color: #6ee7b7;
+}
+
+.saas-step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid currentColor;
+  font-weight: 900;
+  font-size: 0.85rem;
+  flex-shrink: 0;
+}
+
+.saas-step-label {
+  font-size: 0.82rem;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.saas-step-panel {
+  border-color: rgba(212, 175, 55, 0.28) !important;
+  background:
+    linear-gradient(160deg, rgba(212, 175, 55, 0.07), transparent 45%),
+    #161d26 !important;
+}
+
+.saas-step-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 8px;
+  font-size: 1.35rem;
+  color: #e8c86a;
+}
+
+.saas-step-sub {
+  margin: 0 0 1.25rem;
+  color: var(--text-muted);
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+
+.saas-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-bottom: 1.15rem;
+}
+
+.saas-inline {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.saas-inline .input {
+  flex: 1;
+  min-width: 160px;
+}
+
+.saas-consent-box {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 1rem;
+  margin-bottom: 1.15rem;
+  border-radius: 12px;
+  border: 1px solid rgba(212, 175, 55, 0.22);
+  background: rgba(15, 23, 42, 0.65);
+}
+
+.saas-check {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+  cursor: pointer;
+}
+
+.saas-check input {
+  width: 20px;
+  height: 20px;
+  margin-top: 2px;
+  accent-color: #d4af37;
+  flex-shrink: 0;
+}
+
+.saas-link {
+  background: none;
+  border: none;
+  color: #d4af37;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+}
+
+.saas-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.saas-errors {
+  margin-bottom: 12px;
+  padding: 0.85rem 1rem;
+  border-radius: 12px;
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  background: rgba(127, 29, 29, 0.35);
+  color: #fecaca;
+  font-weight: 700;
+  font-size: 0.88rem;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.saas-paywall-lock,
+.saas-paywall-ok {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding: 0.75rem 1rem;
+  border-radius: 10px;
+  font-weight: 800;
+  font-size: 0.88rem;
+}
+
+.saas-paywall-lock {
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  background: rgba(127, 29, 29, 0.25);
+  color: #fecaca;
+}
+
+.saas-paywall-ok {
+  border: 1px solid rgba(16, 185, 129, 0.4);
+  background: rgba(16, 185, 129, 0.12);
+  color: #6ee7b7;
+}
+
+.saas-pricing-grid {
+  margin-bottom: 1.25rem;
+}
+
+@media (max-width: 820px) {
+  .saas-stepper,
+  .saas-form-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .co-apple-logo {
   font-size: 1.3rem;
 }

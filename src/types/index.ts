@@ -26,6 +26,8 @@ export interface AgencyProfile {
   subscription: SubscriptionTier
   vopAccepted: boolean
   gdprAccepted: boolean
+  /** Explicit consent for automated LLM / AI data processing (GDPR Art. 6/9). */
+  llmDataProcessingAccepted?: boolean
   registeredAt: string | null
   /** Manager PIN to unlock Admin Dashboard from /pos-terminal (digits). */
   managerPin?: string
@@ -44,6 +46,17 @@ export interface AgencyProfile {
   openaiApiKey?: string
   /** When true, profile UI hides the key and requires Manager PIN to edit. */
   openaiApiKeyLocked?: boolean
+  /** SaaS onboarding finished (all 4 steps + Spustit EventFlow OS). */
+  onboardingCompleted?: boolean
+  /** Stripe / paywall cleared for selected subscription tier. */
+  subscriptionPaid?: boolean
+  subscriptionPaidAt?: string | null
+  stripeSessionId?: string | null
+  /** Auth identity from Supabase or local onboarding. */
+  authUserId?: string | null
+  authEmail?: string | null
+  /** Default operational margin % used in pricing / planner. */
+  defaultMarginPercent?: number
 }
 
 export interface TimelineItem {

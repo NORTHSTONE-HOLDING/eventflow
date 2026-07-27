@@ -73,6 +73,7 @@ const defaultProfile: AgencyProfile = {
   subscription: 'LITE',
   vopAccepted: false,
   gdprAccepted: false,
+  llmDataProcessingAccepted: false,
   registeredAt: null,
   managerPin: '2580',
   logoUrl: null,
@@ -81,6 +82,13 @@ const defaultProfile: AgencyProfile = {
   showEventPrices: false,
   openaiApiKey: '',
   openaiApiKeyLocked: false,
+  onboardingCompleted: false,
+  subscriptionPaid: false,
+  subscriptionPaidAt: null,
+  stripeSessionId: null,
+  authUserId: null,
+  authEmail: null,
+  defaultMarginPercent: 28,
 }
 
 const APP_VIEWS: AppView[] = [
@@ -214,6 +222,10 @@ interface AppState {
   updateProfile: (patch: Partial<AgencyProfile>) => void
   registerAgency: (profile: AgencyProfile) => void
   setSubscription: (tier: SubscriptionTier) => void
+  /** Finish SaaS onboarding → unlock Dashboard. */
+  completeOnboarding: (profile: AgencyProfile) => void
+  /** True when first-launch / fresh profile must run onboarding wizard. */
+  needsOnboarding: () => boolean
 
   createFromPrompt: (prompt: string, attachments?: File[]) => Promise<EventProject>
   setActiveProject: (id: string | null) => void
@@ -373,6 +385,8 @@ export const useAppStore = create<AppState>()(
             ...defaultProfile,
             ...profile,
             registeredAt: new Date().toISOString(),
+            onboardingCompleted: Boolean(profile.onboardingCompleted),
+            subscriptionPaid: Boolean(profile.subscriptionPaid),
           },
           view: 'dashboard',
           showHero: false,
@@ -380,6 +394,36 @@ export const useAppStore = create<AppState>()(
 
       setSubscription: (tier) =>
         set((s) => ({ profile: { ...s.profile, subscription: tier } })),
+
+      completeOnboarding: (profile) => {
+        const next: AgencyProfile = {
+          ...defaultProfile,
+          ...profile,
+          registeredAt: profile.registeredAt || new Date().toISOString(),
+          onboardingCompleted: true,
+          subscriptionPaid: true,
+          subscriptionPaidAt:
+            profile.subscriptionPaidAt || new Date().toISOString(),
+          vopAccepted: true,
+          gdprAccepted: true,
+          llmDataProcessingAccepted: true,
+        }
+        set({
+          profile: next,
+          view: 'dashboard',
+          showHero: false,
+        })
+      },
+
+      needsOnboarding: () => {
+        const p = get().profile
+        if (!p) return true
+        if (p.onboardingCompleted && p.registeredAt && p.subscriptionPaid) {
+          return false
+        }
+        // Fresh / incomplete profile — force SaaS pipeline
+        return true
+      },
 
       createFromPrompt: async (prompt, attachments = []) => {
         set({ aiLoading: true, showHero: false })
@@ -1367,11 +1411,27 @@ export const useAppStore = create<AppState>()(
                 .map((p) => migrateProject(p))
                 .filter((p): p is EventProject => Boolean(p))
             : []
+          const mergedProfile: AgencyProfile = {
+            ...defaultProfile,
+            ...(state?.profile ?? {}),
+          }
+          // Legacy profiles that already registered skip the new SaaS wizard
+          if (
+            mergedProfile.registeredAt &&
+            mergedProfile.onboardingCompleted == null
+          ) {
+            mergedProfile.onboardingCompleted = true
+            mergedProfile.subscriptionPaid = true
+            mergedProfile.subscriptionPaidAt =
+              mergedProfile.subscriptionPaidAt || mergedProfile.registeredAt
+            mergedProfile.llmDataProcessingAccepted =
+              mergedProfile.llmDataProcessingAccepted ?? true
+          }
           useAppStore.setState({
             hydrated: true,
             view: normalizeAppView(state?.view),
             projects,
-            profile: { ...defaultProfile, ...(state?.profile ?? {}) },
+            profile: mergedProfile,
             showHero: state?.showHero ?? true,
             warehouseAlerts: Array.isArray(state?.warehouseAlerts)
               ? state!.warehouseAlerts

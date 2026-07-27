@@ -12,13 +12,9 @@ import { tap } from '../../lib/feedback'
 import { Modal } from '../common/Modal'
 import type { InventoryCategory, InventoryItem, StockUnit } from '../../lib/types'
 
-function EditModal({ item, onClose }: { item: InventoryItem | null; onClose: () => void }) {
+function EditModal({ item, onClose }: { item: InventoryItem; onClose: () => void }) {
   const updateItem = useInventoryStore((s) => s.updateItem)
-  const [draft, setDraft] = useState<InventoryItem | null>(item)
-
-  // Re-sync when a different row is opened.
-  if (item && (!draft || draft.id !== item.id)) setDraft(item)
-  if (!item || !draft) return null
+  const [draft, setDraft] = useState<InventoryItem>(item)
 
   const set = (patch: Partial<InventoryItem>) => setDraft({ ...draft, ...patch })
 
@@ -42,7 +38,7 @@ function EditModal({ item, onClose }: { item: InventoryItem | null; onClose: () 
   }
 
   return (
-    <Modal open={!!item} title="✏️ Úprava položky" onClose={onClose} maxWidth="max-w-lg">
+    <Modal open title="✏️ Úprava položky" onClose={onClose} maxWidth="max-w-lg">
       <div className="grid grid-cols-2 gap-3">
         <div className="col-span-2">
           <label className="label">Název</label>
@@ -262,7 +258,10 @@ export function InventoryHub() {
   const deleteItem = useInventoryStore((s) => s.deleteItem)
   const togglePosVisible = useInventoryStore((s) => s.togglePosVisible)
   const runCommand = useInventoryStore((s) => s.runCommand)
-  const lowStock = useInventoryStore((s) => s.lowStock())
+  const lowStock = useMemo(
+    () => items.filter((it) => it.minQty > 0 && it.stockQty <= it.minQty),
+    [items],
+  )
 
   const [tab, setTab] = useState<'vse' | InventoryCategory>('vse')
   const [editItem, setEditItem] = useState<InventoryItem | null>(null)
@@ -448,7 +447,7 @@ export function InventoryHub() {
         </div>
       </div>
 
-      <EditModal item={editItem} onClose={() => setEditItem(null)} />
+      {editItem && <EditModal key={editItem.id} item={editItem} onClose={() => setEditItem(null)} />}
       <ImporterModal open={importOpen} onClose={() => setImportOpen(false)} />
 
       <Modal open={!!confirmDelete} title="Smazat?" onClose={() => setConfirmDelete(null)} maxWidth="max-w-xs">

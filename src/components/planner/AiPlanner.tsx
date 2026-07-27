@@ -48,6 +48,17 @@ export function AiPlanner() {
     setDragId(null)
   }
 
+  const moveBlock = (id: string, dir: -1 | 1) => {
+    if (!plan) return
+    tap(620)
+    const list = [...plan.timeline]
+    const idx = list.findIndex((t) => t.id === id)
+    const swap = idx + dir
+    if (idx < 0 || swap < 0 || swap >= list.length) return
+    ;[list[idx], list[swap]] = [list[swap], list[idx]]
+    setPlan({ ...plan, timeline: list })
+  }
+
   const toggleCheck = (id: string) => {
     if (!plan) return
     setPlan({
@@ -141,8 +152,10 @@ export function AiPlanner() {
 
           {tab === 'timeline' && (
             <div className="card divide-y divide-slate-800">
-              <p className="px-4 pt-4 text-xs text-slate-500">Přetáhněte bloky pro změnu pořadí (drag &amp; drop).</p>
-              {plan.timeline.map((b: TimelineBlock) => (
+              <p className="px-4 pt-4 text-xs text-slate-500">
+                Přetáhněte bloky (drag &amp; drop) nebo použijte šipky ▲▼ pro změnu pořadí.
+              </p>
+              {plan.timeline.map((b: TimelineBlock, i) => (
                 <div
                   key={b.id}
                   draggable
@@ -155,9 +168,29 @@ export function AiPlanner() {
                 >
                   <span className="text-slate-600">⠿</span>
                   <div className="w-16 shrink-0 font-mono text-lg font-bold text-gold">{b.time}</div>
-                  <div>
+                  <div className="flex-1">
                     <div className="font-semibold text-white">{b.title}</div>
                     <div className="text-sm text-slate-400">{b.detail}</div>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <button
+                      type="button"
+                      onClick={() => moveBlock(b.id, -1)}
+                      disabled={i === 0}
+                      className="flex h-7 w-7 items-center justify-center rounded bg-slate-800 text-slate-300 disabled:opacity-30"
+                      aria-label="Nahoru"
+                    >
+                      ▲
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => moveBlock(b.id, 1)}
+                      disabled={i === plan.timeline.length - 1}
+                      className="flex h-7 w-7 items-center justify-center rounded bg-slate-800 text-slate-300 disabled:opacity-30"
+                      aria-label="Dolů"
+                    >
+                      ▼
+                    </button>
                   </div>
                 </div>
               ))}

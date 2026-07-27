@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useKdsStore } from '../../store/useKdsStore'
 import { elapsed, formatClock } from '../../lib/format'
@@ -113,7 +113,8 @@ function TicketCard({ ticket, now }: { ticket: KdsTicket; now: number }) {
 
 export function KdsScreen({ station }: { station: Station }) {
   const now = useNow(1000)
-  const tickets = useKdsStore((s) => s.tickets.filter((t) => t.station === station))
+  const allTickets = useKdsStore((s) => s.tickets)
+  const tickets = useMemo(() => allTickets.filter((t) => t.station === station), [allTickets, station])
   const [pinOpen, setPinOpen] = useState(false)
   const [closureOpen, setClosureOpen] = useState(false)
 

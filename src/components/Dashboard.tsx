@@ -1,5 +1,6 @@
-import { useShiftStore } from '../store/useShiftStore'
-import { useAuditStore } from '../store/useAuditStore'
+import { useMemo } from 'react'
+import { computeTotals, useShiftStore } from '../store/useShiftStore'
+import { computePerformance, useAuditStore } from '../store/useAuditStore'
 import { useKdsStore } from '../store/useKdsStore'
 import { usePosStore } from '../store/usePosStore'
 import { formatCZK, formatClock } from '../lib/format'
@@ -15,9 +16,10 @@ function Kpi({ label, value, sub }: { label: string; value: string; sub?: string
 }
 
 export function Dashboard() {
-  const totals = useShiftStore((s) => s.totals())
   const sales = useShiftStore((s) => s.sales)
-  const perf = useAuditStore((s) => s.performance())
+  const totals = useMemo(() => computeTotals(sales), [sales])
+  const logs = useAuditStore((s) => s.logs)
+  const perf = useMemo(() => computePerformance(logs), [logs])
   const tickets = useKdsStore((s) => s.tickets)
   const tables = usePosStore((s) => s.tables)
   const openTables = tables.filter((t) => t.items.length > 0).length

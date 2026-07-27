@@ -1,4 +1,5 @@
-import { useAuditStore } from '../store/useAuditStore'
+import { useMemo } from 'react'
+import { computePerformance, useAuditStore } from '../store/useAuditStore'
 import { formatCZK, formatClock } from '../lib/format'
 import type { AuditAction } from '../lib/types'
 
@@ -22,7 +23,7 @@ const ACTION_COLOR: Record<AuditAction, string> = {
 
 export function AuditView() {
   const logs = useAuditStore((s) => s.logs)
-  const perf = useAuditStore((s) => s.performance())
+  const perf = useMemo(() => computePerformance(logs), [logs])
 
   return (
     <div className="animate-fadeUp space-y-6">

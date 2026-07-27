@@ -23,6 +23,23 @@ interface AuditState {
   clear: () => void
 }
 
+// Pure derivation so component selectors never return a fresh array each render.
+export function computePerformance(logs: AuditLog[]): WaiterPerformance[] {
+  const map = new Map<string, WaiterPerformance>()
+  for (const l of logs) {
+    const cur =
+      map.get(l.waiterId) ??
+      { waiterId: l.waiterId, waiterName: l.waiterName, actions: 0, revenue: 0, percent: 0 }
+    cur.actions += 1
+    cur.revenue += l.amount
+    map.set(l.waiterId, cur)
+  }
+  const totalActions = logs.length || 1
+  return Array.from(map.values())
+    .map((p) => ({ ...p, percent: Math.round((p.actions / totalActions) * 100) }))
+    .sort((a, b) => b.actions - a.actions)
+}
+
 export const useAuditStore = create<AuditState>((set, get) => ({
   logs: [],
 
@@ -34,22 +51,7 @@ export const useAuditStore = create<AuditState>((set, get) => ({
       ].slice(0, 400),
     })),
 
-  performance: () => {
-    const { logs } = get()
-    const map = new Map<string, WaiterPerformance>()
-    for (const l of logs) {
-      const cur =
-        map.get(l.waiterId) ??
-        { waiterId: l.waiterId, waiterName: l.waiterName, actions: 0, revenue: 0, percent: 0 }
-      cur.actions += 1
-      cur.revenue += l.amount
-      map.set(l.waiterId, cur)
-    }
-    const totalActions = logs.length || 1
-    return Array.from(map.values())
-      .map((p) => ({ ...p, percent: Math.round((p.actions / totalActions) * 100) }))
-      .sort((a, b) => b.actions - a.actions)
-  },
+  performance: () => computePerformance(get().logs),
 
   clear: () => set({ logs: [] }),
 }))

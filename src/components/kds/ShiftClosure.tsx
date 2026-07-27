@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Modal } from '../common/Modal'
-import { useShiftStore } from '../../store/useShiftStore'
+import { computeFinalCash, computeTotals, useShiftStore } from '../../store/useShiftStore'
 import { useKdsStore } from '../../store/useKdsStore'
 import { useAuthStore } from '../../store/useAuthStore'
 import { usePosStore } from '../../store/usePosStore'
@@ -33,11 +33,12 @@ function Metric({ label, value, gold }: { label: string; value: string; gold?: b
 
 export function ShiftClosure({ open, onClose }: ShiftClosureProps) {
   const navigate = useNavigate()
-  const totals = useShiftStore((s) => s.totals())
+  const sales = useShiftStore((s) => s.sales)
   const cashOuts = useShiftStore((s) => s.cashOuts)
+  const totals = useMemo(() => computeTotals(sales), [sales])
+  const finalCash = useMemo(() => computeFinalCash(sales, cashOuts), [sales, cashOuts])
   const addCashOut = useShiftStore((s) => s.addCashOut)
   const removeCashOut = useShiftStore((s) => s.removeCashOut)
-  const finalCash = useShiftStore((s) => s.finalCash())
   const buildReceipt = useShiftStore((s) => s.buildReceipt)
   const closeShift = useShiftStore((s) => s.closeShift)
   const clearHistory = useKdsStore((s) => s.clearHistory)

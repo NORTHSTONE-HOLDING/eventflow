@@ -19,6 +19,30 @@ export interface ShiftReceipt {
   saleCount: number
 }
 
+// Pure derivations — used both imperatively (store) and via useMemo in components,
+// so selectors never return a fresh object/array on every render.
+export function computeTotals(sales: SaleRecord[]): ShiftTotals {
+  let kitchen = 0
+  let bar = 0
+  let cash = 0
+  let card = 0
+  for (const sale of sales) {
+    for (const item of sale.items) {
+      if (item.station === 'kitchen') kitchen += item.price
+      else bar += item.price
+    }
+    cash += sale.cashPart
+    card += sale.cardPart
+  }
+  return { kitchen, bar, cash, card, total: kitchen + bar }
+}
+
+export function computeFinalCash(sales: SaleRecord[], cashOuts: CashOut[]): number {
+  const cash = computeTotals(sales).cash
+  const out = cashOuts.reduce((sum, c) => sum + c.amount, 0)
+  return cash - out
+}
+
 interface ShiftState {
   sales: SaleRecord[]
   cashOuts: CashOut[]
@@ -50,28 +74,9 @@ export const useShiftStore = create<ShiftState>((set, get) => ({
   removeCashOut: (id) =>
     set((s) => ({ cashOuts: s.cashOuts.filter((c) => c.id !== id) })),
 
-  totals: () => {
-    const { sales } = get()
-    let kitchen = 0
-    let bar = 0
-    let cash = 0
-    let card = 0
-    for (const sale of sales) {
-      for (const item of sale.items) {
-        if (item.station === 'kitchen') kitchen += item.price
-        else bar += item.price
-      }
-      cash += sale.cashPart
-      card += sale.cardPart
-    }
-    return { kitchen, bar, cash, card, total: kitchen + bar }
-  },
+  totals: () => computeTotals(get().sales),
 
-  finalCash: () => {
-    const cash = get().totals().cash
-    const out = get().cashOuts.reduce((sum, c) => sum + c.amount, 0)
-    return cash - out
-  },
+  finalCash: () => computeFinalCash(get().sales, get().cashOuts),
 
   buildReceipt: (docNumber) => {
     const totals = get().totals()

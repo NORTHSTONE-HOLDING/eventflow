@@ -1,31 +1,21 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-const host = process.env.TAURI_DEV_HOST
-
-// https://vite.dev/config/
-// base: './' — relative asset URLs for Tauri WebView (macOS AppKit / Windows WebView2)
+// Web-first SaaS — Tauri desktop is optional (`npm run tauri:dev`) and never blocks localhost.
 export default defineConfig({
   plugins: [react()],
   clearScreen: false,
-  base: './',
+  base: '/',
   server: {
-    port: 1420,
-    strictPort: true,
-    host: host || false,
-    hmr: host
-      ? {
-          protocol: 'ws',
-          host,
-          port: 1421,
-        }
-      : undefined,
+    port: 5173,
+    host: true,
     watch: {
-      ignored: ['**/src-tauri/**'],
+      // Never watch / recompile native desktop crate during web SaaS work
+      ignored: ['**/src-tauri/**', '**/src-tauri/target/**'],
     },
   },
-  envPrefix: ['VITE_', 'TAURI_'],
   build: {
-    sourcemap: !!process.env.TAURI_ENV_DEBUG,
+    // Relative assets still fine for optional desktop packaging via tauri.conf frontendDist
+    assetsDir: 'assets',
   },
 })

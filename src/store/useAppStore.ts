@@ -339,7 +339,7 @@ export const useAppStore = create<AppState>()(
     (set, get) => ({
       view: 'dashboard',
       showHero: true,
-      hydrated: false,
+      hydrated: true,
       profile: defaultProfile,
       projects: [],
       activeProjectId: null,
@@ -1404,50 +1404,67 @@ export const useAppStore = create<AppState>()(
         posOrders: s.posOrders,
         posAuditLog: s.posAuditLog,
       }),
-      onRehydrateStorage: () => (state) => {
+      onRehydrateStorage: () => (state, error) => {
+        // Never block the web UI — mark hydrated even if persist/rehydrate fails
         queueMicrotask(() => {
-          const projects = Array.isArray(state?.projects)
-            ? state!.projects
-                .map((p) => migrateProject(p))
-                .filter((p): p is EventProject => Boolean(p))
-            : []
-          const mergedProfile: AgencyProfile = {
-            ...defaultProfile,
-            ...(state?.profile ?? {}),
+          try {
+            if (error) {
+              useAppStore.setState({ hydrated: true })
+              return
+            }
+            const projects = Array.isArray(state?.projects)
+              ? state!.projects
+                  .map((p) => {
+                    try {
+                      return migrateProject(p)
+                    } catch {
+                      return null
+                    }
+                  })
+                  .filter((p): p is EventProject => Boolean(p))
+              : []
+            const mergedProfile: AgencyProfile = {
+              ...defaultProfile,
+              ...(state?.profile ?? {}),
+            }
+            // Legacy profiles that already registered skip the new SaaS wizard
+            if (
+              mergedProfile.registeredAt &&
+              mergedProfile.onboardingCompleted == null
+            ) {
+              mergedProfile.onboardingCompleted = true
+              mergedProfile.subscriptionPaid = true
+              mergedProfile.subscriptionPaidAt =
+                mergedProfile.subscriptionPaidAt || mergedProfile.registeredAt
+              mergedProfile.llmDataProcessingAccepted =
+                mergedProfile.llmDataProcessingAccepted ?? true
+            }
+            useAppStore.setState({
+              hydrated: true,
+              view: normalizeAppView(state?.view),
+              projects,
+              profile: mergedProfile,
+              showHero: state?.showHero ?? true,
+              warehouseAlerts: Array.isArray(state?.warehouseAlerts)
+                ? state!.warehouseAlerts
+                : [],
+              printers:
+                Array.isArray(state?.printers) && state!.printers.length
+                  ? state!.printers
+                  : DEFAULT_PRINTERS,
+              kdsTickets: Array.isArray(state?.kdsTickets) ? state!.kdsTickets : [],
+              posOrders: Array.isArray((state as AppState | undefined)?.posOrders)
+                ? (state as AppState).posOrders
+                : [],
+              posAuditLog: Array.isArray(
+                (state as AppState | undefined)?.posAuditLog,
+              )
+                ? (state as AppState).posAuditLog
+                : [],
+            })
+          } catch {
+            useAppStore.setState({ hydrated: true })
           }
-          // Legacy profiles that already registered skip the new SaaS wizard
-          if (
-            mergedProfile.registeredAt &&
-            mergedProfile.onboardingCompleted == null
-          ) {
-            mergedProfile.onboardingCompleted = true
-            mergedProfile.subscriptionPaid = true
-            mergedProfile.subscriptionPaidAt =
-              mergedProfile.subscriptionPaidAt || mergedProfile.registeredAt
-            mergedProfile.llmDataProcessingAccepted =
-              mergedProfile.llmDataProcessingAccepted ?? true
-          }
-          useAppStore.setState({
-            hydrated: true,
-            view: normalizeAppView(state?.view),
-            projects,
-            profile: mergedProfile,
-            showHero: state?.showHero ?? true,
-            warehouseAlerts: Array.isArray(state?.warehouseAlerts)
-              ? state!.warehouseAlerts
-              : [],
-            printers:
-              Array.isArray(state?.printers) && state!.printers.length
-                ? state!.printers
-                : DEFAULT_PRINTERS,
-            kdsTickets: Array.isArray(state?.kdsTickets) ? state!.kdsTickets : [],
-            posOrders: Array.isArray((state as AppState | undefined)?.posOrders)
-              ? (state as AppState).posOrders
-              : [],
-            posAuditLog: Array.isArray((state as AppState | undefined)?.posAuditLog)
-              ? (state as AppState).posAuditLog
-              : [],
-          })
         })
       },
     }

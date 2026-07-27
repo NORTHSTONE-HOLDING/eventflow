@@ -32,12 +32,10 @@ export function profileNeedsOnboarding(profile: {
 }
 
 /**
- * Main ERP shell. Explicitly refuses to render when path is /cctv-wall
- * (belt-and-suspenders — primary wall route is a top-level sibling).
+ * Main ERP shell — web SaaS first. No native desktop / Tauri wait on the render path.
  */
 function MainAppRoute() {
   const location = useLocation()
-  const hydrated = useAppStore((s) => s.hydrated)
   const showHero = useAppStore((s) => s.showHero)
   const profile = useAppStore((s) => s.profile)
   const staffTerminalLocked = useStaffLockStore((s) => s.staffTerminalLocked)
@@ -50,25 +48,7 @@ function MainAppRoute() {
     )
   }
 
-  if (!hydrated) {
-    return (
-      <div
-        style={{
-          minHeight: '100vh',
-          display: 'grid',
-          placeItems: 'center',
-          background: '#070a0e',
-          color: '#D4AF37',
-          fontFamily: 'var(--font-body)',
-          fontWeight: 700,
-        }}
-      >
-        EventFlow OS se načítá…
-      </div>
-    )
-  }
-
-  // SaaS onboarding gate — first launch / fresh profile (never during staff lock)
+  // SaaS onboarding gate — first launch / fresh profile (instant, no hydrate spinner)
   if (profileNeedsOnboarding(profile) && !staffTerminalLocked) {
     return (
       <ErrorBoundary fallbackTitle="Chyba SaaS onboarding">
@@ -77,7 +57,6 @@ function MainAppRoute() {
     )
   }
 
-  // Staff RBAC: never show hero while terminal lock is active — force PIN gate via AppShell
   if (showHero && !staffTerminalLocked) return <HeroScreen />
   return (
     <ErrorBoundary fallbackTitle="Chyba v hlavním rozhraní">

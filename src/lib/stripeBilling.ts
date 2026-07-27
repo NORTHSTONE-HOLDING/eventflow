@@ -1,11 +1,10 @@
 /**
  * Stripe Billing SaaS paywall — Checkout session simulation + optional Payment Link.
- * Real Checkout URL: set VITE_STRIPE_PAYMENT_LINK_{TIER} or VITE_STRIPE_PAYMENT_LINK.
+ * Web-first: never imports Tauri plugins on the browser critical path.
  */
 
 import type { SubscriptionTier } from '../types'
 import { uid } from './documentIds'
-import { isTauriDesktop } from './tauriEnv'
 
 export interface StripeCheckoutResult {
   ok: boolean
@@ -31,19 +30,6 @@ function paymentLinkForTier(tier: SubscriptionTier): string {
   return String(import.meta.env.VITE_STRIPE_PAYMENT_LINK || '').trim()
 }
 
-async function openExternal(url: string): Promise<void> {
-  if (isTauriDesktop()) {
-    try {
-      const { open } = await import('@tauri-apps/plugin-shell')
-      await open(url)
-      return
-    } catch {
-      // fall through
-    }
-  }
-  window.open(url, '_blank', 'noopener,noreferrer')
-}
-
 /**
  * Start Stripe Billing for the selected SaaS tier.
  * Opens live Payment Link when configured; otherwise simulates a secure session.
@@ -56,7 +42,7 @@ export async function startStripeBillingSession(
   const link = paymentLinkForTier(tier)
 
   if (link) {
-    await openExternal(link)
+    window.open(link, '_blank', 'noopener,noreferrer')
     return {
       ok: true,
       sessionId,
@@ -67,8 +53,7 @@ export async function startStripeBillingSession(
     }
   }
 
-  // Secure client-side simulation — production uses Payment Link / Checkout Session API
-  await new Promise((r) => setTimeout(r, 1400))
+  await new Promise((r) => setTimeout(r, 600))
   return {
     ok: true,
     sessionId,

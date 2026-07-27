@@ -1,0 +1,3 @@
+# Native desktop crate must never block Cursor web SaaS indexing / watchers
+src-tauri/target/
+src-tauri/gen/

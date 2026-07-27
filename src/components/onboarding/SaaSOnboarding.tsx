@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   Building2,
@@ -22,7 +22,6 @@ import { startStripeBillingSession } from '../../lib/stripeBilling'
 import { registerOnboardingAccount } from '../../lib/onboardingAuth'
 import { formatCurrency } from '../../lib/documentIds'
 import { tapFeedback } from '../../lib/touchFeedback'
-import { desktopShellLabel, isTauriDesktop } from '../../lib/tauriEnv'
 import { Modal } from '../Modal'
 import { ManagerPinKeypadModal } from '../staff-terminal/ManagerPinKeypadModal'
 import { Logo } from '../Logo'
@@ -65,7 +64,6 @@ export function SaaSOnboarding() {
 
   const keyLocked = Boolean(form.openaiApiKeyLocked) && !aiKeySessionUnlocked
   const paid = Boolean(form.subscriptionPaid)
-  const shell = useMemo(() => desktopShellLabel(), [])
 
   const set = <K extends keyof AgencyProfile>(key: K, value: AgencyProfile[K]) =>
     setForm((f) => ({ ...f, [key]: value }))
@@ -263,8 +261,7 @@ export function SaaSOnboarding() {
               EventFlow OS — Onboarding
             </h1>
             <p style={{ margin: '6px 0 0', color: 'var(--text-muted)', fontSize: '0.92rem' }}>
-              Globální SaaS pipeline · {shell}
-              {isTauriDesktop() ? ' · Tauri v2' : ''} · české účetnictví & gastro ERP
+              Globální SaaS pipeline · Web · české účetnictví & gastro ERP
             </p>
           </div>
         </header>

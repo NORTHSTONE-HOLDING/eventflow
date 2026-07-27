@@ -4,12 +4,12 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --host 0.0.0.0 --port 5173",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "tauri": "tauri",
-    "tauri:dev": "tauri dev",
+    "tauri": "echo 'Desktop Tauri is optional — use npm run dev for web SaaS' && tauri",
+    "tauri:dev": "echo 'Prefer npm run dev for browser SaaS' && tauri dev",
     "tauri:build": "tauri build",
     "desktop:dev": "tauri dev",
     "desktop:build": "tauri build"

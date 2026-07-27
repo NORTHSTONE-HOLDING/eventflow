@@ -28,6 +28,14 @@ npm install
 npm run dev
 ```
 
+### Desktop (Tauri v2)
+
+```bash
+npm run tauri:dev    # vývojový desktop shell (min. okno 1280×800)
+npm run tauri:build  # produkční balíčky macOS / Windows / Linux
+```
+
+Vite `base: "./"` zajišťuje relativní assety pro WebView2 / AppKit.
 Open [http://localhost:5173](http://localhost:5173).
 
 ### Optional cloud / AI keys (`.env`)

@@ -44,19 +44,19 @@ export function computePerformance(logs: AuditLog[]): WaiterPerformance[] {
 export const useAuditStore = create<AuditState>()(
   persist(
     (set, get) => ({
-  logs: [],
+      logs: [],
 
-  log: ({ waiterId, waiterName, action, detail, amount = 0 }) =>
-    set((s) => ({
-      logs: [
-        { id: uid('log'), ts: Date.now(), waiterId, waiterName, action, detail, amount },
-        ...s.logs,
-      ].slice(0, 400),
-    })),
+      log: ({ waiterId, waiterName, action, detail, amount = 0 }) =>
+        set((s) => ({
+          logs: [
+            { id: uid('log'), ts: Date.now(), waiterId, waiterName, action, detail, amount },
+            ...s.logs,
+          ].slice(0, 400),
+        })),
 
-  performance: () => computePerformance(get().logs),
+      performance: () => computePerformance(get().logs),
 
-  clear: () => set({ logs: [] }),
+      clear: () => set({ logs: [] }),
     }),
     { name: 'eventflow-audit', partialize: (s) => ({ logs: s.logs }) },
   ),

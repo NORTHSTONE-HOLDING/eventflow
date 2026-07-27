@@ -18,9 +18,20 @@ function parseBudget(text: string): number {
 }
 
 function parseLocation(text: string): string {
-  const cities = ['Praha', 'Brno', 'Ostrava', 'Plzeň', 'Olomouc', 'Liberec', 'Hradec Králové', 'Karlovy Vary']
-  const hit = cities.find((c) => new RegExp(c, 'i').test(text) || new RegExp(c.normalize('NFD').replace(/[\u0300-\u036f]/g, ''), 'i').test(text))
-  return hit ?? 'Praha'
+  // Match Czech declensions by stem (e.g. "v Brně" → Brno, "v Praze" → Praha).
+  const cities: { name: string; stem: RegExp }[] = [
+    { name: 'Praha', stem: /prah|praz/i },
+    { name: 'Brno', stem: /brn/i },
+    { name: 'Ostrava', stem: /ostrav/i },
+    { name: 'Plzeň', stem: /plze[nň]/i },
+    { name: 'Olomouc', stem: /olomouc/i },
+    { name: 'Liberec', stem: /liberc|liberec/i },
+    { name: 'Hradec Králové', stem: /hradec|hradci/i },
+    { name: 'Karlovy Vary', stem: /karlov/i },
+  ]
+  const normalized = text.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  const hit = cities.find((c) => c.stem.test(text) || c.stem.test(normalized))
+  return hit?.name ?? 'Praha'
 }
 
 function detectKind(text: string): string {

@@ -143,6 +143,15 @@ export const MENU_FORMATS: { id: 'A4' | 'A5' | 'DL'; label: string; ratio: strin
   { id: 'DL', label: 'DL Slim (99×210)', ratio: '99 / 210' },
 ]
 
+export function allergenCodesFor(id: string): number[] {
+  const pool = ALLERGENS.map((a) => a.code)
+  const seed = id.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0)
+  const count = (seed % 3) + 1
+  const codes: number[] = []
+  for (let i = 0; i < count; i++) codes.push(pool[(seed + i * 3) % pool.length])
+  return Array.from(new Set(codes)).sort((a, b) => a - b)
+}
+
 export const ALLERGENS: { code: number; name: string }[] = [
   { code: 1, name: 'Obiloviny obsahující lepek' },
   { code: 3, name: 'Vejce' },

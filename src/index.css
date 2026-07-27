@@ -56,4 +56,15 @@
   .badge-gold {
     @apply bg-gradient-to-r from-gold-400 to-gold-600 text-slate-950;
   }
+  .inv-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: #d4af37 transparent;
+  }
+  .inv-scroll::-webkit-scrollbar {
+    width: 10px;
+  }
+  .inv-scroll::-webkit-scrollbar-thumb {
+    background: linear-gradient(#e0c24c, #94761f);
+    border-radius: 8px;
+  }
 }

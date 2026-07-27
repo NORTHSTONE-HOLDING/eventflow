@@ -1,13 +1,14 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type {
+  InventoryItem,
   OrderItem,
   PaymentMethod,
-  Product,
   RestaurantTable,
   SaleLineItem,
   SaleRecord,
   Space,
+  Station,
   Waiter,
 } from '../lib/types'
 import { DEFAULT_WAITERS } from '../lib/constants'
@@ -15,6 +16,7 @@ import { nextDocNumber, uid } from '../lib/format'
 import { useKdsStore } from './useKdsStore'
 import { useShiftStore } from './useShiftStore'
 import { useAuditStore } from './useAuditStore'
+import { useInventoryStore } from './useInventoryStore'
 
 interface PosState {
   spaces: Space[]
@@ -30,22 +32,33 @@ interface PosState {
   setCurrentWaiter: (id: string) => void
   setActiveSpace: (id: string) => void
   addSpace: (name: string) => void
-  addTable: (spaceId: string, seats: number) => void
+  addTable: (spaceId: string, seats: number, name?: string) => void
   deleteTable: (id: string) => boolean
   selectTable: (id: string) => void
   backToMap: () => void
   setSeat: (seat: number) => void
   toggleMobile: () => void
 
-  addProductToActive: (product: Product) => void
+  addProductToActive: (product: InventoryItem) => void
   voidItem: (tableId: string, itemId: string) => void
   sendOrder: (tableId: string) => void
   payTable: (tableId: string, method: PaymentMethod | 'split', cashPart: number, cardPart: number) => SaleRecord | null
 
-  addQuickItem: (product: Product) => void
+  addQuickItem: (product: InventoryItem) => void
   removeQuickItem: (itemId: string) => void
   clearQuickCart: () => void
   payQuick: (method: PaymentMethod | 'split', cashPart: number, cardPart: number) => SaleRecord | null
+
+  submitOnlineOrder: (
+    tableId: string,
+    lines: {
+      inventoryId: string
+      name: string
+      price: number
+      station: Station
+      servingSize: number
+    }[],
+  ) => SaleRecord | null
 
   tableById: (id: string | null) => RestaurantTable | undefined
   waiterName: (id: string) => string
@@ -71,12 +84,14 @@ const initialTables: RestaurantTable[] = [
   makeTable('sp-sal', 'Stůl 6', 4),
 ]
 
-function orderItemFromProduct(product: Product, waiterId: string, seat: number): OrderItem {
+function orderItemFromProduct(product: InventoryItem, waiterId: string, seat: number): OrderItem {
   return {
     id: uid('oi'),
     productId: product.id,
+    inventoryId: product.id,
+    servingSize: product.servingSize,
     name: product.name,
-    price: product.price,
+    price: product.sellPrice,
     vatRate: product.vatRate,
     station: product.station,
     state: 'draft',
@@ -109,10 +124,11 @@ export const usePosStore = create<PosState>()(
       return { spaces: [...s.spaces, space], activeSpaceId: space.id }
     }),
 
-  addTable: (spaceId, seats) =>
+  addTable: (spaceId, seats, name) =>
     set((s) => {
       const count = s.tables.length + 1
-      return { tables: [...s.tables, makeTable(spaceId, `Stůl ${count}`, seats)] }
+      const label = name && name.trim() ? name.trim() : `Stůl ${count}`
+      return { tables: [...s.tables, makeTable(spaceId, label, seats)] }
     }),
 
   deleteTable: (id) => {
@@ -202,6 +218,7 @@ export const usePosStore = create<PosState>()(
         createdAt: now,
         waiterId,
         waiterName: wname,
+        isOnline: false,
         items: stationItems.map((i) => ({ id: uid('ki'), name: i.name, status: 'nova' })),
       })
     }
@@ -240,6 +257,9 @@ export const usePosStore = create<PosState>()(
       docNumber: nextDocNumber(),
     }
     useShiftStore.getState().recordSale(sale)
+    useInventoryStore.getState().deductForSale(
+      table.items.map((i) => ({ inventoryId: i.inventoryId, servingSize: i.servingSize })),
+    )
     useAuditStore.getState().log({
       waiterId,
       waiterName: wname,
@@ -291,6 +311,9 @@ export const usePosStore = create<PosState>()(
       docNumber: nextDocNumber(),
     }
     useShiftStore.getState().recordSale(sale)
+    useInventoryStore.getState().deductForSale(
+      quickCart.map((i) => ({ inventoryId: i.inventoryId, servingSize: i.servingSize })),
+    )
     useAuditStore.getState().log({
       waiterId: currentWaiterId,
       waiterName: wname,
@@ -299,6 +322,58 @@ export const usePosStore = create<PosState>()(
       amount: total,
     })
     set({ quickCart: [] })
+    return sale
+  },
+
+  submitOnlineOrder: (tableId, lines) => {
+    if (lines.length === 0) return null
+    const now = Date.now()
+    const table = get().tableById(tableId)
+    const tableName = table ? table.name : `Online stůl ${tableId.slice(-4)}`
+    const total = lines.reduce((sum, l) => sum + l.price, 0)
+
+    const stations: ('kitchen' | 'bar')[] = ['kitchen', 'bar']
+    for (const station of stations) {
+      const stationLines = lines.filter((l) => l.station === station)
+      if (stationLines.length === 0) continue
+      useKdsStore.getState().pushTicket({
+        id: uid('tkt'),
+        tableId: table ? tableId : null,
+        tableName,
+        seat: null,
+        station,
+        createdAt: now,
+        waiterId: 'online',
+        waiterName: 'Online objednávka',
+        isOnline: true,
+        items: stationLines.map((l) => ({ id: uid('ki'), name: l.name, status: 'nova' })),
+      })
+    }
+
+    const sale: SaleRecord = {
+      id: uid('sale'),
+      ts: now,
+      waiterId: 'online',
+      waiterName: 'Online objednávka',
+      tableName,
+      items: lines.map((l) => ({ name: l.name, price: l.price, station: l.station })),
+      total,
+      method: 'card',
+      cashPart: 0,
+      cardPart: total,
+      docNumber: nextDocNumber(),
+    }
+    useShiftStore.getState().recordSale(sale)
+    useInventoryStore.getState().deductForSale(
+      lines.map((l) => ({ inventoryId: l.inventoryId, servingSize: l.servingSize })),
+    )
+    useAuditStore.getState().log({
+      waiterId: 'online',
+      waiterName: 'Online objednávka',
+      action: 'quick-sale',
+      detail: `Online QR objednávka (${lines.length} položek) — ${tableName}`,
+      amount: total,
+    })
     return sale
   },
 

@@ -17,8 +17,12 @@ localhost with zero native/desktop (Tauri) dependencies.
   `@tailwind` directives in `src/index.css`. Custom brand color is `gold` (#D4AF37) and reusable
   component classes (`.btn`, `.card`, `.input`, `.badge`) live in the `@layer components` block.
 - State is split into Zustand stores in `src/store/` (`useAuthStore`, `usePosStore`, `useKdsStore`,
-  `useShiftStore`, `useCctvStore`, `useAuditStore`). Stores call each other via `getState()` — e.g.
-  sending a POS order pushes KDS tickets and audit logs.
+  `useShiftStore`, `useCctvStore`, `useAuditStore`, `useInventoryStore`). Stores call each other via
+  `getState()` — e.g. sending a POS order pushes KDS tickets and audit logs; paying/quick-selling and
+  online QR orders also deduct stock in `useInventoryStore` by each item's fractional `servingSize`.
+- POS product tiles are **driven by inventory**: only `useInventoryStore` items with
+  `isPosVisible: true` (and `stockQty > 0`) render in the POS/customer menus. Raw/bulk goods are hidden.
+- Offline QR codes are generated with the `qrcode` package (`QRCode.toDataURL`), no network needed.
 - Each store is persisted to `localStorage` via the zustand `persist` middleware
   (keys `eventflow-auth`, `-pos`, `-kds`, `-shift`, `-cctv`, `-audit`), so refreshes and deep-links
   (`/kds-kitchen` etc.) survive. To start completely fresh, clear those `localStorage` keys (or use
@@ -36,6 +40,8 @@ localhost with zero native/desktop (Tauri) dependencies.
   Tiskový lístek, Audit).
 - Isolated terminals (guarded; redirect to `/` until onboarding is done):
   `/pos-terminal`, `/kds-kitchen`, `/kds-bar`, `/cctv-wall`.
+- Public self-service route (NOT onboarding-guarded): `/customer-order/:tableId` (the `:tableId` is
+  the raw table id, optionally prefixed `stul-`). Reached via the per-table "🖨️ QR" button in POS.
 
 ### Demo gotchas
 - Manager PIN for unlocking sent items, AI key, and shift closure is **1234** (`MANAGER_PIN`).

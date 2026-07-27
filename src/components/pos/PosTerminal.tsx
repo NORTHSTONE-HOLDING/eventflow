@@ -4,9 +4,10 @@ import { usePosStore } from '../../store/usePosStore'
 import { useKdsStore } from '../../store/useKdsStore'
 import { formatCZK } from '../../lib/format'
 import { tap } from '../../lib/feedback'
-import type { OrderItem, Product, RestaurantTable } from '../../lib/types'
+import type { InventoryItem, OrderItem, RestaurantTable } from '../../lib/types'
 import { ProductGrid } from './ProductGrid'
 import { PaymentModal } from './PaymentModal'
+import { TableQrModal } from './TableQrModal'
 import { PinGate } from '../common/PinGate'
 import { Modal } from '../common/Modal'
 import { RedAlertBanner } from '../common/RedAlertBanner'
@@ -36,8 +37,16 @@ function GoldAlerts() {
 function AddTableModal({ open, onClose, spaceId }: { open: boolean; onClose: () => void; spaceId: string }) {
   const addTable = usePosStore((s) => s.addTable)
   const [seats, setSeats] = useState(4)
+  const [name, setName] = useState('')
   return (
     <Modal open={open} title="➕ Přidat stůl" onClose={onClose} maxWidth="max-w-sm">
+      <label className="label">Popis / název stolu (volitelné)</label>
+      <input
+        className="input mb-4"
+        placeholder="např. VIP box u okna"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+      />
       <label className="label">Kapacita: {seats} {seats === 1 ? 'místo' : seats < 5 ? 'místa' : 'míst'}</label>
       <input
         type="range"
@@ -48,14 +57,15 @@ function AddTableModal({ open, onClose, spaceId }: { open: boolean; onClose: () 
         className="w-full accent-gold"
       />
       <div className="mt-1 flex justify-between text-xs text-slate-500">
-        <span>1</span>
+        <span>1 místo</span>
         <span>16 míst</span>
       </div>
       <button
         type="button"
         onClick={() => {
           tap(880)
-          addTable(spaceId, seats)
+          addTable(spaceId, seats, name)
+          setName('')
           onClose()
         }}
         className="btn btn-gold mt-5 w-full"
@@ -106,6 +116,7 @@ function SpacePanel() {
   const tableTotal = usePosStore((s) => s.tableTotal)
   const [addSpaceOpen, setAddSpaceOpen] = useState(false)
   const [addTableOpen, setAddTableOpen] = useState(false)
+  const [qrTable, setQrTable] = useState<RestaurantTable | null>(null)
   const [note, setNote] = useState<string | null>(null)
 
   const spaceTables = tables.filter((t) => t.spaceId === activeSpaceId)
@@ -202,6 +213,18 @@ function SpacePanel() {
                   <div className="mt-1 text-xs text-slate-500">volný</div>
                 )}
               </button>
+              <button
+                type="button"
+                onClick={() => {
+                  tap(620)
+                  setQrTable(t)
+                }}
+                className="absolute left-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-md text-slate-500 hover:bg-gold/20 hover:text-gold"
+                aria-label="Vytisknout QR kód"
+                title="Vytisknout QR kód pro stůl"
+              >
+                🖨️
+              </button>
               {!open && (
                 <button
                   type="button"
@@ -219,6 +242,7 @@ function SpacePanel() {
 
       <AddSpaceModal open={addSpaceOpen} onClose={() => setAddSpaceOpen(false)} />
       <AddTableModal open={addTableOpen} onClose={() => setAddTableOpen(false)} spaceId={activeSpaceId} />
+      <TableQrModal table={qrTable} onClose={() => setQrTable(null)} />
     </div>
   )
 }
@@ -573,7 +597,7 @@ function MobileWaiter({
 }: {
   table: RestaurantTable | null
   onBack: () => void
-  onPick: (product: Product) => void
+  onPick: (product: InventoryItem) => void
 }) {
   if (!table) {
     return (

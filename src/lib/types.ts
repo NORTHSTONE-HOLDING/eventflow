@@ -59,6 +59,8 @@ export type KitchenStatus = 'nova' | 'priprava' | 'hotovo'
 export interface OrderItem {
   id: string
   productId: string
+  inventoryId: string
+  servingSize: number
   name: string
   price: number
   vatRate: number
@@ -144,6 +146,7 @@ export interface KdsTicket {
   createdAt: number
   waiterId: string
   waiterName: string
+  isOnline: boolean
 }
 
 export type CashOutType = 'zbozi' | 'zalohy' | 'vyplaty'
@@ -191,6 +194,7 @@ export type MenuTheme =
 export type MenuFormat = 'A4' | 'A5' | 'DL'
 
 export interface TimelineBlock {
+  id: string
   time: string
   title: string
   detail: string
@@ -202,6 +206,45 @@ export interface ShoppingLine {
   note: string
 }
 
+export type VatRate = 21 | 12 | 0
+
+export interface BudgetLine {
+  id: string
+  category: string
+  description: string
+  amount: number
+  vatRate: VatRate
+  isCost: boolean
+}
+
+export interface CateringPlanItem {
+  id: string
+  name: string
+  portions: number
+  unitPrice: number
+  allergens: number[]
+}
+
+export interface ChecklistItem {
+  id: string
+  label: string
+  done: boolean
+}
+
+export interface DocNumbers {
+  nabidka: string
+  smlouva: string
+  faktura: string
+}
+
+export interface BudgetTotals {
+  cost: number
+  revenue: number
+  profit: number
+  margin: number
+  vatByRate: { rate: VatRate; base: number; vat: number }[]
+}
+
 export interface EventPlan {
   title: string
   guests: number
@@ -211,4 +254,32 @@ export interface EventPlan {
   timeline: TimelineBlock[]
   shopping: ShoppingLine[]
   recipes: { name: string; steps: string[] }[]
+  budgetLines: BudgetLine[]
+  totals: BudgetTotals
+  catering: CateringPlanItem[]
+  checklist: ChecklistItem[]
+  docs: DocNumbers
+}
+
+export type InventoryCategory = 'jidlo' | 'piti' | 'inventar' | 'technika'
+
+export type StockUnit = 'l' | 'kg' | 'ks'
+
+export interface InventoryItem {
+  id: string
+  name: string
+  category: InventoryCategory
+  subcategory: string
+  ean: string
+  unit: StockUnit
+  stockQty: number
+  minQty: number
+  purchasePrice: number
+  sellPrice: number
+  vatRate: number
+  isPosVisible: boolean
+  station: Station
+  photo: string
+  servingSize: number
+  servingLabel: string
 }

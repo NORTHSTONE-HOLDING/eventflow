@@ -5,6 +5,7 @@ import { Dashboard } from '../Dashboard'
 import { AiPlanner } from '../planner/AiPlanner'
 import { PrintMenu } from '../menu/PrintMenu'
 import { AuditView } from '../AuditView'
+import { InventoryHub } from '../inventory/InventoryHub'
 import { RedAlertBanner } from '../common/RedAlertBanner'
 
 export function AppShell() {
@@ -17,6 +18,7 @@ export function AppShell() {
       <main className="flex-1 overflow-y-auto p-6 lg:p-10">
         {view === 'dashboard' && <Dashboard />}
         {view === 'planner' && <AiPlanner />}
+        {view === 'inventory' && <InventoryHub />}
         {view === 'menu' && <PrintMenu />}
         {view === 'audit' && <AuditView />}
       </main>

@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
 import type { AuditAction, AuditLog } from '../lib/types'
 import { uid } from '../lib/format'
 
@@ -40,7 +41,9 @@ export function computePerformance(logs: AuditLog[]): WaiterPerformance[] {
     .sort((a, b) => b.actions - a.actions)
 }
 
-export const useAuditStore = create<AuditState>((set, get) => ({
+export const useAuditStore = create<AuditState>()(
+  persist(
+    (set, get) => ({
   logs: [],
 
   log: ({ waiterId, waiterName, action, detail, amount = 0 }) =>
@@ -54,4 +57,7 @@ export const useAuditStore = create<AuditState>((set, get) => ({
   performance: () => computePerformance(get().logs),
 
   clear: () => set({ logs: [] }),
-}))
+    }),
+    { name: 'eventflow-audit', partialize: (s) => ({ logs: s.logs }) },
+  ),
+)

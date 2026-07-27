@@ -18,8 +18,16 @@ localhost with zero native/desktop (Tauri) dependencies.
   component classes (`.btn`, `.card`, `.input`, `.badge`) live in the `@layer components` block.
 - State is split into Zustand stores in `src/store/` (`useAuthStore`, `usePosStore`, `useKdsStore`,
   `useShiftStore`, `useCctvStore`, `useAuditStore`). Stores call each other via `getState()` — e.g.
-  sending a POS order pushes KDS tickets and audit logs. State is **not persisted**, so a full page
-  reload resets onboarding and shift data.
+  sending a POS order pushes KDS tickets and audit logs.
+- Each store is persisted to `localStorage` via the zustand `persist` middleware
+  (keys `eventflow-auth`, `-pos`, `-kds`, `-shift`, `-cctv`, `-audit`), so refreshes and deep-links
+  (`/kds-kitchen` etc.) survive. To start completely fresh, clear those `localStorage` keys (or use
+  the sidebar "Odhlásit se"). Persistence is **not** live cross-tab — a second tab loads the snapshot
+  at open time rather than updating in real time.
+- IMPORTANT selector rule: never return a freshly-created object/array from a zustand selector
+  (e.g. `useStore(s => s.list.filter(...))`) — it triggers an infinite `useSyncExternalStore` loop.
+  Select the raw slice and derive with `useMemo`, using the exported pure helpers
+  (`computeTotals`, `computeFinalCash`, `computePerformance`).
 - TypeScript config is strict about erasable syntax: `verbatimModuleSyntax` + `erasableSyntaxOnly`
   are on, so use `import type` for type-only imports and avoid enums / parameter properties.
 

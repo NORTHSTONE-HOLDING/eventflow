@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
 import type {
   CompanyProfile,
   Consents,
@@ -40,30 +41,9 @@ const emptyCompany: CompanyProfile = {
   vatPayer: true,
 }
 
-export const useAuthStore = create<AuthState>((set) => ({
-  loggedIn: false,
-  email: '',
-  step: 'auth',
-  consents: { gdpr: false, vop: false, llm: false },
-  tier: null,
-  company: { ...emptyCompany },
-  aiKey: '',
-  keyLocked: false,
-
-  signIn: (email) => set({ email, loggedIn: true, step: 'paywall' }),
-  setConsent: (key, value) =>
-    set((s) => ({ consents: { ...s.consents, [key]: value } })),
-  choosePlan: (tier) => set({ tier, step: 'company' }),
-  setCompany: (patch) => set((s) => ({ company: { ...s.company, ...patch } })),
-  confirmCompany: () => set({ step: 'aikey' }),
-  setAiKey: (value) => set({ aiKey: value }),
-  lockKey: () => set((s) => (s.aiKey.trim() ? { keyLocked: true } : {})),
-  unlockKey: () => set({ keyLocked: false }),
-  finishOnboarding: () => set({ step: 'done' }),
-  goToStep: (step) => set({ step }),
-  logout: () => set({ loggedIn: false, step: 'auth' }),
-  reset: () =>
-    set({
+export const useAuthStore = create<AuthState>()(
+  persist(
+    (set) => ({
       loggedIn: false,
       email: '',
       step: 'auth',
@@ -72,5 +52,31 @@ export const useAuthStore = create<AuthState>((set) => ({
       company: { ...emptyCompany },
       aiKey: '',
       keyLocked: false,
+
+      signIn: (email) => set({ email, loggedIn: true, step: 'paywall' }),
+      setConsent: (key, value) =>
+        set((s) => ({ consents: { ...s.consents, [key]: value } })),
+      choosePlan: (tier) => set({ tier, step: 'company' }),
+      setCompany: (patch) => set((s) => ({ company: { ...s.company, ...patch } })),
+      confirmCompany: () => set({ step: 'aikey' }),
+      setAiKey: (value) => set({ aiKey: value }),
+      lockKey: () => set((s) => (s.aiKey.trim() ? { keyLocked: true } : {})),
+      unlockKey: () => set({ keyLocked: false }),
+      finishOnboarding: () => set({ step: 'done' }),
+      goToStep: (step) => set({ step }),
+      logout: () => set({ loggedIn: false, step: 'auth' }),
+      reset: () =>
+        set({
+          loggedIn: false,
+          email: '',
+          step: 'auth',
+          consents: { gdpr: false, vop: false, llm: false },
+          tier: null,
+          company: { ...emptyCompany },
+          aiKey: '',
+          keyLocked: false,
+        }),
     }),
-}))
+    { name: 'eventflow-auth' },
+  ),
+)

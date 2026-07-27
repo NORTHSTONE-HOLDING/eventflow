@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
 import type {
   OrderItem,
   PaymentMethod,
@@ -86,7 +87,9 @@ function orderItemFromProduct(product: Product, waiterId: string, seat: number):
   }
 }
 
-export const usePosStore = create<PosState>((set, get) => ({
+export const usePosStore = create<PosState>()(
+  persist(
+    (set, get) => ({
   spaces: initialSpaces,
   tables: initialTables,
   waiters: DEFAULT_WAITERS,
@@ -302,4 +305,19 @@ export const usePosStore = create<PosState>((set, get) => ({
   tableById: (id) => get().tables.find((t) => t.id === id),
   waiterName: (id) => get().waiters.find((w) => w.id === id)?.name ?? 'Neznámý',
   tableTotal: (table) => table.items.reduce((sum, i) => sum + i.price, 0),
-}))
+    }),
+    {
+      name: 'eventflow-pos',
+      partialize: (s) => ({
+        spaces: s.spaces,
+        tables: s.tables,
+        waiters: s.waiters,
+        currentWaiterId: s.currentWaiterId,
+        activeSpaceId: s.activeSpaceId,
+        activeSeat: s.activeSeat,
+        mobileMode: s.mobileMode,
+        quickCart: s.quickCart,
+      }),
+    },
+  ),
+)

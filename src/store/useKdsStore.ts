@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
 import type { KdsTicket, KitchenStatus, Station } from '../lib/types'
 import { uid } from '../lib/format'
 
@@ -19,7 +20,9 @@ interface KdsState {
   clearHistory: () => void
 }
 
-export const useKdsStore = create<KdsState>((set, get) => ({
+export const useKdsStore = create<KdsState>()(
+  persist(
+    (set, get) => ({
   tickets: [],
   alerts: [],
 
@@ -53,4 +56,10 @@ export const useKdsStore = create<KdsState>((set, get) => ({
   ticketsFor: (station) => get().tickets.filter((t) => t.station === station),
 
   clearHistory: () => set({ tickets: [], alerts: [] }),
-}))
+    }),
+    {
+      name: 'eventflow-kds',
+      partialize: (s) => ({ tickets: s.tickets, alerts: s.alerts }),
+    },
+  ),
+)

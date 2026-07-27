@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
 import type { Camera, CctvEvent } from '../lib/types'
 import { DEFAULT_CAMERAS } from '../lib/constants'
 import { uid } from '../lib/format'
@@ -13,7 +14,9 @@ interface CctvState {
   clearEvents: () => void
 }
 
-export const useCctvStore = create<CctvState>((set) => ({
+export const useCctvStore = create<CctvState>()(
+  persist(
+    (set) => ({
   cameras: DEFAULT_CAMERAS.map((c) => ({ ...c })),
   events: [],
   redAlert: null,
@@ -48,4 +51,10 @@ export const useCctvStore = create<CctvState>((set) => ({
     })),
 
   clearEvents: () => set({ events: [] }),
-}))
+    }),
+    {
+      name: 'eventflow-cctv',
+      partialize: (s) => ({ cameras: s.cameras, events: s.events, redAlert: s.redAlert }),
+    },
+  ),
+)

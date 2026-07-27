@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
 import type { CashOut, CashOutType, SaleRecord } from '../lib/types'
 import { uid } from '../lib/format'
 
@@ -56,7 +57,9 @@ interface ShiftState {
   closeShift: () => void
 }
 
-export const useShiftStore = create<ShiftState>((set, get) => ({
+export const useShiftStore = create<ShiftState>()(
+  persist(
+    (set, get) => ({
   sales: [],
   cashOuts: [],
   lastReceipt: null,
@@ -91,4 +94,10 @@ export const useShiftStore = create<ShiftState>((set, get) => ({
   },
 
   closeShift: () => set({ sales: [], cashOuts: [] }),
-}))
+    }),
+    {
+      name: 'eventflow-shift',
+      partialize: (s) => ({ sales: s.sales, cashOuts: s.cashOuts, lastReceipt: s.lastReceipt }),
+    },
+  ),
+)

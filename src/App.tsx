@@ -1,99 +1,72 @@
-import { createBrowserRouter, RouterProvider, Outlet } from 'react-router-dom'
-import { useAppStore } from './store/useAppStore'
-import { useStaffLockStore } from './store/useStaffLockStore'
-import { HeroScreen } from './components/HeroScreen'
-import { AppShell } from './components/AppShell'
-import { StaffCheckinPage } from './components/StaffPanel'
-import { ClientPortalRoute } from './components/ClientPortalRoute'
-import { CustomerDisplayPage } from './components/CustomerDisplay'
-import { KitchenDisplayPage } from './components/KitchenDisplay'
-import { PosTerminalPage } from './components/PosTerminalPage'
-import { ErrorBoundary } from './components/ErrorBoundary'
+import type { ReactNode } from 'react'
+import { createBrowserRouter, Navigate, RouterProvider } from 'react-router-dom'
+import { useAuthStore } from './store/useAuthStore'
+import { OnboardingWizard } from './components/onboarding/OnboardingWizard'
+import { AppShell } from './components/layout/AppShell'
+import { PosTerminal } from './components/pos/PosTerminal'
+import { KdsScreen } from './components/kds/KdsScreen'
+import { CctvWall } from './components/cctv/CctvWall'
+import { ErrorBoundary } from './components/common/ErrorBoundary'
 
-function RootLayout() {
-  return <Outlet />
+function RequireOnboarding({ children }: { children: ReactNode }) {
+  const done = useAuthStore((s) => s.step === 'done')
+  if (!done) return <Navigate to="/" replace />
+  return <>{children}</>
 }
 
-function MainAppRoute() {
-  const showHero = useAppStore((s) => s.showHero)
-  const staffTerminalLocked = useStaffLockStore((s) => s.staffTerminalLocked)
-  // Staff RBAC: never show hero while terminal lock is active — force PIN gate via AppShell
-  if (showHero && !staffTerminalLocked) return <HeroScreen />
-  return (
-    <ErrorBoundary fallbackTitle="Chyba v hlavním rozhraní">
-      <AppShell />
-    </ErrorBoundary>
-  )
+function Home() {
+  const done = useAuthStore((s) => s.step === 'done')
+  return done ? <AppShell /> : <OnboardingWizard />
 }
 
 const router = createBrowserRouter([
+  { path: '/', element: <Home /> },
   {
-    path: '/',
-    element: <RootLayout />,
-    children: [
-      {
-        path: 'staff-checkin',
-        element: <StaffCheckinPage />,
-      },
-      {
-        path: 'portal',
-        element: <ClientPortalRoute />,
-      },
-      {
-        path: 'pos-terminal',
-        element: (
-          <ErrorBoundary fallbackTitle="Chyba personálního terminálu">
-            <PosTerminalPage />
-          </ErrorBoundary>
-        ),
-      },
-      {
-        path: 'pos/customer',
-        element: (
-          <ErrorBoundary fallbackTitle="Chyba zákaznického displaye">
-            <CustomerDisplayPage />
-          </ErrorBoundary>
-        ),
-      },
-      {
-        path: 'pos/kds',
-        element: (
-          <ErrorBoundary fallbackTitle="Chyba KDS">
-            <KitchenDisplayPage />
-          </ErrorBoundary>
-        ),
-      },
-      {
-        path: 'pos/kds/kitchen',
-        element: (
-          <ErrorBoundary fallbackTitle="Chyba KDS Kuchyň">
-            <KitchenDisplayPage />
-          </ErrorBoundary>
-        ),
-      },
-      {
-        path: 'pos/kds/bar',
-        element: (
-          <ErrorBoundary fallbackTitle="Chyba KDS Bar">
-            <KitchenDisplayPage />
-          </ErrorBoundary>
-        ),
-      },
-      {
-        path: '*',
-        element: <MainAppRoute />,
-      },
-      {
-        index: true,
-        element: <MainAppRoute />,
-      },
-    ],
+    path: '/pos-terminal',
+    element: (
+      <RequireOnboarding>
+        <ErrorBoundary title="Chyba POS terminálu">
+          <PosTerminal />
+        </ErrorBoundary>
+      </RequireOnboarding>
+    ),
   },
+  {
+    path: '/kds-kitchen',
+    element: (
+      <RequireOnboarding>
+        <ErrorBoundary title="Chyba KDS Kuchyně">
+          <KdsScreen station="kitchen" />
+        </ErrorBoundary>
+      </RequireOnboarding>
+    ),
+  },
+  {
+    path: '/kds-bar',
+    element: (
+      <RequireOnboarding>
+        <ErrorBoundary title="Chyba KDS Bar">
+          <KdsScreen station="bar" />
+        </ErrorBoundary>
+      </RequireOnboarding>
+    ),
+  },
+  {
+    path: '/cctv-wall',
+    element: (
+      <RequireOnboarding>
+        <ErrorBoundary title="Chyba CCTV">
+          <CctvWall />
+        </ErrorBoundary>
+      </RequireOnboarding>
+    ),
+  },
+  { path: '*', element: <Navigate to="/" replace /> },
 ])
 
 export default function App() {
   return (
-    <ErrorBoundary fallbackTitle="EventFlow se nepodařilo načíst">
+    <ErrorBoundary title="EventFlow se nepodařilo načíst">
       <RouterProvider router={router} />
     </ErrorBoundary>
   )

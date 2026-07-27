@@ -1,94 +1,51 @@
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
-import {
-  DEFAULT_CCTV_CAMERAS,
-  publishSecurityAlert,
-  simulateWalkoutDetection,
-  type CctvCamera,
-  type CctvWalkoutAlert,
-} from '../lib/cctvEngine'
-import type { PosOrder, PosTableTab } from '../types'
+import type { Camera, CctvEvent } from '../lib/types'
+import { DEFAULT_CAMERAS } from '../lib/constants'
+import { uid } from '../lib/format'
 
 interface CctvState {
-  cameras: CctvCamera[]
-  alerts: CctvWalkoutAlert[]
-  monitoring: boolean
-
-  setCameraStatus: (id: string, status: CctvCamera['status']) => void
-  setMonitoring: (on: boolean) => void
-  pushAlert: (alert: CctvWalkoutAlert) => void
-  acknowledgeAlert: (id: string) => void
-  clearAcknowledged: () => void
-  runWalkoutSimulation: (opts: {
-    tables: PosTableTab[]
-    orders: PosOrder[]
-    projectId: string
-  }) => CctvWalkoutAlert | null
+  cameras: Camera[]
+  events: CctvEvent[]
+  redAlert: CctvEvent | null
+  updateCamera: (id: string, patch: Partial<Pick<Camera, 'ip' | 'zone' | 'name'>>) => void
+  simulateEscape: () => void
+  dismissAlert: () => void
+  clearEvents: () => void
 }
 
-export const useCctvStore = create<CctvState>()(
-  persist(
-    (set, get) => ({
-      cameras: DEFAULT_CCTV_CAMERAS,
-      alerts: [],
-      monitoring: true,
+export const useCctvStore = create<CctvState>((set) => ({
+  cameras: DEFAULT_CAMERAS.map((c) => ({ ...c })),
+  events: [],
+  redAlert: null,
 
-      setCameraStatus: (id, status) =>
-        set((s) => ({
-          cameras: s.cameras.map((c) => (c.id === id ? { ...c, status } : c)),
-        })),
+  updateCamera: (id, patch) =>
+    set((s) => ({
+      cameras: s.cameras.map((c) => (c.id === id ? { ...c, ...patch } : c)),
+    })),
 
-      setMonitoring: (on) => set({ monitoring: on }),
-
-      pushAlert: (alert) =>
-        set((s) => ({
-          alerts: [alert, ...s.alerts.filter((a) => a.id !== alert.id)].slice(0, 50),
-          cameras: s.cameras.map((c) =>
-            c.id === alert.cameraId ? { ...c, status: 'alert' as const } : c
-          ),
-        })),
-
-      acknowledgeAlert: (id) =>
-        set((s) => {
-          const alert = s.alerts.find((a) => a.id === id)
-          return {
-            alerts: s.alerts.map((a) =>
-              a.id === id ? { ...a, acknowledged: true } : a
-            ),
-            cameras: s.cameras.map((c) =>
-              alert && c.id === alert.cameraId && c.status === 'alert'
-                ? { ...c, status: 'online' as const }
-                : c
-            ),
-          }
-        }),
-
-      clearAcknowledged: () =>
-        set((s) => ({
-          alerts: s.alerts.filter((a) => !a.acknowledged),
-        })),
-
-      runWalkoutSimulation: ({ tables, orders, projectId }) => {
-        if (!get().monitoring) return null
-        const alert = simulateWalkoutDetection({
-          cameras: get().cameras,
-          tables,
-          orders,
-          projectId,
-        })
-        if (!alert) return null
-        get().pushAlert(alert)
-        publishSecurityAlert(alert)
-        return alert
-      },
+  simulateEscape: () =>
+    set((s) => {
+      const cam = s.cameras[0]
+      const event: CctvEvent = {
+        id: uid('evt'),
+        ts: Date.now(),
+        cameraId: cam.id,
+        cameraName: cam.name,
+        message: 'DETEKCE: Podezření na útěk bez zaplacení (odchod bez úhrady účtu).',
+        level: 'red',
+      }
+      return {
+        cameras: s.cameras.map((c) => (c.id === cam.id ? { ...c, alert: true } : c)),
+        events: [event, ...s.events].slice(0, 100),
+        redAlert: event,
+      }
     }),
-    {
-      name: 'eventflow-cctv',
-      partialize: (s) => ({
-        cameras: s.cameras,
-        alerts: s.alerts.slice(0, 20),
-        monitoring: s.monitoring,
-      }),
-    }
-  )
-)
+
+  dismissAlert: () =>
+    set((s) => ({
+      redAlert: null,
+      cameras: s.cameras.map((c) => (c.id === s.redAlert?.cameraId ? { ...c, alert: false } : c)),
+    })),
+
+  clearEvents: () => set({ events: [] }),
+}))

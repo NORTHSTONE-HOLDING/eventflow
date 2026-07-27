@@ -1,546 +1,89 @@
-import { useMemo, useState } from 'react'
-import {
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-  BarChart,
-  Bar,
-} from 'recharts'
-import { motion } from 'framer-motion'
-import {
-  format,
-  startOfMonth,
-  endOfMonth,
-  eachDayOfInterval,
-  isSameDay,
-  addMonths,
-  subMonths,
-  isValid,
-  parseISO,
-} from 'date-fns'
-import { cs } from 'date-fns/locale'
-import { ChevronLeft, ChevronRight, Sparkles, TrendingUp, AlertTriangle, MonitorSmartphone } from 'lucide-react'
-import { useAppStore, computeMetrics } from '../store/useAppStore'
-import { formatCurrency, formatPercent } from '../lib/documentIds'
-import type { EventProject } from '../types'
+import { useShiftStore } from '../store/useShiftStore'
+import { useAuditStore } from '../store/useAuditStore'
+import { useKdsStore } from '../store/useKdsStore'
+import { usePosStore } from '../store/usePosStore'
+import { formatCZK, formatClock } from '../lib/format'
 
-const FALLBACK_CHART = [
-  { name: 'Led', revenue: 120000, cost: 85000 },
-  { name: 'Úno', revenue: 180000, cost: 120000 },
-  { name: 'Bře', revenue: 210000, cost: 145000 },
-  { name: 'Dub', revenue: 160000, cost: 110000 },
-  { name: 'Kvě', revenue: 290000, cost: 190000 },
-  { name: 'Čer', revenue: 340000, cost: 220000 },
-  { name: 'Čvc', revenue: 450000, cost: 310000 },
-]
-
-const FALLBACK_MARGIN = [
-  { name: 'CN001', margin: 24 },
-  { name: 'CN002', margin: 18 },
-  { name: 'CN003', margin: 31 },
-  { name: 'CN004', margin: 22 },
-]
-
-function safeParseDate(value: string | undefined | null): Date | null {
-  if (!value) return null
-  try {
-    const d = value.includes('T') ? parseISO(value) : new Date(value)
-    return isValid(d) ? d : null
-  } catch {
-    return null
-  }
+function Kpi({ label, value, sub }: { label: string; value: string; sub?: string }) {
+  return (
+    <div className="card p-5">
+      <div className="text-xs uppercase tracking-wider text-slate-400">{label}</div>
+      <div className="mt-2 font-display text-3xl text-gold">{value}</div>
+      {sub && <div className="mt-1 text-xs text-slate-500">{sub}</div>}
+    </div>
+  )
 }
 
 export function Dashboard() {
-  // Select stable primitives / arrays — never call getMetrics() inside a Zustand selector
-  // (it allocates a new object every time → infinite re-render crash).
-  const projects = useAppStore((s) => s.projects)
-  const setView = useAppStore((s) => s.setView)
-  const setActiveProject = useAppStore((s) => s.setActiveProject)
-  const warehouseAlerts = useAppStore((s) => s.warehouseAlerts)
-  const acknowledgeAlert = useAppStore((s) => s.acknowledgeAlert)
-  const [month, setMonth] = useState(() => new Date(2026, 6, 1))
-
-  const safeProjects: EventProject[] = useMemo(
-    () => (Array.isArray(projects) ? projects.filter(Boolean) : []),
-    [projects]
-  )
-
-  const metrics = useMemo(() => computeMetrics(safeProjects), [safeProjects])
-
-  const activeAlerts = useMemo(
-    () => (warehouseAlerts ?? []).filter((a) => !a.acknowledged).slice(0, 8),
-    [warehouseAlerts]
-  )
-
-  const recommendations = metrics.aiRecommendations?.length
-    ? metrics.aiRecommendations
-    : ['Zatím žádná doporučení — vytvořte první akci v AI Planneru.']
-
-  const chartData = useMemo(() => {
-    if (!safeProjects.length) return FALLBACK_CHART
-    return safeProjects
-      .slice(0, 6)
-      .reverse()
-      .map((p) => ({
-        name: (p.name || 'Projekt').slice(0, 12),
-        revenue: Number(p.totalRevenue) || 0,
-        cost: Number(p.totalCost) || 0,
-      }))
-  }, [safeProjects])
-
-  const marginData = useMemo(() => {
-    if (!safeProjects.length) return FALLBACK_MARGIN
-    return safeProjects.slice(0, 5).map((p) => ({
-      name: p.documents?.nabidka || '—',
-      margin: Number((Number(p.margin) || 0).toFixed(1)),
-    }))
-  }, [safeProjects])
-
-  const days = useMemo(() => {
-    try {
-      const start = startOfMonth(month)
-      const end = endOfMonth(month)
-      if (!isValid(start) || !isValid(end)) return []
-      return eachDayOfInterval({ start, end })
-    } catch {
-      return []
-    }
-  }, [month])
-
-  const eventDates = useMemo(
-    () =>
-      safeProjects
-        .map((p) => safeParseDate(p.date))
-        .filter((d): d is Date => d !== null),
-    [safeProjects]
-  )
-
-  const leadingBlanks = days.length ? (days[0].getDay() + 6) % 7 : 0
+  const totals = useShiftStore((s) => s.totals())
+  const sales = useShiftStore((s) => s.sales)
+  const perf = useAuditStore((s) => s.performance())
+  const tickets = useKdsStore((s) => s.tickets)
+  const tables = usePosStore((s) => s.tables)
+  const openTables = tables.filter((t) => t.items.length > 0).length
 
   return (
-    <div style={{ animation: 'fadeUp 0.4s ease' }}>
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'flex-start',
-          flexWrap: 'wrap',
-          gap: 16,
-          marginBottom: 28,
-        }}
-      >
-        <div>
-          <h1 className="section-title gold-text">Dashboard</h1>
-          <p className="section-sub">Přehled agentury · reálný čas</p>
-        </div>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button
-            type="button"
-            className="btn btn-gold"
-            onClick={() => setView('planner')}
-          >
-            <Sparkles size={16} /> Nová akce přes AI
-          </button>
-          <button
-            type="button"
-            className="btn btn-ghost"
-            onClick={() => setView('pos')}
-          >
-            <MonitorSmartphone size={16} /> Event POS / Kasa
-          </button>
-        </div>
+    <div className="animate-fadeUp space-y-6">
+      <div>
+        <h1 className="font-display text-4xl text-white">Provozní přehled</h1>
+        <p className="mt-1 text-slate-400">Živé metriky vaší směny v reálném čase.</p>
       </div>
 
-      {activeAlerts.length > 0 && (
-        <div
-          className="panel"
-          style={{
-            marginBottom: 20,
-            borderColor: 'rgba(239,68,68,0.45)',
-            background: 'rgba(239,68,68,0.08)',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-            <AlertTriangle size={18} color="#fca5a5" />
-            <h3 style={{ fontSize: '1.1rem' }}>Skladové alerty z Event POS</h3>
-          </div>
-          <ul style={{ listStyle: 'none', display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {activeAlerts.map((a) => (
-              <li
-                key={a.id}
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  gap: 12,
-                  alignItems: 'center',
-                  padding: '0.65rem 0.85rem',
-                  background: 'var(--bg-elevated)',
-                  borderRadius: 8,
-                  fontSize: '0.9rem',
-                }}
-              >
-                <span>
-                  <strong style={{ color: '#fca5a5' }}>{a.itemName}</strong>
-                  {' · '}
-                  {a.projectName}
-                  {' · zbývá '}
-                  {a.percentLeft.toFixed(1)} %
-                </span>
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  style={{ padding: '0.35rem 0.7rem', fontSize: '0.75rem' }}
-                  onClick={() => acknowledgeAlert(a.id)}
-                >
-                  OK
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-          gap: 16,
-          marginBottom: 24,
-        }}
-      >
-        {[
-          {
-            label: 'Počet akcí',
-            value: String(metrics.eventCount ?? 0),
-            sub: 'aktivní projekty',
-          },
-          {
-            label: 'Obrat v Kč',
-            value: formatCurrency(metrics.revenue ?? 0),
-            sub: 'celkové výnosy',
-          },
-          {
-            label: 'Průměrná marže v %',
-            value: formatPercent(metrics.avgMargin || 0),
-            sub: 'netto po nákladech',
-          },
-          {
-            label: 'AI Doporučení',
-            value: String(recommendations.length),
-            sub: 'pro optimalizaci nákladů',
-          },
-        ].map((m, i) => (
-          <motion.div
-            key={m.label}
-            className="panel glass-glow"
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: i * 0.08 }}
-          >
-            <div className="label">{m.label}</div>
-            <div
-              style={{
-                fontFamily: 'var(--font-display)',
-                fontSize: '1.85rem',
-                color: 'var(--gold)',
-                margin: '0.35rem 0',
-              }}
-            >
-              {m.value}
-            </div>
-            <div style={{ fontSize: '0.8rem', color: 'var(--text-dim)' }}>{m.sub}</div>
-          </motion.div>
-        ))}
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <Kpi label="Tržba celkem" value={formatCZK(totals.total)} sub={`${sales.length} účtenek`} />
+        <Kpi label="Tržba kuchyň" value={formatCZK(totals.kitchen)} />
+        <Kpi label="Tržba bar" value={formatCZK(totals.bar)} />
+        <Kpi label="Otevřené stoly" value={String(openTables)} sub={`${tickets.length} aktivních tiketů`} />
       </div>
 
-      <div
-        className="responsive-2col"
-        style={{
-          display: 'grid',
-          gridTemplateColumns: '1.4fr 1fr',
-          gap: 16,
-          marginBottom: 24,
-        }}
-      >
-        <div className="panel" style={{ minHeight: 300 }}>
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              marginBottom: 16,
-            }}
-          >
-            <TrendingUp size={18} color="var(--gold)" />
-            <h3 style={{ fontSize: '1.2rem' }}>Obrat vs. náklady</h3>
-          </div>
-          <div style={{ width: '100%', height: 240 }}>
-            <ResponsiveContainer width="100%" height="100%" minWidth={0}>
-              <AreaChart data={chartData}>
-                <defs>
-                  <linearGradient id="goldGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#D4AF37" stopOpacity={0.4} />
-                    <stop offset="100%" stopColor="#D4AF37" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <XAxis dataKey="name" stroke="#5c6675" fontSize={11} />
-                <YAxis
-                  stroke="#5c6675"
-                  fontSize={11}
-                  tickFormatter={(v) => `${Math.round(Number(v) / 1000)}k`}
-                />
-                <Tooltip
-                  contentStyle={{
-                    background: '#161d26',
-                    border: '1px solid rgba(212,175,55,0.3)',
-                    borderRadius: 8,
-                  }}
-                  formatter={(v) => formatCurrency(Number(v ?? 0))}
-                />
-                <Area
-                  type="monotone"
-                  dataKey="revenue"
-                  stroke="#D4AF37"
-                  fill="url(#goldGrad)"
-                  strokeWidth={2}
-                />
-                <Area
-                  type="monotone"
-                  dataKey="cost"
-                  stroke="#5c6675"
-                  fill="transparent"
-                  strokeWidth={1.5}
-                  strokeDasharray="4 4"
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        <div className="panel">
-          <h3 style={{ fontSize: '1.2rem', marginBottom: 16 }}>Marže projektů</h3>
-          <div style={{ width: '100%', height: 240 }}>
-            <ResponsiveContainer width="100%" height="100%" minWidth={0}>
-              <BarChart data={marginData}>
-                <XAxis dataKey="name" stroke="#5c6675" fontSize={11} />
-                <YAxis stroke="#5c6675" fontSize={11} />
-                <Tooltip
-                  contentStyle={{
-                    background: '#161d26',
-                    border: '1px solid rgba(212,175,55,0.3)',
-                    borderRadius: 8,
-                  }}
-                  formatter={(v) => `${v ?? 0} %`}
-                />
-                <Bar dataKey="margin" fill="#D4AF37" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-      </div>
-
-      <div
-        className="responsive-2col"
-        style={{ display: 'grid', gridTemplateColumns: '1fr 1.2fr', gap: 16 }}
-      >
-        <div className="panel">
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              marginBottom: 16,
-            }}
-          >
-            <h3 style={{ fontSize: '1.2rem' }}>Kalendář</h3>
-            <div style={{ display: 'flex', gap: 4 }}>
-              <button
-                type="button"
-                className="btn btn-ghost"
-                style={{ padding: 6 }}
-                onClick={() => setMonth((m) => subMonths(m, 1))}
-              >
-                <ChevronLeft size={16} />
-              </button>
-              <span
-                style={{
-                  fontSize: '0.85rem',
-                  color: 'var(--text-muted)',
-                  padding: '6px 8px',
-                }}
-              >
-                {isValid(month)
-                  ? format(month, 'LLLL yyyy', { locale: cs })
-                  : '—'}
-              </span>
-              <button
-                type="button"
-                className="btn btn-ghost"
-                style={{ padding: 6 }}
-                onClick={() => setMonth((m) => addMonths(m, 1))}
-              >
-                <ChevronRight size={16} />
-              </button>
-            </div>
-          </div>
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(7, 1fr)',
-              gap: 4,
-              fontSize: '0.75rem',
-              color: 'var(--text-dim)',
-              marginBottom: 8,
-            }}
-          >
-            {['Po', 'Út', 'St', 'Čt', 'Pá', 'So', 'Ne'].map((d) => (
-              <div key={d} style={{ textAlign: 'center' }}>
-                {d}
-              </div>
-            ))}
-          </div>
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(7, 1fr)',
-              gap: 4,
-            }}
-          >
-            {Array.from({ length: leadingBlanks }).map((_, i) => (
-              <div key={`blank-${i}`} />
-            ))}
-            {days.map((day) => {
-              const hasEvent = eventDates.some((d) => isSameDay(d, day))
-              return (
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <div className="card p-5">
+          <h2 className="mb-4 font-display text-2xl text-white">Poslední transakce</h2>
+          {sales.length === 0 ? (
+            <p className="text-sm text-slate-500">Zatím žádné tržby. Otevřete POS Terminál.</p>
+          ) : (
+            <div className="space-y-2">
+              {sales.slice(0, 6).map((s) => (
                 <div
-                  key={day.toISOString()}
-                  style={{
-                    aspectRatio: '1',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    borderRadius: 6,
-                    fontSize: '0.8rem',
-                    background: hasEvent ? 'var(--gold-subtle)' : 'transparent',
-                    color: hasEvent ? 'var(--gold)' : 'var(--text-muted)',
-                    border: hasEvent
-                      ? '1px solid var(--border-strong)'
-                      : '1px solid transparent',
-                    fontWeight: hasEvent ? 600 : 400,
-                  }}
+                  key={s.id}
+                  className="flex items-center justify-between rounded-lg bg-slate-900/60 px-3 py-2 text-sm"
                 >
-                  {format(day, 'd')}
+                  <div>
+                    <span className="font-semibold text-white">{s.docNumber}</span>
+                    <span className="ml-2 text-slate-400">{s.tableName ?? 'Rychlý prodej'}</span>
+                  </div>
+                  <div className="text-right">
+                    <div className="font-semibold text-gold">{formatCZK(s.total)}</div>
+                    <div className="text-xs text-slate-500">{formatClock(s.ts)} · {s.method}</div>
+                  </div>
                 </div>
-              )
-            })}
-            {!days.length && (
-              <div
-                style={{
-                  gridColumn: '1 / -1',
-                  textAlign: 'center',
-                  color: 'var(--text-dim)',
-                  padding: 16,
-                }}
-              >
-                Kalendář není k dispozici
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="panel">
-          <h3 style={{ fontSize: '1.2rem', marginBottom: 12 }}>
-            AI Doporučení pro optimalizaci nákladů
-          </h3>
-          <ul
-            style={{
-              listStyle: 'none',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 10,
-            }}
-          >
-            {recommendations.map((rec, i) => (
-              <li
-                key={`rec-${i}`}
-                style={{
-                  padding: '0.85rem 1rem',
-                  background: 'var(--bg-elevated)',
-                  borderRadius: 8,
-                  borderLeft: '3px solid var(--gold)',
-                  fontSize: '0.9rem',
-                  color: 'var(--text-muted)',
-                }}
-              >
-                {rec}
-              </li>
-            ))}
-          </ul>
-
-          {safeProjects.length > 0 ? (
-            <div style={{ marginTop: 20 }}>
-              <h4
-                style={{
-                  fontSize: '1rem',
-                  marginBottom: 10,
-                  color: 'var(--text-muted)',
-                }}
-              >
-                Nedávné projekty
-              </h4>
-              {safeProjects.slice(0, 4).map((p) => (
-                <button
-                  key={p.id}
-                  type="button"
-                  onClick={() => {
-                    setActiveProject(p.id)
-                    setView('planner')
-                  }}
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    width: '100%',
-                    padding: '0.7rem 0',
-                    border: 'none',
-                    borderBottom: '1px solid var(--border)',
-                    background: 'transparent',
-                    color: 'var(--text)',
-                    cursor: 'pointer',
-                    fontSize: '0.9rem',
-                    gap: 8,
-                  }}
-                >
-                  <span
-                    style={{
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    {p.name || 'Bez názvu'}
-                  </span>
-                  <span className="badge badge-gold">
-                    {p.documents?.nabidka || '—'}
-                  </span>
-                </button>
               ))}
             </div>
+          )}
+        </div>
+
+        <div className="card p-5">
+          <h2 className="mb-4 font-display text-2xl text-white">Výkon personálu</h2>
+          {perf.length === 0 ? (
+            <p className="text-sm text-slate-500">Zatím žádná aktivita.</p>
           ) : (
-            <div
-              style={{
-                marginTop: 20,
-                padding: '1rem',
-                background: 'var(--bg-elevated)',
-                borderRadius: 8,
-                color: 'var(--text-dim)',
-                fontSize: '0.9rem',
-              }}
-            >
-              Zatím žádné projekty. Klikněte na „Nová akce přes AI".
+            <div className="space-y-3">
+              {perf.map((p) => (
+                <div key={p.waiterId}>
+                  <div className="mb-1 flex justify-between text-sm">
+                    <span className="text-white">{p.waiterName}</span>
+                    <span className="text-slate-400">
+                      {p.percent}% · {formatCZK(p.revenue)}
+                    </span>
+                  </div>
+                  <div className="h-2 overflow-hidden rounded-full bg-slate-800">
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-gold-400 to-gold-600"
+                      style={{ width: `${p.percent}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>

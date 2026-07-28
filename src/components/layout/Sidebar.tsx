@@ -3,7 +3,7 @@ import { Logo } from './Logo'
 import { useAuthStore } from '../../store/useAuthStore'
 import { PRICING_PLANS } from '../../lib/constants'
 
-export type MainView = 'dashboard' | 'planner' | 'menu' | 'audit'
+export type MainView = 'dashboard' | 'planner' | 'inventory' | 'menu' | 'audit'
 
 interface SidebarProps {
   view: MainView
@@ -13,6 +13,7 @@ interface SidebarProps {
 const NAV: { id: MainView; label: string; icon: string }[] = [
   { id: 'dashboard', label: 'Přehled', icon: '📊' },
   { id: 'planner', label: 'AI Plánovač', icon: '✨' },
+  { id: 'inventory', label: 'Sklad & Inventura', icon: '📦' },
   { id: 'menu', label: 'Tiskový lístek', icon: '📄' },
   { id: 'audit', label: 'Audit číšníků', icon: '🕵️' },
 ]

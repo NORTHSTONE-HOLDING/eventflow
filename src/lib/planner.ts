@@ -1,4 +1,6 @@
 import type { EventPlan } from './types'
+import { uid } from './format'
+import { buildBudget } from './budget'
 
 // Client-side Czech event simulation. If an OpenAI key is present it could be
 // swapped for a live call; without a key this deterministic engine builds a full
@@ -49,21 +51,27 @@ export function generatePlan(prompt: string): EventPlan {
   const kind = detectKind(prompt)
   const parsedBudget = parseBudget(prompt)
   const budget = parsedBudget > 0 ? parsedBudget : guests * 2200
+  const bundle = buildBudget(guests, budget)
 
   return {
     title: `${kind} — ${location} (${guests} hostů)`,
     guests,
     location,
     budget,
-    summary: `AI plán pro ${kind.toLowerCase()} v lokalitě ${location}. Kalkulováno na ${guests} hostů s rozpočtem ${budget.toLocaleString('cs-CZ')} Kč. Harmonogram, nákupní seznam i receptury jsou automaticky přizpůsobeny počtu hostů a typu akce.`,
+    summary: `AI plán pro ${kind.toLowerCase()} v lokalitě ${location}. Kalkulováno na ${guests} hostů s rozpočtem ${budget.toLocaleString('cs-CZ')} Kč. Harmonogram, vícesazbový rozpočet DPH, catering, checklist i receptury jsou automaticky přizpůsobeny počtu hostů a typu akce.`,
+    budgetLines: bundle.budgetLines,
+    totals: bundle.totals,
+    catering: bundle.catering,
+    checklist: bundle.checklist,
+    docs: bundle.docs,
     timeline: [
-      { time: '08:00', title: 'Příjezd & briefing', detail: 'Stavba týmu, kontrola dodávek, rozdělení sekcí.' },
-      { time: '10:00', title: 'Stavba prostoru', detail: 'Mise-en-place, dekorace, AV technika, bar setup.' },
-      { time: '13:00', title: 'Oběd personálu', detail: 'Staff meal a finální kontrola alergenové matice.' },
-      { time: '17:00', title: 'Příchod hostů', detail: `Welcome drink pro ${guests} hostů, uvítací kanapky.` },
-      { time: '19:00', title: 'Hlavní program', detail: 'Servis hlavních chodů, koordinace kuchyně a baru přes KDS.' },
-      { time: '22:00', title: 'Dezert & raut', detail: 'Sladká tečka, noční raut, doplňování baru.' },
-      { time: '00:30', title: 'Úklid & inventura', detail: 'Odbavení, inventura skladu, uzávěrka směny.' },
+      { id: uid('tl'), time: '08:00', title: 'Příjezd & briefing', detail: 'Stavba týmu, kontrola dodávek, rozdělení sekcí.' },
+      { id: uid('tl'), time: '10:00', title: 'Stavba prostoru', detail: 'Mise-en-place, dekorace, AV technika, bar setup.' },
+      { id: uid('tl'), time: '13:00', title: 'Oběd personálu', detail: 'Staff meal a finální kontrola alergenové matice.' },
+      { id: uid('tl'), time: '17:00', title: 'Příchod hostů', detail: `Welcome drink pro ${guests} hostů, uvítací kanapky.` },
+      { id: uid('tl'), time: '19:00', title: 'Hlavní program', detail: 'Servis hlavních chodů, koordinace kuchyně a baru přes KDS.' },
+      { id: uid('tl'), time: '22:00', title: 'Dezert & raut', detail: 'Sladká tečka, noční raut, doplňování baru.' },
+      { id: uid('tl'), time: '00:30', title: 'Úklid & inventura', detail: 'Odbavení, inventura skladu, uzávěrka směny.' },
     ],
     shopping: [
       { item: 'Hovězí svíčková', qty: `${Math.ceil(guests * 0.22)} kg`, note: 'Hlavní chod' },

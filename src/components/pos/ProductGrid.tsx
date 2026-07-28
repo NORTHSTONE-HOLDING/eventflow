@@ -1,81 +1,113 @@
-import { useState } from 'react'
-import { CATALOG, SUBCATEGORIES } from '../../lib/constants'
+import { useMemo, useState } from 'react'
+import { useInventoryStore } from '../../store/useInventoryStore'
 import { formatCZK } from '../../lib/format'
 import { tap } from '../../lib/feedback'
-import type { Product, ProductCategory } from '../../lib/types'
+import type { InventoryItem, ProductCategory } from '../../lib/types'
 
 interface ProductGridProps {
-  onPick: (product: Product) => void
+  onPick: (product: InventoryItem) => void
 }
 
+const CAT_TO_INV: Record<ProductCategory, 'jidlo' | 'piti'> = { jidlo: 'jidlo', piti: 'piti' }
+
 export function ProductGrid({ onPick }: ProductGridProps) {
+  const items = useInventoryStore((s) => s.items)
   const [cat, setCat] = useState<ProductCategory>('jidlo')
-  const [sub, setSub] = useState<string>('predkrmy')
+  const [sub, setSub] = useState<string>('')
+
+  const posItems = useMemo(
+    () => items.filter((i) => i.isPosVisible && i.category === CAT_TO_INV[cat]),
+    [items, cat],
+  )
+
+  const subcategories = useMemo(() => {
+    const set = new Set(posItems.map((i) => i.subcategory))
+    return Array.from(set)
+  }, [posItems])
+
+  const activeSub = sub && subcategories.includes(sub) ? sub : subcategories[0] ?? ''
+  const tiles = posItems.filter((i) => i.subcategory === activeSub)
 
   const chooseCat = (c: ProductCategory) => {
     tap(700)
     setCat(c)
-    setSub(SUBCATEGORIES[c][0].id)
+    setSub('')
   }
-
-  const items = CATALOG.filter((p) => p.category === cat && p.subcategory === sub)
 
   return (
     <div className="flex h-full flex-col">
-      <div className="mb-3 grid grid-cols-2 gap-2">
+      <div className="mb-4 grid grid-cols-2 gap-3">
         {(['jidlo', 'piti'] as const).map((c) => (
           <button
             key={c}
             type="button"
             onClick={() => chooseCat(c)}
-            className={`btn ${cat === c ? 'btn-gold' : 'btn-ghost'}`}
+            className={`btn ${cat === c ? 'btn-gold' : 'btn-ghost'} text-base`}
           >
             {c === 'jidlo' ? '🍽️ Jídlo' : '🍷 Pití'}
           </button>
         ))}
       </div>
 
-      <div className="mb-4 flex flex-wrap gap-2">
-        {SUBCATEGORIES[cat].map((s) => (
+      {/* spacious vertical margin separating parent tabs from subcategory layer */}
+      <div className="mb-5 flex flex-wrap gap-2">
+        {subcategories.map((s) => (
           <button
-            key={s.id}
+            key={s}
             type="button"
             onClick={() => {
               tap(620)
-              setSub(s.id)
+              setSub(s)
             }}
             className={`rounded-lg px-3 py-2 text-sm font-medium transition ${
-              sub === s.id
-                ? 'bg-gold/20 text-gold'
-                : 'bg-slate-800/60 text-slate-400 hover:text-white'
+              activeSub === s ? 'bg-gold/20 text-gold' : 'bg-slate-800/60 text-slate-400 hover:text-white'
             }`}
           >
-            {s.label}
+            {s}
           </button>
         ))}
       </div>
 
-      <div className="grid flex-1 grid-cols-2 content-start gap-3 overflow-y-auto pr-1 sm:grid-cols-3">
-        {items.map((p) => (
-          <button
-            key={p.id}
-            type="button"
-            onClick={() => {
-              tap(880)
-              onPick(p)
-            }}
-            className="group relative flex min-h-[7rem] flex-col justify-between overflow-hidden rounded-2xl border border-slate-800 bg-gradient-to-br from-slate-800/80 to-slate-900 p-3 text-left transition hover:border-gold/60 hover:shadow-gold active:scale-[0.97]"
-          >
-            <div className="absolute -right-2 -top-3 text-5xl opacity-30 transition group-hover:opacity-60">
-              {p.photo}
-            </div>
-            <div className="relative text-2xl">{p.photo}</div>
-            <div className="relative">
-              <div className="text-sm font-semibold leading-tight text-white">{p.name}</div>
-              <div className="mt-1 font-display text-lg text-gold">{formatCZK(p.price)}</div>
-            </div>
-          </button>
-        ))}
+      <div className="grid flex-1 grid-cols-2 content-start gap-4 overflow-y-auto pr-1 sm:grid-cols-3">
+        {tiles.map((p) => {
+          const soldOut = p.stockQty <= 0
+          return (
+            <button
+              key={p.id}
+              type="button"
+              disabled={soldOut}
+              onClick={() => {
+                tap(880)
+                onPick(p)
+              }}
+              className="group relative flex min-h-[8.5rem] flex-col overflow-hidden rounded-2xl border border-slate-800 transition hover:border-gold/60 hover:shadow-gold active:scale-[0.97] disabled:opacity-40"
+            >
+              {/* product photo background layer (emoji stand-in on a gradient) */}
+              <div className="absolute inset-0 bg-gradient-to-br from-slate-700/70 via-slate-800 to-slate-950" />
+              <div className="absolute inset-0 flex items-center justify-center text-6xl opacity-70 transition group-hover:scale-110">
+                {p.photo}
+              </div>
+              {soldOut && (
+                <div className="absolute right-2 top-2 rounded bg-red-600 px-2 py-0.5 text-[10px] font-bold text-white">
+                  VYPRODÁNO
+                </div>
+              )}
+              {/* solid semi-transparent bottom bar with name + price */}
+              <div className="relative mt-auto w-full bg-slate-950/85 px-3 py-2 backdrop-blur-sm">
+                <div className="truncate text-sm font-semibold text-white">{p.name}</div>
+                <div className="flex items-center justify-between">
+                  <span className="font-display text-lg text-gold">{formatCZK(p.sellPrice)}</span>
+                  <span className="text-[10px] text-slate-400">{p.servingLabel}</span>
+                </div>
+              </div>
+            </button>
+          )
+        })}
+        {tiles.length === 0 && (
+          <p className="col-span-full pt-8 text-center text-sm text-slate-500">
+            Žádné prodejní položky v této kategorii. Zapněte je 🟢 ve Skladu.
+          </p>
+        )}
       </div>
     </div>
   )

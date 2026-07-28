@@ -113,14 +113,24 @@ export function CctvWall() {
           <h2 className="mb-2 font-display text-xl text-white">Archiv (60 dní)</h2>
           <div className="card max-h-[70vh] overflow-y-auto p-2">
             {CCTV_ARCHIVE.map((d) => (
-              <div
-                key={d.date}
-                className="flex items-center justify-between rounded-lg px-3 py-2 text-sm hover:bg-slate-800/60"
-              >
-                <span className="font-mono text-slate-300">{d.date}</span>
-                <span className="text-xs text-slate-500">
-                  {d.clips} klipů · {d.sizeGb} GB
-                </span>
+              <div key={d.date} className="mb-2 rounded-lg bg-slate-900/50 p-2">
+                <div className="mb-1.5 flex items-center justify-between">
+                  <span className="font-mono text-sm text-slate-200">{d.date}</span>
+                  <span className="text-[11px] text-slate-500">
+                    {d.clips} klipů · {d.sizeGb} GB
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {Array.from({ length: 13 }, (_, i) => 11 + i).map((h) => (
+                    <span
+                      key={h}
+                      title={`${d.date} ${h}:00`}
+                      className="rounded bg-slate-800 px-1.5 py-0.5 text-[10px] text-slate-400 hover:bg-gold/20 hover:text-gold"
+                    >
+                      {String(h).padStart(2, '0')}h
+                    </span>
+                  ))}
+                </div>
               </div>
             ))}
           </div>

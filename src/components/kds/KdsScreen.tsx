@@ -52,6 +52,11 @@ function TicketCard({ ticket, now }: { ticket: KdsTicket; now: number }) {
           <div className="text-xs text-slate-400">
             {ticket.waiterName} · {formatClock(ticket.createdAt)}
           </div>
+          {ticket.isOnline && (
+            <div className="mt-1 inline-block animate-pulse rounded-md bg-gold px-2 py-0.5 text-[11px] font-bold text-slate-950">
+              📥 ONLINE OBJEDNÁVKA
+            </div>
+          )}
         </div>
         <div
           className={`rounded-lg px-3 py-1.5 font-mono text-lg font-bold ${

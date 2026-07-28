@@ -6,6 +6,7 @@ import { AppShell } from './components/layout/AppShell'
 import { PosTerminal } from './components/pos/PosTerminal'
 import { KdsScreen } from './components/kds/KdsScreen'
 import { CctvWall } from './components/cctv/CctvWall'
+import { CustomerOrder } from './components/customer/CustomerOrder'
 import { ErrorBoundary } from './components/common/ErrorBoundary'
 
 function RequireOnboarding({ children }: { children: ReactNode }) {
@@ -59,6 +60,14 @@ const router = createBrowserRouter([
           <CctvWall />
         </ErrorBoundary>
       </RequireOnboarding>
+    ),
+  },
+  {
+    path: '/customer-order/:tableId',
+    element: (
+      <ErrorBoundary title="Chyba samoobslužné objednávky">
+        <CustomerOrder />
+      </ErrorBoundary>
     ),
   },
   { path: '*', element: <Navigate to="/" replace /> },
